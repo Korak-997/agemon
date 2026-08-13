@@ -35,21 +35,27 @@ function initializeFakeStateIfNeeded(): void {
 
   fakeCrgInstalledState = process.env.AGEMON_FAKE_PREINSTALLED_CRG === "1";
 
-  const preinstalledSkills = process.env.AGEMON_FAKE_PREINSTALLED_SKILLS
-    ?.split(",")
+  const preinstalledSkills = process.env.AGEMON_FAKE_PREINSTALLED_SKILLS?.split(
+    ",",
+  )
     .map((skillName) => skillName.trim())
     .filter((skillName) => skillName.length > 0);
   fakeInstalledSkillNames = new Set(preinstalledSkills ?? []);
 
-  const preinstalledGlobalNpmPackages = process.env.AGEMON_FAKE_PREINSTALLED_NPM_PACKAGES
-    ?.split(",")
-    .map((packageName) => packageName.trim())
-    .filter((packageName) => packageName.length > 0);
-  fakeInstalledGlobalNpmPackageNames = new Set(preinstalledGlobalNpmPackages ?? []);
+  const preinstalledGlobalNpmPackages =
+    process.env.AGEMON_FAKE_PREINSTALLED_NPM_PACKAGES?.split(",")
+      .map((packageName) => packageName.trim())
+      .filter((packageName) => packageName.length > 0);
+  fakeInstalledGlobalNpmPackageNames = new Set(
+    preinstalledGlobalNpmPackages ?? [],
+  );
 }
 
-function readOptionValue(args: string[], optionName: string): string | undefined {
-  const optionIndex = args.findIndex((arg) => arg === optionName);
+function readOptionValue(
+  args: string[],
+  optionName: string,
+): string | undefined {
+  const optionIndex = args.indexOf(optionName);
   if (optionIndex < 0) {
     return undefined;
   }

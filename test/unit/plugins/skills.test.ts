@@ -1,12 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
-import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -88,9 +88,9 @@ describe("skills plugin", () => {
       .getActions()
       .filter((action) => action.plugin === "skills");
     expect(actionsAfterInstall.length).toBe(2);
-    expect(actionsAfterInstall.every((action) => action.preExisting === false)).toBe(
-      true,
-    );
+    expect(
+      actionsAfterInstall.every((action) => action.preExisting === false),
+    ).toBe(true);
 
     await skillsPlugin.uninstall(context);
 

@@ -36,7 +36,9 @@ function hasPreexistingRecord(ctx: Context, toolId: string): boolean {
 }
 
 function hasAnyRecordForTool(ctx: Context, toolId: string): boolean {
-  return hasManagedInstallRecord(ctx, toolId) || hasPreexistingRecord(ctx, toolId);
+  return (
+    hasManagedInstallRecord(ctx, toolId) || hasPreexistingRecord(ctx, toolId)
+  );
 }
 
 async function isToolBinaryAvailable(
@@ -112,7 +114,8 @@ async function installCliTools(ctx: Context): Promise<void> {
     ]);
     if (installResult.code !== 0) {
       throw new Error(
-        installResult.stderr || `npm global install failed for ${entry.packageName}`,
+        installResult.stderr ||
+          `npm global install failed for ${entry.packageName}`,
       );
     }
 
@@ -154,7 +157,8 @@ async function verifyCliTools(ctx: Context): Promise<PluginVerificationResult> {
 async function uninstallCliTools(ctx: Context): Promise<void> {
   const managedActions = getPluginActions(ctx).filter(
     (action) =>
-      action.type === ACTION_TYPE_INSTALLED_CLI_TOOL && action.preExisting === false,
+      action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
+      action.preExisting === false,
   );
 
   if (ctx.dryRun) {
@@ -163,7 +167,9 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
       return;
     }
     for (const action of managedActions) {
-      const bundleEntry = CLI_TOOL_BUNDLE.find((entry) => entry.id === action.target);
+      const bundleEntry = CLI_TOOL_BUNDLE.find(
+        (entry) => entry.id === action.target,
+      );
       const packageName = bundleEntry?.packageName ?? action.target;
       ctx.ui.info(`Would uninstall global npm package ${packageName}`);
     }
@@ -171,7 +177,9 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
   }
 
   for (const action of managedActions) {
-    const bundleEntry = CLI_TOOL_BUNDLE.find((entry) => entry.id === action.target);
+    const bundleEntry = CLI_TOOL_BUNDLE.find(
+      (entry) => entry.id === action.target,
+    );
     const packageName = bundleEntry?.packageName ?? action.target;
 
     const uninstallResult = await ctx.run("npm", [
@@ -181,7 +189,8 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
     ]);
     if (uninstallResult.code !== 0) {
       throw new Error(
-        uninstallResult.stderr || `npm global uninstall failed for ${packageName}`,
+        uninstallResult.stderr ||
+          `npm global uninstall failed for ${packageName}`,
       );
     }
   }
