@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 export const REQUIRED_BINARIES = [
   "python3",
@@ -78,7 +78,7 @@ async function findBinaryPath(
   binaryName: RequiredBinary,
   pathEnv: string,
 ): Promise<string | undefined> {
-  for (const pathEntry of pathEnv.split(":")) {
+  for (const pathEntry of pathEnv.split(delimiter)) {
     if (!pathEntry) {
       continue;
     }

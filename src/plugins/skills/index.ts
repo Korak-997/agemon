@@ -16,6 +16,10 @@ const ACTION_TYPE_PREEXISTING_SKILL = "preexisting-skill";
 const ACTION_TYPE_GENERATED_SKILLS_LOCK = "generated-skills-lock";
 const SKILLS_LOCK_FILE = "skills-lock.json";
 
+const SKILLS_LIST_TIMEOUT_MS = 30_000;
+const SKILLS_ADD_TIMEOUT_MS = 180_000;
+const SKILLS_REMOVE_TIMEOUT_MS = 120_000;
+
 interface SkillsListEntry {
   name: string;
 }
@@ -65,7 +69,9 @@ function hasManagedSkillsLockRecord(ctx: Context): boolean {
 }
 
 async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
-  const listResult = await ctx.run("npx", ["skills", "list", "--json"]);
+  const listResult = await ctx.run("npx", ["skills", "list", "--json"], {
+    timeoutMs: SKILLS_LIST_TIMEOUT_MS,
+  });
   if (listResult.code !== 0) {
     throw new Error(listResult.stderr || "npx skills list failed");
   }
@@ -74,7 +80,10 @@ async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
   try {
     parsed = JSON.parse(listResult.stdout || "[]");
   } catch {
-    throw new Error("npx skills list returned invalid JSON");
+    const stderr = listResult.stderr.trim();
+    const stdoutPreview = listResult.stdout.trim().slice(0, 200);
+    const detail = stderr || stdoutPreview || "no command output";
+    throw new Error(`npx skills list returned invalid JSON: ${detail}`);
   }
 
   if (!Array.isArray(parsed)) {
@@ -154,16 +163,22 @@ async function installSkills(ctx: Context): Promise<void> {
       continue;
     }
 
-    const addResult = await ctx.run("npx", [
-      "skills",
-      "add",
-      entry.source,
-      "--skill",
-      entry.skillName,
-      "--agent",
-      entry.agent,
-      "--yes",
-    ]);
+    const addResult = await ctx.run(
+      "npx",
+      [
+        "skills",
+        "add",
+        entry.source,
+        "--skill",
+        entry.skillName,
+        "--agent",
+        entry.agent,
+        "--yes",
+      ],
+      {
+        timeoutMs: SKILLS_ADD_TIMEOUT_MS,
+      },
+    );
     if (addResult.code !== 0) {
       throw new Error(
         addResult.stderr || `npx skills add failed for ${entry.skillName}`,
@@ -248,12 +263,13 @@ async function uninstallSkills(ctx: Context): Promise<void> {
       continue;
     }
 
-    const removeResult = await ctx.run("npx", [
-      "skills",
-      "remove",
-      action.target,
-      "--yes",
-    ]);
+    const removeResult = await ctx.run(
+      "npx",
+      ["skills", "remove", action.target, "--yes"],
+      {
+        timeoutMs: SKILLS_REMOVE_TIMEOUT_MS,
+      },
+    );
     if (removeResult.code !== 0) {
       throw new Error(
         removeResult.stderr || `npx skills remove failed for ${action.target}`,

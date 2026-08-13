@@ -7,9 +7,15 @@ export interface RunCommandResult {
   stderr: string;
 }
 
+export interface RunCommandOptions {
+  timeoutMs?: number;
+  killSignal?: NodeJS.Signals;
+}
+
 export type RunCommand = (
   command: string,
   args: string[],
+  options?: RunCommandOptions,
 ) => Promise<RunCommandResult>;
 
 export interface ServiceStatus {

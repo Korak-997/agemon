@@ -12,7 +12,27 @@ const ACTION_TYPE_REGISTERED_SERVICE = "registered-service";
 const ACTION_TYPE_PREEXISTING_SERVICE = "preexisting-service";
 const ACTION_TYPE_ENABLED_LINGER = "enabled-linger";
 
-function buildUnitContents(cwd: string): string {
+type HardeningProfile = "strict" | "compat";
+
+function readHardeningProfileFromEnv(): HardeningProfile {
+  return process.env.AGEMON_DAEMON_HARDENING === "compat" ? "compat" : "strict";
+}
+
+function getHardeningDirectives(profile: HardeningProfile): string[] {
+  if (profile === "compat") {
+    return ["NoNewPrivileges=yes", "RestrictSUIDSGID=yes"];
+  }
+
+  return [
+    "NoNewPrivileges=yes",
+    "RestrictSUIDSGID=yes",
+    "ProtectSystem=full",
+    "ProtectHome=read-only",
+    "PrivateTmp=yes",
+  ];
+}
+
+function buildUnitContents(cwd: string, profile: HardeningProfile): string {
   return [
     "[Unit]",
     "Description=agemon code-review-graph daemon",
@@ -22,6 +42,7 @@ function buildUnitContents(cwd: string): string {
     "Type=simple",
     `WorkingDirectory=${cwd}`,
     "ExecStart=crg-daemon start",
+    ...getHardeningDirectives(profile),
     "Restart=always",
     "RestartSec=3",
     "",
@@ -90,10 +111,27 @@ async function installDaemon(ctx: Context): Promise<void> {
     return;
   }
 
-  const registration = await ctx.serviceManager.registerAutostart({
-    unitName: UNIT_NAME,
-    unitContents: buildUnitContents(ctx.cwd),
-  });
+  const configuredProfile = readHardeningProfileFromEnv();
+  const registration = await (async () => {
+    try {
+      return await ctx.serviceManager.registerAutostart({
+        unitName: UNIT_NAME,
+        unitContents: buildUnitContents(ctx.cwd, configuredProfile),
+      });
+    } catch (error) {
+      if (configuredProfile !== "strict") {
+        throw error;
+      }
+
+      ctx.ui.info(
+        "Strict daemon hardening failed; retrying with compatibility hardening.",
+      );
+      return await ctx.serviceManager.registerAutostart({
+        unitName: UNIT_NAME,
+        unitContents: buildUnitContents(ctx.cwd, "compat"),
+      });
+    }
+  })();
 
   await ctx.manifest.recordAction({
     plugin: PLUGIN_ID,

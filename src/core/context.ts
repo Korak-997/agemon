@@ -3,7 +3,11 @@ import type { ServiceManager } from "../platform/service-manager/index.js";
 import { createServiceManager } from "../platform/service-manager/index.js";
 import type { StepSpinner } from "../ui/spinner.js";
 import { StateManifest } from "./state-manifest.js";
-import { runSubprocess, type SubprocessResult } from "./subprocess-runner.js";
+import {
+  type RunSubprocessOptions,
+  runSubprocess,
+  type SubprocessResult,
+} from "./subprocess-runner.js";
 
 export type { SubprocessResult } from "./subprocess-runner.js";
 
@@ -21,7 +25,11 @@ export interface Context {
   yes: boolean;
   log: Pick<Console, "log" | "error">;
   ui: StepSpinner;
-  run: (command: string, args: string[]) => Promise<SubprocessResult>;
+  run: (
+    command: string,
+    args: string[],
+    options?: RunSubprocessOptions,
+  ) => Promise<SubprocessResult>;
   manifest: StateManifest;
   serviceManager: ServiceManager;
 }

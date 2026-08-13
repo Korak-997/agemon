@@ -16,6 +16,8 @@ interface CreateLinuxServiceManagerInput {
   user?: string;
 }
 
+const SYSTEM_COMMAND_TIMEOUT_MS = 20_000;
+
 function resolveHomeDir(homeDir?: string): string {
   return homeDir ?? process.env.HOME ?? homedir();
 }
@@ -40,13 +42,24 @@ function resolveUnitPath(homeDir: string, unitName: string): string {
   return join(homeDir, ".config", "systemd", "user", unitName);
 }
 
+function isMissingUnitError(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
+  return (
+    normalized.includes("not loaded") ||
+    normalized.includes("no such file") ||
+    normalized.includes("not found")
+  );
+}
+
 async function assertSucceeded(
   run: RunCommand,
   command: string,
   args: string[],
   failureMessage: string,
 ): Promise<{ stdout: string; stderr: string }> {
-  const result = await run(command, args);
+  const result = await run(command, args, {
+    timeoutMs: SYSTEM_COMMAND_TIMEOUT_MS,
+  });
   if (result.code !== 0) {
     throw new Error(result.stderr || failureMessage);
   }
@@ -60,11 +73,13 @@ export function createLinuxServiceManager(
   const user = resolveUser(input.user);
 
   const isActive = async (unitName: string): Promise<ServiceStatus> => {
-    const result = await input.run("systemctl", [
-      "--user",
-      "is-active",
-      unitName,
-    ]);
+    const result = await input.run(
+      "systemctl",
+      ["--user", "is-active", unitName],
+      {
+        timeoutMs: SYSTEM_COMMAND_TIMEOUT_MS,
+      },
+    );
     return { active: result.code === 0 };
   };
 
@@ -115,12 +130,22 @@ export function createLinuxServiceManager(
   const unregisterAutostart = async (
     registration: UnregisterAutostartInput,
   ): Promise<void> => {
-    await input.run("systemctl", [
-      "--user",
-      "disable",
-      "--now",
-      registration.unitName,
-    ]);
+    const disableResult = await input.run(
+      "systemctl",
+      ["--user", "disable", "--now", registration.unitName],
+      {
+        timeoutMs: SYSTEM_COMMAND_TIMEOUT_MS,
+      },
+    );
+    if (
+      disableResult.code !== 0 &&
+      !isMissingUnitError(disableResult.stderr || "")
+    ) {
+      throw new Error(
+        disableResult.stderr ||
+          "Unable to disable/stop the daemon unit during uninstall.",
+      );
+    }
 
     const unitPath = resolveUnitPath(homeDir, registration.unitName);
     await rm(unitPath, { force: true });

@@ -38,6 +38,38 @@ function createDefaultState(now: string): StateManifestData {
   };
 }
 
+function isManifestAction(value: unknown): value is ManifestAction {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const typed = value as Partial<ManifestAction>;
+  return (
+    typeof typed.id === "string" &&
+    typeof typed.plugin === "string" &&
+    typeof typed.type === "string" &&
+    typeof typed.target === "string" &&
+    typeof typed.preExisting === "boolean" &&
+    typeof typed.createdAt === "string"
+  );
+}
+
+function isStateManifestData(value: unknown): value is StateManifestData {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const typed = value as Partial<StateManifestData>;
+  return (
+    typed.version === 1 &&
+    typed.os === "linux" &&
+    typeof typed.createdAt === "string" &&
+    typeof typed.updatedAt === "string" &&
+    Array.isArray(typed.actions) &&
+    typed.actions.every((action) => isManifestAction(action))
+  );
+}
+
 export class StateManifest {
   private constructor(
     private readonly manifestPath: string,
@@ -50,10 +82,19 @@ export class StateManifest {
 
     try {
       const contents = await readFile(manifestPath, "utf8");
-      const parsed = JSON.parse(contents) as StateManifestData;
+      const parsed = JSON.parse(contents) as unknown;
+      if (!isStateManifestData(parsed)) {
+        throw new Error("State manifest has an invalid schema");
+      }
       return new StateManifest(manifestPath, parsed);
-    } catch {
-      return new StateManifest(manifestPath, createDefaultState(now));
+    } catch (error) {
+      const errno = error as NodeJS.ErrnoException;
+      if (errno.code === "ENOENT") {
+        return new StateManifest(manifestPath, createDefaultState(now));
+      }
+      throw new Error(
+        `Unable to load manifest at ${manifestPath}: ${String(error)}`,
+      );
     }
   }
 
@@ -121,6 +162,5 @@ export class StateManifest {
     await mkdir(manifestDir, { recursive: true });
     await writeFile(tempPath, payload, "utf8");
     await rename(tempPath, this.manifestPath);
-    await rm(tempPath, { force: true });
   }
 }

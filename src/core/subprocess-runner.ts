@@ -6,6 +6,11 @@ export interface SubprocessResult {
   stderr: string;
 }
 
+export interface RunSubprocessOptions {
+  timeoutMs?: number;
+  killSignal?: NodeJS.Signals;
+}
+
 function formatCommand(command: string, args: string[]): string {
   return [command, ...args].join(" ");
 }
@@ -302,6 +307,7 @@ function buildFakeAgnixResponse(args: string[]): SubprocessResult {
 export async function runSubprocess(
   command: string,
   args: string[],
+  options: RunSubprocessOptions = {},
 ): Promise<SubprocessResult> {
   if (process.env.AGEMON_FAKE_SUBPROCESS === "1") {
     initializeFakeStateIfNeeded();
@@ -343,11 +349,51 @@ export async function runSubprocess(
   }
 
   return await new Promise<SubprocessResult>((resolve) => {
+    let settled = false;
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    let hardKillHandle: NodeJS.Timeout | undefined;
+    let timedOut = false;
+    const finalize = (result: SubprocessResult): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      if (hardKillHandle) {
+        clearTimeout(hardKillHandle);
+      }
+      resolve(result);
+    };
+
     const childProcess = spawn(command, args, {
       cwd: process.cwd(),
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
+
+    if (options.timeoutMs && options.timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        const signal = options.killSignal ?? "SIGTERM";
+        const terminated = childProcess.kill(signal);
+        if (!terminated) {
+          finalize({
+            code: 124,
+            stdout,
+            stderr: `${stderr}\nCommand timed out after ${options.timeoutMs}ms and could not be signaled with ${signal}.`,
+          });
+          return;
+        }
+
+        hardKillHandle = setTimeout(() => {
+          if (!settled) {
+            childProcess.kill("SIGKILL");
+          }
+        }, 2_000);
+      }, options.timeoutMs);
+    }
 
     let stdout = "";
     let stderr = "";
@@ -361,18 +407,34 @@ export async function runSubprocess(
     });
 
     childProcess.on("error", (error: Error) => {
-      resolve({
+      const errorMessage = stderr
+        ? `${stderr}\nprocess spawn error: ${error.message}`
+        : `process spawn error: ${error.message}`;
+      finalize({
         code: 1,
         stdout,
-        stderr: `${stderr}${error.message}`,
+        stderr: errorMessage,
       });
     });
 
     childProcess.on(
       "close",
       (code: number | null, signal: NodeJS.Signals | null) => {
+        if (timedOut) {
+          const timeoutMessage = `Command timed out after ${options.timeoutMs}ms.`;
+          const timeoutStderr = stderr
+            ? `${stderr}\n${timeoutMessage}`
+            : timeoutMessage;
+          finalize({
+            code: 124,
+            stdout,
+            stderr: timeoutStderr,
+          });
+          return;
+        }
+
         if (signal) {
-          resolve({
+          finalize({
             code: 1,
             stdout,
             stderr: `${stderr}Process terminated by signal: ${signal}`,
@@ -380,7 +442,7 @@ export async function runSubprocess(
           return;
         }
 
-        resolve({
+        finalize({
           code: code ?? 1,
           stdout,
           stderr,

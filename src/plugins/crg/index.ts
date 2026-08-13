@@ -9,6 +9,12 @@ const PLUGIN_ID = "crg";
 const PACKAGE_NAME = "code-review-graph";
 const PIPX_RUN_PREFIX = ["run", "--spec", PACKAGE_NAME, "code-review-graph"];
 
+const VERSION_CHECK_TIMEOUT_MS = 20_000;
+const INSTALL_TIMEOUT_MS = 180_000;
+const BUILD_TIMEOUT_MS = 300_000;
+const STATUS_TIMEOUT_MS = 30_000;
+const UNINSTALL_TIMEOUT_MS = 120_000;
+
 const ACTION_TYPE_INSTALLED_BINARY = "installed-binary";
 const ACTION_TYPE_PREEXISTING_BINARY = "preexisting-binary";
 const ACTION_TYPE_GRAPH_BUILT = "graph-built";
@@ -36,7 +42,9 @@ function hasPreexistingRecord(ctx: Context): boolean {
 }
 
 async function detectCrgPresence(ctx: Context): Promise<PluginPresence> {
-  const versionCheck = await ctx.run("code-review-graph", ["--version"]);
+  const versionCheck = await ctx.run("code-review-graph", ["--version"], {
+    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
+  });
   const commandIsAvailable = versionCheck.code === 0;
 
   if (!commandIsAvailable) {
@@ -66,7 +74,9 @@ async function installCrg(ctx: Context): Promise<void> {
     return;
   }
 
-  const installResult = await ctx.run("pipx", ["install", PACKAGE_NAME]);
+  const installResult = await ctx.run("pipx", ["install", PACKAGE_NAME], {
+    timeoutMs: INSTALL_TIMEOUT_MS,
+  });
   if (installResult.code !== 0) {
     throw new Error(
       installResult.stderr || `pipx install failed for ${PACKAGE_NAME}`,
@@ -80,7 +90,9 @@ async function installCrg(ctx: Context): Promise<void> {
     preExisting: false,
   });
 
-  const buildResult = await ctx.run("pipx", [...PIPX_RUN_PREFIX, "build"]);
+  const buildResult = await ctx.run("pipx", [...PIPX_RUN_PREFIX, "build"], {
+    timeoutMs: BUILD_TIMEOUT_MS,
+  });
   if (buildResult.code !== 0) {
     throw new Error(buildResult.stderr || "code-review-graph build failed");
   }
@@ -98,7 +110,9 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
     return { ok: true, detail: "dry-run" };
   }
 
-  const statusResult = await ctx.run("pipx", [...PIPX_RUN_PREFIX, "status"]);
+  const statusResult = await ctx.run("pipx", [...PIPX_RUN_PREFIX, "status"], {
+    timeoutMs: STATUS_TIMEOUT_MS,
+  });
   if (statusResult.code !== 0) {
     return {
       ok: false,
@@ -122,7 +136,9 @@ async function uninstallCrg(ctx: Context): Promise<void> {
   }
 
   if (managedInstall) {
-    const uninstallResult = await ctx.run("pipx", ["uninstall", PACKAGE_NAME]);
+    const uninstallResult = await ctx.run("pipx", ["uninstall", PACKAGE_NAME], {
+      timeoutMs: UNINSTALL_TIMEOUT_MS,
+    });
     if (uninstallResult.code !== 0) {
       throw new Error(
         uninstallResult.stderr || `pipx uninstall failed for ${PACKAGE_NAME}`,

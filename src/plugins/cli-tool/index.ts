@@ -11,6 +11,10 @@ const PLUGIN_ID = "cli-tool";
 const ACTION_TYPE_INSTALLED_CLI_TOOL = "installed-cli-tool";
 const ACTION_TYPE_PREEXISTING_CLI_TOOL = "preexisting-cli-tool";
 
+const VERSION_CHECK_TIMEOUT_MS = 20_000;
+const INSTALL_TIMEOUT_MS = 180_000;
+const UNINSTALL_TIMEOUT_MS = 60_000;
+
 function getPluginActions(ctx: Context) {
   return ctx.manifest
     .getActions()
@@ -45,7 +49,9 @@ async function isToolBinaryAvailable(
   ctx: Context,
   entry: CliToolBundleEntry,
 ): Promise<boolean> {
-  const result = await ctx.run(entry.binaryName, ["--version"]);
+  const result = await ctx.run(entry.binaryName, ["--version"], {
+    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
+  });
   return result.code === 0;
 }
 
@@ -107,11 +113,13 @@ async function installCliTools(ctx: Context): Promise<void> {
       continue;
     }
 
-    const installResult = await ctx.run("npm", [
-      "install",
-      "--global",
-      entry.packageName,
-    ]);
+    const installResult = await ctx.run(
+      "npm",
+      ["install", "--global", entry.packageName],
+      {
+        timeoutMs: INSTALL_TIMEOUT_MS,
+      },
+    );
     if (installResult.code !== 0) {
       throw new Error(
         installResult.stderr ||
@@ -182,11 +190,13 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
     );
     const packageName = bundleEntry?.packageName ?? action.target;
 
-    const uninstallResult = await ctx.run("npm", [
-      "uninstall",
-      "--global",
-      packageName,
-    ]);
+    const uninstallResult = await ctx.run(
+      "npm",
+      ["uninstall", "--global", packageName],
+      {
+        timeoutMs: UNINSTALL_TIMEOUT_MS,
+      },
+    );
     if (uninstallResult.code !== 0) {
       throw new Error(
         uninstallResult.stderr ||
