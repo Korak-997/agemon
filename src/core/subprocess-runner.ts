@@ -11,12 +11,104 @@ function formatCommand(command: string, args: string[]): string {
 }
 
 let fakeCrgInstalledState: boolean | null = null;
+let fakeInstalledSkillNames: Set<string> | null = null;
 
 function initializeFakeStateIfNeeded(): void {
   if (fakeCrgInstalledState !== null) {
     return;
   }
   fakeCrgInstalledState = process.env.AGEMON_FAKE_PREINSTALLED_CRG === "1";
+
+  const preinstalledSkills = process.env.AGEMON_FAKE_PREINSTALLED_SKILLS
+    ?.split(",")
+    .map((skillName) => skillName.trim())
+    .filter((skillName) => skillName.length > 0);
+  fakeInstalledSkillNames = new Set(preinstalledSkills ?? []);
+}
+
+function readOptionValue(args: string[], optionName: string): string | undefined {
+  const optionIndex = args.findIndex((arg) => arg === optionName);
+  if (optionIndex < 0) {
+    return undefined;
+  }
+
+  return args[optionIndex + 1];
+}
+
+function buildFakeSkillsList(): SubprocessResult {
+  const skills = Array.from(fakeInstalledSkillNames ?? []).map((name) => ({
+    name,
+    path: `/fake/.claude/skills/${name}`,
+    scope: "project",
+    agents: ["Claude Code"],
+  }));
+
+  return {
+    code: 0,
+    stdout: `${JSON.stringify(skills, null, 2)}\n`,
+    stderr: "",
+  };
+}
+
+function buildFakeSkillsAdd(args: string[]): SubprocessResult {
+  const packageSource = args[2];
+  if (!packageSource) {
+    return {
+      code: 1,
+      stdout: "",
+      stderr: "skills add requires a package source",
+    };
+  }
+
+  const skillName = readOptionValue(args, "--skill") ?? packageSource;
+  fakeInstalledSkillNames?.add(skillName);
+
+  return {
+    code: 0,
+    stdout: `installed skill ${skillName} from ${packageSource}\n`,
+    stderr: "",
+  };
+}
+
+function buildFakeSkillsRemove(args: string[]): SubprocessResult {
+  const skillNames = args
+    .slice(2)
+    .filter((arg) => arg.length > 0 && !arg.startsWith("-"));
+
+  for (const skillName of skillNames) {
+    fakeInstalledSkillNames?.delete(skillName);
+  }
+
+  return {
+    code: 0,
+    stdout: `removed ${skillNames.length} skill(s)\n`,
+    stderr: "",
+  };
+}
+
+function buildFakeNpxResponse(args: string[]): SubprocessResult | undefined {
+  if (args[0] !== "skills") {
+    return undefined;
+  }
+
+  const subcommand = args[1];
+  if (subcommand === "list" || subcommand === "ls") {
+    return buildFakeSkillsList();
+  }
+
+  if (subcommand === "add") {
+    return buildFakeSkillsAdd(args);
+  }
+
+  if (subcommand === "remove" || subcommand === "rm") {
+    return buildFakeSkillsRemove(args);
+  }
+
+  return {
+    code: 0,
+    stdout: `[fake subprocess] npx ${args.join(" ")}\n`,
+    stderr: "",
+  };
 }
 
 function buildFakeCrgResponse(args: string[]): SubprocessResult {
@@ -98,6 +190,13 @@ export async function runSubprocess(
       const pipxResponse = buildFakePipxResponse(args);
       if (pipxResponse) {
         return pipxResponse;
+      }
+    }
+
+    if (command === "npx") {
+      const npxResponse = buildFakeNpxResponse(args);
+      if (npxResponse) {
+        return npxResponse;
       }
     }
 

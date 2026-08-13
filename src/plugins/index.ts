@@ -1,10 +1,11 @@
 import { crgPlugin } from "./crg/index.js";
 import { daemonPlugin } from "./daemon/index.js";
 import { patcherCheckpointPlugin } from "./patcher-checkpoint.js";
+import { skillsPlugin } from "./skills/index.js";
 import { testPlugin } from "./test-plugin.js";
 import type { AgemonPlugin } from "./types.js";
 
-const corePluginOrder: AgemonPlugin[] = [crgPlugin, daemonPlugin];
+const corePluginOrder: AgemonPlugin[] = [crgPlugin, daemonPlugin, skillsPlugin];
 
 export function getRegisteredPlugins(): AgemonPlugin[] {
   const devOnlyPlugins: AgemonPlugin[] =
