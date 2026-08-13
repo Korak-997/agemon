@@ -69,7 +69,9 @@ export class StateManifest {
     return this.state.actions.some((action) => action.plugin === plugin);
   }
 
-  async recordAction(input: RecordManifestActionInput): Promise<ManifestAction> {
+  async recordAction(
+    input: RecordManifestActionInput,
+  ): Promise<ManifestAction> {
     const action: ManifestAction = {
       id: randomUUID(),
       plugin: input.plugin,
