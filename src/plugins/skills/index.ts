@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { Context } from "../../core/context.js";
 import type {
   AgemonPlugin,
@@ -10,6 +13,8 @@ const PLUGIN_ID = "skills";
 
 const ACTION_TYPE_INSTALLED_SKILL = "installed-skill";
 const ACTION_TYPE_PREEXISTING_SKILL = "preexisting-skill";
+const ACTION_TYPE_GENERATED_SKILLS_LOCK = "generated-skills-lock";
+const SKILLS_LOCK_FILE = "skills-lock.json";
 
 interface SkillsListEntry {
   name: string;
@@ -40,7 +45,23 @@ function hasPreexistingRecord(ctx: Context, skillName: string): boolean {
 }
 
 function hasAnyRecordForSkill(ctx: Context, skillName: string): boolean {
-  return hasManagedInstallRecord(ctx, skillName) || hasPreexistingRecord(ctx, skillName);
+  return (
+    hasManagedInstallRecord(ctx, skillName) ||
+    hasPreexistingRecord(ctx, skillName)
+  );
+}
+
+function getSkillsLockPath(cwd: string): string {
+  return join(cwd, SKILLS_LOCK_FILE);
+}
+
+function hasManagedSkillsLockRecord(ctx: Context): boolean {
+  return getPluginActions(ctx).some(
+    (action) =>
+      action.type === ACTION_TYPE_GENERATED_SKILLS_LOCK &&
+      action.target === SKILLS_LOCK_FILE &&
+      action.preExisting === false,
+  );
 }
 
 async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
@@ -75,7 +96,9 @@ async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
 }
 
 function allBundleSkillsPresent(installedSkillNames: Set<string>): boolean {
-  return SKILL_BUNDLE.every((entry) => installedSkillNames.has(entry.skillName));
+  return SKILL_BUNDLE.every((entry) =>
+    installedSkillNames.has(entry.skillName),
+  );
 }
 
 async function detectSkills(ctx: Context): Promise<PluginPresence> {
@@ -116,6 +139,7 @@ async function installSkills(ctx: Context): Promise<void> {
     return;
   }
 
+  const skillsLockPreviouslyExisted = existsSync(getSkillsLockPath(ctx.cwd));
   const installedSkillNames = await listInstalledSkillNames(ctx);
   for (const entry of SKILL_BUNDLE) {
     if (installedSkillNames.has(entry.skillName)) {
@@ -153,6 +177,20 @@ async function installSkills(ctx: Context): Promise<void> {
       preExisting: false,
     });
   }
+
+  const skillsLockExistsAfterInstall = existsSync(getSkillsLockPath(ctx.cwd));
+  if (
+    !skillsLockPreviouslyExisted &&
+    skillsLockExistsAfterInstall &&
+    !hasManagedSkillsLockRecord(ctx)
+  ) {
+    await ctx.manifest.recordAction({
+      plugin: PLUGIN_ID,
+      type: ACTION_TYPE_GENERATED_SKILLS_LOCK,
+      target: SKILLS_LOCK_FILE,
+      preExisting: false,
+    });
+  }
 }
 
 async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
@@ -181,16 +219,25 @@ async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
 async function uninstallSkills(ctx: Context): Promise<void> {
   const managedActions = getPluginActions(ctx).filter(
     (action) =>
-      action.type === ACTION_TYPE_INSTALLED_SKILL && action.preExisting === false,
+      action.type === ACTION_TYPE_INSTALLED_SKILL &&
+      action.preExisting === false,
   );
+  const shouldRemoveManagedSkillsLock = hasManagedSkillsLockRecord(ctx);
 
   if (ctx.dryRun) {
     if (managedActions.length === 0) {
-      ctx.ui.info("Would keep pre-existing skills untouched");
+      if (shouldRemoveManagedSkillsLock) {
+        ctx.ui.info(`Would remove ${SKILLS_LOCK_FILE}`);
+      } else {
+        ctx.ui.info("Would keep pre-existing skills untouched");
+      }
       return;
     }
     for (const action of managedActions) {
       ctx.ui.info(`Would remove skill ${action.target}`);
+    }
+    if (shouldRemoveManagedSkillsLock) {
+      ctx.ui.info(`Would remove ${SKILLS_LOCK_FILE}`);
     }
     return;
   }
@@ -212,6 +259,10 @@ async function uninstallSkills(ctx: Context): Promise<void> {
         removeResult.stderr || `npx skills remove failed for ${action.target}`,
       );
     }
+  }
+
+  if (shouldRemoveManagedSkillsLock) {
+    await rm(getSkillsLockPath(ctx.cwd), { force: true });
   }
 
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
