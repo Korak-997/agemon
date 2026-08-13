@@ -4,8 +4,14 @@ import { patcherCheckpointPlugin } from "./patcher-checkpoint.js";
 import { skillsPlugin } from "./skills/index.js";
 import { testPlugin } from "./test-plugin.js";
 import type { AgemonPlugin } from "./types.js";
+import { workflowScaffolderPlugin } from "./workflow-scaffolder/index.js";
 
-const corePluginOrder: AgemonPlugin[] = [crgPlugin, daemonPlugin, skillsPlugin];
+const corePluginOrder: AgemonPlugin[] = [
+  crgPlugin,
+  daemonPlugin,
+  skillsPlugin,
+  workflowScaffolderPlugin,
+];
 
 export function getRegisteredPlugins(): AgemonPlugin[] {
   const devOnlyPlugins: AgemonPlugin[] =
