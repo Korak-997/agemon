@@ -131,12 +131,18 @@ async function invokeAgemon(
   const originalDev = process.env.AGEMON_DEV;
   const originalFakeSubprocess = process.env.AGEMON_FAKE_SUBPROCESS;
   const originalFakeServices = process.env.AGEMON_FAKE_SERVICES;
+  const originalOsReleasePath = process.env.AGEMON_OS_RELEASE_PATH;
+  const fixtureOsReleasePath = join(repoDir, ".sandbox", "os-release");
 
   process.chdir(repoDir);
   process.env.HOME = homeDir;
   process.env.AGEMON_DEV = "1";
   setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", real ? undefined : "1");
   setOrDeleteEnv("AGEMON_FAKE_SERVICES", real ? undefined : "1");
+  setOrDeleteEnv(
+    "AGEMON_OS_RELEASE_PATH",
+    existsSync(fixtureOsReleasePath) ? fixtureOsReleasePath : undefined,
+  );
 
   try {
     return await withCapturedOutput(() => runCli(argv));
@@ -146,6 +152,7 @@ async function invokeAgemon(
     setOrDeleteEnv("AGEMON_DEV", originalDev);
     setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", originalFakeSubprocess);
     setOrDeleteEnv("AGEMON_FAKE_SERVICES", originalFakeServices);
+    setOrDeleteEnv("AGEMON_OS_RELEASE_PATH", originalOsReleasePath);
   }
 }
 
