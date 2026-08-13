@@ -30,7 +30,8 @@
     "boxen": "^8.0.1",
     "commander": "^15.0.0",
     "ora": "^9.4.1",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
