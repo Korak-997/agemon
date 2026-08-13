@@ -1,0 +1,43 @@
+{
+  "name": "agemon",
+  "version": "0.1.0",
+  "description": "One command bootstraps an AI coding agent's working environment in any repo.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agemon": "bin/agemon.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "AGEMON_DEV=1 tsx src/cli/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "sandbox": "tsx scripts/sandbox.ts",
+    "sandbox:watch": "tsx scripts/sandbox.ts watch",
+    "sandbox:roundtrip": "tsx scripts/sandbox.ts roundtrip",
+    "sandbox:reset": "tsx scripts/sandbox.ts reset"
+  },
+  "dependencies": {
+    "boxen": "^8.0.1",
+    "commander": "^15.0.0",
+    "ora": "^9.4.1",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
+    "@types/node": "^26.2.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
