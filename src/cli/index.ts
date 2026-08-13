@@ -16,11 +16,14 @@ interface CliOptions {
   dryRun?: boolean;
   yes?: boolean;
   only?: string;
+  skipDaemon?: boolean;
 }
 
 async function runInstall(options: CliOptions): Promise<void> {
   const spinner = createStepSpinner();
-  const plugins = getRegisteredPlugins();
+  const plugins = getRegisteredPlugins().filter(
+    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+  );
   const context = await createContext({
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),

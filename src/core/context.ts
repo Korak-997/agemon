@@ -1,4 +1,6 @@
 import { detectPlatform, REQUIRED_BINARIES } from "../platform/detect.js";
+import type { ServiceManager } from "../platform/service-manager/index.js";
+import { createServiceManager } from "../platform/service-manager/index.js";
 import type { StepSpinner } from "../ui/spinner.js";
 import { StateManifest } from "./state-manifest.js";
 import { runSubprocess, type SubprocessResult } from "./subprocess-runner.js";
@@ -21,6 +23,7 @@ export interface Context {
   ui: StepSpinner;
   run: (command: string, args: string[]) => Promise<SubprocessResult>;
   manifest: StateManifest;
+  serviceManager: ServiceManager;
 }
 
 export interface CreateContextInput {
@@ -54,5 +57,11 @@ export async function createContext(
     ui: input.ui,
     run: runSubprocess,
     manifest: await StateManifest.load(process.cwd()),
+    serviceManager: createServiceManager({
+      os: platform.os,
+      run: runSubprocess,
+      homeDir: process.env.HOME,
+      user: process.env.USER,
+    }),
   };
 }

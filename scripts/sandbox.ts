@@ -19,6 +19,7 @@ interface RunFlags {
   real: boolean;
   trace: boolean;
   quiet: boolean;
+  skipDaemon: boolean;
   only?: string;
   label?: string;
 }
@@ -29,6 +30,7 @@ function parseFlags(args: string[]): RunFlags {
     real: false,
     trace: false,
     quiet: false,
+    skipDaemon: false,
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -36,6 +38,7 @@ function parseFlags(args: string[]): RunFlags {
     else if (arg === "--real") flags.real = true;
     else if (arg === "--trace") flags.trace = true;
     else if (arg === "--quiet") flags.quiet = true;
+    else if (arg === "--skip-daemon") flags.skipDaemon = true;
     else if (arg === "--only") {
       i += 1;
       flags.only = args[i];
@@ -50,6 +53,7 @@ function parseFlags(args: string[]): RunFlags {
 function buildAgemonArgv(flags: RunFlags): string[] {
   const argv: string[] = [];
   if (flags.dryRun) argv.push("--dry-run");
+  if (flags.skipDaemon) argv.push("--skip-daemon");
   if (flags.only) argv.push("--only", flags.only);
   if (flags.quiet) argv.push("--quiet");
   if (flags.trace) argv.push("--verbose");
