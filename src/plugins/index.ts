@@ -1,6 +1,7 @@
 import { cliToolPlugin } from "./cli-tool/index.js";
 import { crgPlugin } from "./crg/index.js";
 import { daemonPlugin } from "./daemon/index.js";
+import { masterPromptPlugin } from "./master-prompt/index.js";
 import { patcherCheckpointPlugin } from "./patcher-checkpoint.js";
 import { skillsPlugin } from "./skills/index.js";
 import { testPlugin } from "./test-plugin.js";
@@ -13,6 +14,7 @@ const corePluginOrder: AgemonPlugin[] = [
   skillsPlugin,
   workflowScaffolderPlugin,
   cliToolPlugin,
+  masterPromptPlugin,
 ];
 
 export function getRegisteredPlugins(): AgemonPlugin[] {
