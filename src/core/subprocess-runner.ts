@@ -12,11 +12,27 @@ function formatCommand(command: string, args: string[]): string {
 
 let fakeCrgInstalledState: boolean | null = null;
 let fakeInstalledSkillNames: Set<string> | null = null;
+let fakeInstalledGlobalNpmPackageNames: Set<string> | null = null;
+let fakeStateSignature: string | null = null;
+
+function buildFakeStateSignature(): string {
+  return [
+    process.env.AGEMON_FAKE_PREINSTALLED_CRG ?? "",
+    process.env.AGEMON_FAKE_PREINSTALLED_SKILLS ?? "",
+    process.env.AGEMON_FAKE_PREINSTALLED_NPM_PACKAGES ?? "",
+  ].join("||");
+}
 
 function initializeFakeStateIfNeeded(): void {
-  if (fakeCrgInstalledState !== null) {
+  const currentStateSignature = buildFakeStateSignature();
+  if (
+    fakeCrgInstalledState !== null &&
+    fakeStateSignature === currentStateSignature
+  ) {
     return;
   }
+  fakeStateSignature = currentStateSignature;
+
   fakeCrgInstalledState = process.env.AGEMON_FAKE_PREINSTALLED_CRG === "1";
 
   const preinstalledSkills = process.env.AGEMON_FAKE_PREINSTALLED_SKILLS
@@ -24,6 +40,12 @@ function initializeFakeStateIfNeeded(): void {
     .map((skillName) => skillName.trim())
     .filter((skillName) => skillName.length > 0);
   fakeInstalledSkillNames = new Set(preinstalledSkills ?? []);
+
+  const preinstalledGlobalNpmPackages = process.env.AGEMON_FAKE_PREINSTALLED_NPM_PACKAGES
+    ?.split(",")
+    .map((packageName) => packageName.trim())
+    .filter((packageName) => packageName.length > 0);
+  fakeInstalledGlobalNpmPackageNames = new Set(preinstalledGlobalNpmPackages ?? []);
 }
 
 function readOptionValue(args: string[], optionName: string): string | undefined {
@@ -179,6 +201,98 @@ function buildFakePipxResponse(args: string[]): SubprocessResult | undefined {
   return undefined;
 }
 
+function parseGlobalNpmPackageNames(args: string[]): string[] {
+  const packageNames: string[] = [];
+
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg || arg.startsWith("-")) {
+      continue;
+    }
+    packageNames.push(arg);
+  }
+
+  return packageNames;
+}
+
+function buildFakeNpmResponse(args: string[]): SubprocessResult | undefined {
+  const operation = args[0];
+  if (!operation) {
+    return undefined;
+  }
+
+  const hasGlobalFlag = args.includes("-g") || args.includes("--global");
+  if (!hasGlobalFlag) {
+    return {
+      code: 0,
+      stdout: `[fake subprocess] npm ${args.join(" ")}\n`,
+      stderr: "",
+    };
+  }
+
+  const packageNames = parseGlobalNpmPackageNames(args);
+
+  if (operation === "install") {
+    for (const packageName of packageNames) {
+      fakeInstalledGlobalNpmPackageNames?.add(packageName);
+    }
+    return {
+      code: 0,
+      stdout: `installed ${packageNames.length} package(s) globally\n`,
+      stderr: "",
+    };
+  }
+
+  if (operation === "uninstall") {
+    for (const packageName of packageNames) {
+      fakeInstalledGlobalNpmPackageNames?.delete(packageName);
+    }
+    return {
+      code: 0,
+      stdout: `removed ${packageNames.length} package(s) globally\n`,
+      stderr: "",
+    };
+  }
+
+  return {
+    code: 0,
+    stdout: `[fake subprocess] npm ${args.join(" ")}\n`,
+    stderr: "",
+  };
+}
+
+function buildFakeAgnixResponse(args: string[]): SubprocessResult {
+  if (!fakeInstalledGlobalNpmPackageNames?.has("agnix")) {
+    return {
+      code: 1,
+      stdout: "",
+      stderr: "agnix: command not found",
+    };
+  }
+
+  if (args[0] === "--version") {
+    return {
+      code: 0,
+      stdout: "agnix 0.0.0-fake\n",
+      stderr: "",
+    };
+  }
+
+  if (args[0] === "lint") {
+    return {
+      code: 0,
+      stdout: "agnix lint passed\n",
+      stderr: "",
+    };
+  }
+
+  return {
+    code: 0,
+    stdout: `[fake subprocess] agnix ${args.join(" ")}\n`,
+    stderr: "",
+  };
+}
+
 export async function runSubprocess(
   command: string,
   args: string[],
@@ -200,8 +314,19 @@ export async function runSubprocess(
       }
     }
 
+    if (command === "npm") {
+      const npmResponse = buildFakeNpmResponse(args);
+      if (npmResponse) {
+        return npmResponse;
+      }
+    }
+
     if (command === "code-review-graph") {
       return buildFakeCrgResponse(args);
+    }
+
+    if (command === "agnix") {
+      return buildFakeAgnixResponse(args);
     }
 
     return {
