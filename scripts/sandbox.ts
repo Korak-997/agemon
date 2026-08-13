@@ -125,12 +125,14 @@ async function invokeAgemon(
   repoDir: string,
   homeDir: string,
   real: boolean,
+  fixture: string,
 ): Promise<{ exitCode: number; output: string }> {
   const originalCwd = process.cwd();
   const originalHome = process.env.HOME;
   const originalDev = process.env.AGEMON_DEV;
   const originalFakeSubprocess = process.env.AGEMON_FAKE_SUBPROCESS;
   const originalFakeServices = process.env.AGEMON_FAKE_SERVICES;
+  const originalFakePreinstalledCrg = process.env.AGEMON_FAKE_PREINSTALLED_CRG;
   const originalOsReleasePath = process.env.AGEMON_OS_RELEASE_PATH;
   const fixtureOsReleasePath = join(repoDir, ".sandbox", "os-release");
 
@@ -139,6 +141,10 @@ async function invokeAgemon(
   process.env.AGEMON_DEV = "1";
   setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", real ? undefined : "1");
   setOrDeleteEnv("AGEMON_FAKE_SERVICES", real ? undefined : "1");
+  setOrDeleteEnv(
+    "AGEMON_FAKE_PREINSTALLED_CRG",
+    !real && fixture === "preexisting-crg" ? "1" : undefined,
+  );
   setOrDeleteEnv(
     "AGEMON_OS_RELEASE_PATH",
     existsSync(fixtureOsReleasePath) ? fixtureOsReleasePath : undefined,
@@ -152,6 +158,7 @@ async function invokeAgemon(
     setOrDeleteEnv("AGEMON_DEV", originalDev);
     setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", originalFakeSubprocess);
     setOrDeleteEnv("AGEMON_FAKE_SERVICES", originalFakeServices);
+    setOrDeleteEnv("AGEMON_FAKE_PREINSTALLED_CRG", originalFakePreinstalledCrg);
     setOrDeleteEnv("AGEMON_OS_RELEASE_PATH", originalOsReleasePath);
   }
 }
@@ -180,6 +187,7 @@ async function cmdRun(fixture: string, flags: RunFlags): Promise<void> {
     repoDir,
     homeDir,
     flags.real,
+    fixture,
   );
   const after = await snapshotTree(runDir);
 
@@ -207,6 +215,7 @@ async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
     repoDir,
     homeDir,
     flags.real,
+    fixture,
   );
   if (install.exitCode !== 0) {
     throw new Error(
@@ -219,6 +228,7 @@ async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
     repoDir,
     homeDir,
     flags.real,
+    fixture,
   );
   if (nuke.exitCode !== 0) {
     throw new Error(`nuke exited with code ${nuke.exitCode}:\n${nuke.output}`);

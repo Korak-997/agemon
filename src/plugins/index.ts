@@ -1,10 +1,11 @@
+import { crgPlugin } from "./crg/index.js";
 import { testPlugin } from "./test-plugin.js";
 import type { AgemonPlugin } from "./types.js";
 
-const corePluginOrder: AgemonPlugin[] = [];
+const corePluginOrder: AgemonPlugin[] = [crgPlugin];
 
 export function getRegisteredPlugins(): AgemonPlugin[] {
-	const devOnlyPlugins: AgemonPlugin[] =
-		process.env.AGEMON_DEV === "1" ? [testPlugin] : [];
-	return [...corePluginOrder, ...devOnlyPlugins];
+  const devOnlyPlugins: AgemonPlugin[] =
+    process.env.AGEMON_DEV === "1" ? [testPlugin] : [];
+  return [...corePluginOrder, ...devOnlyPlugins];
 }
