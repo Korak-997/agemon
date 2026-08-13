@@ -1,4 +1,10 @@
-// Statically ordered — the orchestrator (Phase 1) walks this array in
-// declaration order after resolving each plugin's `dependsOn`. No dynamic
-// plugin discovery: anyone reading this file sees the exact execution order.
-export const plugins = [];
+import { testPlugin } from "./test-plugin.js";
+import type { AgemonPlugin } from "./types.js";
+
+const corePluginOrder: AgemonPlugin[] = [];
+
+export function getRegisteredPlugins(): AgemonPlugin[] {
+	const devOnlyPlugins: AgemonPlugin[] =
+		process.env.AGEMON_DEV === "1" ? [testPlugin] : [];
+	return [...corePluginOrder, ...devOnlyPlugins];
+}

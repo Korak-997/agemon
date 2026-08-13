@@ -1,7 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
+import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
-import { plugins } from "../plugins/index.js";
+import { installPlugins, uninstallPlugins } from "../core/orchestrator.js";
+import { getRegisteredPlugins } from "../plugins/index.js";
 import { renderBanner } from "../ui/banner.js";
 import { createStepSpinner } from "../ui/spinner.js";
 import { theme } from "../ui/theme.js";
@@ -10,18 +12,34 @@ const VERSION = "0.1.0";
 const DESCRIPTION =
   "Bootstraps and reverses an AI coding agent's working environment in a repo.";
 
-async function runInstall(): Promise<void> {
+interface CliOptions {
+  dryRun?: boolean;
+  yes?: boolean;
+  only?: string;
+}
+
+async function runInstall(options: CliOptions): Promise<void> {
   const spinner = createStepSpinner();
-  spinner.start("Checking registered plugins");
+  const plugins = getRegisteredPlugins();
+  const context = await createContext({
+    dryRun: Boolean(options.dryRun),
+    yes: Boolean(options.yes),
+    ui: spinner,
+  });
 
-  if (plugins.length === 0) {
-    spinner.succeed("Nothing to do — no plugins registered yet.");
-    return;
-  }
+  await installPlugins(context, plugins, { only: options.only });
+}
 
-  // Phase 1 introduces the orchestrator that walks `plugins` here,
-  // resolving `dependsOn` and threading a `Context` through each one.
-  spinner.fail("No orchestrator wired up yet.");
+async function runNuke(options: CliOptions): Promise<void> {
+  const spinner = createStepSpinner();
+  const plugins = getRegisteredPlugins();
+  const context = await createContext({
+    dryRun: Boolean(options.dryRun),
+    yes: Boolean(options.yes),
+    ui: spinner,
+  });
+
+  await uninstallPlugins(context, plugins, { only: options.only });
 }
 
 function createProgram(): Command {
@@ -44,7 +62,15 @@ function createProgram(): Command {
         process.env.NO_COLOR = "1";
       }
     })
-    .action(runInstall);
+    .action((options: CliOptions) => runInstall(options));
+
+  program
+    .command("nuke")
+    .description("Reverse agemon-managed changes")
+    .option("--dry-run", "narrate actions without making changes")
+    .option("--yes", "skip confirmation prompts")
+    .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .action((options: CliOptions) => runNuke(options));
 
   program.exitOverride();
 
