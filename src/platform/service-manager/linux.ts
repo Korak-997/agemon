@@ -23,7 +23,15 @@ function resolveHomeDir(homeDir?: string): string {
 function resolveUser(user?: string): string {
   const resolvedUser = user ?? process.env.USER;
   if (!resolvedUser) {
-    throw new Error("Unable to resolve current user for loginctl commands.");
+    try {
+      const fallbackUser = process.env.LOGNAME ?? process.env.USERNAME;
+      if (fallbackUser) {
+        return fallbackUser;
+      }
+    } catch {}
+    throw new Error(
+      "Unable to resolve current user for loginctl commands. Set USER, LOGNAME, or pass an explicit user.",
+    );
   }
   return resolvedUser;
 }

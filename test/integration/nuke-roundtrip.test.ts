@@ -78,6 +78,64 @@ async function runRoundtripFixture(fixtureName: string): Promise<void> {
   expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
 }
 
+async function runInstallFixture(
+  fixtureName: string,
+  osId: string,
+): Promise<{
+  installExitCode: number;
+  beforeSnapshot: Awaited<ReturnType<typeof snapshotTree>>;
+  afterSnapshot: Awaited<ReturnType<typeof snapshotTree>>;
+}> {
+  const sandboxDirectory = await mkdtemp(
+    join(tmpdir(), "agemon-install-test-"),
+  );
+  createdTempDirectories.push(sandboxDirectory);
+
+  const repoDirectory = join(sandboxDirectory, "repo");
+  const homeDirectory = join(sandboxDirectory, "home");
+  await cp(join(fixturesRoot, fixtureName), repoDirectory, { recursive: true });
+
+  const fixtureOsReleaseDirectory = join(repoDirectory, ".sandbox");
+  const fixtureOsReleasePath = join(fixtureOsReleaseDirectory, "os-release");
+  await mkdir(fixtureOsReleaseDirectory, { recursive: true });
+  await writeFile(fixtureOsReleasePath, `ID=${osId}\n`, "utf8");
+
+  const beforeSnapshot = await snapshotTree(sandboxDirectory);
+
+  const originalCwd = process.cwd();
+  const originalHome = process.env.HOME;
+  const originalDev = process.env.AGEMON_DEV;
+  const originalFakeSubprocess = process.env.AGEMON_FAKE_SUBPROCESS;
+  const originalFakeServices = process.env.AGEMON_FAKE_SERVICES;
+  const originalFakePreinstalledCrg = process.env.AGEMON_FAKE_PREINSTALLED_CRG;
+  const originalOsReleasePath = process.env.AGEMON_OS_RELEASE_PATH;
+
+  process.chdir(repoDirectory);
+  process.env.HOME = homeDirectory;
+  process.env.AGEMON_DEV = "1";
+  process.env.AGEMON_FAKE_SUBPROCESS = "1";
+  process.env.AGEMON_FAKE_SERVICES = "1";
+  setOrDeleteEnv(
+    "AGEMON_FAKE_PREINSTALLED_CRG",
+    fixtureName === "preexisting-crg" ? "1" : undefined,
+  );
+  process.env.AGEMON_OS_RELEASE_PATH = fixtureOsReleasePath;
+
+  try {
+    const installExitCode = await runCli(["--yes"]);
+    const afterSnapshot = await snapshotTree(sandboxDirectory);
+    return { installExitCode, beforeSnapshot, afterSnapshot };
+  } finally {
+    process.chdir(originalCwd);
+    setOrDeleteEnv("HOME", originalHome);
+    setOrDeleteEnv("AGEMON_DEV", originalDev);
+    setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", originalFakeSubprocess);
+    setOrDeleteEnv("AGEMON_FAKE_SERVICES", originalFakeServices);
+    setOrDeleteEnv("AGEMON_FAKE_PREINSTALLED_CRG", originalFakePreinstalledCrg);
+    setOrDeleteEnv("AGEMON_OS_RELEASE_PATH", originalOsReleasePath);
+  }
+}
+
 describe("nuke roundtrip", () => {
   it("restores clean fixture byte-identically", async () => {
     await runRoundtripFixture("clean-repo");
@@ -85,5 +143,28 @@ describe("nuke roundtrip", () => {
 
   it("restores existing CLAUDE fixture byte-identically", async () => {
     await runRoundtripFixture("existing-claude-md");
+  });
+
+  it("restores messy agent rules fixture byte-identically", async () => {
+    await runRoundtripFixture("messy-agent-rules");
+  });
+
+  it("restores preexisting CRG fixture byte-identically", async () => {
+    await runRoundtripFixture("preexisting-crg");
+  });
+
+  it("fails install on unmanaged workflow collision", async () => {
+    const { installExitCode } = await runInstallFixture(
+      "colliding-workflow",
+      "ubuntu",
+    );
+    expect(installExitCode).toBe(1);
+  });
+
+  it("fails install on unsupported non-Ubuntu platform", async () => {
+    const { installExitCode, beforeSnapshot, afterSnapshot } =
+      await runInstallFixture("non-ubuntu", "debian");
+    expect(installExitCode).toBe(1);
+    expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 });
