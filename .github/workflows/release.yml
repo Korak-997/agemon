@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate tag format and package version
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+|-beta\.[0-9]+)?$ ]]; then
+            echo "Unsupported tag format: $TAG"
+            echo "Allowed: vX.Y.Z, vX.Y.Z-alpha.N, vX.Y.Z-beta.N"
+            exit 1
+          fi
+
+          PACKAGE_VERSION="$(node -p \"JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version\")"
+          if [[ "$PACKAGE_VERSION" != "$VERSION" ]]; then
+            echo "Tag version ($VERSION) does not match package.json version ($PACKAGE_VERSION)."
+            exit 1
+          fi
+
+      - name: Guard changelog and release metadata
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          if [[ ! -f CHANGELOG.md ]]; then
+            echo "Missing CHANGELOG.md. Run: npm run version-packages and commit the result before tagging."
+            exit 1
+          fi
+
+          if ! grep -Fq "## ${VERSION}" CHANGELOG.md && ! grep -Fq "## [${VERSION}]" CHANGELOG.md; then
+            echo "CHANGELOG.md does not contain an entry for ${VERSION}."
+            echo "Run: npm run version-packages, commit, then retag."
+            exit 1
+          fi
+
+          PENDING_CHANGESETS="$(find .changeset -maxdepth 1 -type f -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')"
+          if [[ "$PENDING_CHANGESETS" != "0" ]]; then
+            echo "Found pending .changeset markdown files (${PENDING_CHANGESETS})."
+            echo "Run: npm run version-packages and commit generated files before tagging."
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          if [[ "$VERSION" == *-alpha.* ]]; then
+            npm publish --tag alpha --provenance
+          elif [[ "$VERSION" == *-beta.* ]]; then
+            npm publish --tag beta --provenance
+          else
+            npm publish --tag latest --provenance
+          fi

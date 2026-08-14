@@ -152,6 +152,7 @@ Useful sandbox flags:
 ## Detailed Docs
 
 - Architecture and operations: `docs/architecture-and-operations.md`
+- Release process: `docs/releasing.md`
 - Audit and review report: `docs/review-2026-08-13.md`
 - Historical implementation plan: `docs/implementation-plan.md`
 
