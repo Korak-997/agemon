@@ -41,7 +41,7 @@ function buildUnitContents(cwd: string, profile: HardeningProfile): string {
     "[Service]",
     "Type=simple",
     `WorkingDirectory=${cwd}`,
-    "ExecStart=crg-daemon start",
+    "ExecStart=code-review-graph watch",
     ...getHardeningDirectives(profile),
     "Restart=always",
     "RestartSec=3",

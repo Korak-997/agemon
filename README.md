@@ -10,7 +10,7 @@ and can cleanly reverse those actions with `nuke`.
 Current v0.1 behavior is plugin-driven and runs in this order:
 
 1. `crg`: installs and verifies `code-review-graph`.
-2. `daemon`: registers `crg-daemon` autostart via `systemd --user`.
+2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user`.
 3. `skills`: installs bundled skills via `npx skills`.
 4. `workflow-scaffolder`: writes bundled GitHub workflow files.
 5. `cli-tool`: installs bundled global CLI tools.
