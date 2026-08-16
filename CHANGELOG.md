@@ -1,5 +1,10 @@
 # agemon
 
+## 1.1.0
+
+- feat: enhance deploy script with changelog entry management and prompt interface
+- fix: correct escaping in package version retrieval command
+
 ## 1.0.0
 
 ### Major Changes
