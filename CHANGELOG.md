@@ -1,5 +1,9 @@
 # agemon
 
+## 2.2.0
+
+- feat(skills): introduce skill groups and enhance installation process
+
 ## 2.1.1
 
 - fix: update references to 'crg' with 'code-review-graph' for clarity and consistency
