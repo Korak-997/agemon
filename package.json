@@ -28,7 +28,8 @@
   },
   "files": [
     "bin",
-    "dist"
+    "dist",
+    "assets"
   ],
   "engines": {
     "node": ">=24"

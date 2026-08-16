@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/.sandbox"]
+    "includes": ["**", "!**/dist", "!**/.sandbox", "!assets/skills"]
   },
   "formatter": {
     "enabled": true,

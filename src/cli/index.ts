@@ -41,6 +41,7 @@ interface CliOptions {
   yes?: boolean;
   only?: string;
   skipDaemon?: boolean;
+  skillGroups?: string;
 }
 
 async function runInstall(options: CliOptions): Promise<void> {
@@ -60,6 +61,7 @@ async function runInstall(options: CliOptions): Promise<void> {
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: spinner,
+    skillGroups: options.skillGroups,
   });
 
   await installPlugins(context, plugins, { only: options.only });
@@ -96,6 +98,10 @@ function createProgram(): Command {
     .option("--yes", "skip confirmation prompts")
     .option("--skip-daemon", "skip daemon registration")
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .option(
+      "--skill-groups <groups>",
+      "comma-separated skill group ids to install, or 'all'/'none' (default: interactive prompt per group, or essentials-only when non-interactive)",
+    )
     .option("--no-color", "disable colored output")
     .option("-v, --verbose", "show raw subprocess output beneath each step")
     .option("-q, --quiet", "print only the final summary")

@@ -7,7 +7,12 @@ import type {
   PluginPresence,
   PluginVerificationResult,
 } from "../types.js";
-import { SKILL_BUNDLE } from "./catalog.js";
+import {
+  SKILL_GROUPS,
+  type SkillBundleEntry,
+  type SkillGroup,
+} from "./catalog.js";
+import { resolveGroupsForFreshInstall } from "./group-selection.js";
 
 const PLUGIN_ID = "skills";
 
@@ -28,6 +33,24 @@ function getPluginActions(ctx: Context) {
   return ctx.manifest
     .getActions()
     .filter((action) => action.plugin === PLUGIN_ID);
+}
+
+function flattenSkills(groups: SkillGroup[]): SkillBundleEntry[] {
+  return groups.flatMap((group) => group.skills);
+}
+
+/**
+ * Which groups this repo has already engaged with, derived from the
+ * manifest rather than re-asked — a group counts as "recorded" once any one
+ * of its skills has a managed or preexisting record.
+ */
+function getRecordedGroups(ctx: Context): SkillGroup[] {
+  const recordedSkillNames = new Set(
+    getPluginActions(ctx).map((action) => action.target),
+  );
+  return SKILL_GROUPS.filter((group) =>
+    group.skills.some((skill) => recordedSkillNames.has(skill.skillName)),
+  );
 }
 
 function hasManagedInstallRecord(ctx: Context, skillName: string): boolean {
@@ -104,19 +127,22 @@ async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
   return installedSkillNames;
 }
 
-function allBundleSkillsPresent(installedSkillNames: Set<string>): boolean {
-  return SKILL_BUNDLE.every((entry) =>
-    installedSkillNames.has(entry.skillName),
-  );
-}
-
 async function detectSkills(ctx: Context): Promise<PluginPresence> {
-  const installedSkillNames = await listInstalledSkillNames(ctx);
-  if (!allBundleSkillsPresent(installedSkillNames)) {
+  const recordedGroups = getRecordedGroups(ctx);
+  if (recordedGroups.length === 0) {
     return { present: false, preExisting: false };
   }
 
-  const allManaged = SKILL_BUNDLE.every((entry) =>
+  const recordedEntries = flattenSkills(recordedGroups);
+  const installedSkillNames = await listInstalledSkillNames(ctx);
+  const allRecordedSkillsPresent = recordedEntries.every((entry) =>
+    installedSkillNames.has(entry.skillName),
+  );
+  if (!allRecordedSkillsPresent) {
+    return { present: false, preExisting: false };
+  }
+
+  const allManaged = recordedEntries.every((entry) =>
     hasManagedInstallRecord(ctx, entry.skillName),
   );
   if (allManaged) {
@@ -124,7 +150,7 @@ async function detectSkills(ctx: Context): Promise<PluginPresence> {
   }
 
   if (!ctx.dryRun) {
-    for (const entry of SKILL_BUNDLE) {
+    for (const entry of recordedEntries) {
       if (hasAnyRecordForSkill(ctx, entry.skillName)) {
         continue;
       }
@@ -141,8 +167,14 @@ async function detectSkills(ctx: Context): Promise<PluginPresence> {
 }
 
 async function installSkills(ctx: Context): Promise<void> {
+  const groupsToInstall = await resolveGroupsForFreshInstall(
+    ctx,
+    ctx.skillGroupsOption,
+  );
+  const entriesToInstall = flattenSkills(groupsToInstall);
+
   if (ctx.dryRun) {
-    for (const entry of SKILL_BUNDLE) {
+    for (const entry of entriesToInstall) {
       ctx.ui.info(`Would add skill ${entry.skillName} from ${entry.source}`);
     }
     return;
@@ -150,7 +182,7 @@ async function installSkills(ctx: Context): Promise<void> {
 
   const skillsLockPreviouslyExisted = existsSync(getSkillsLockPath(ctx.cwd));
   const installedSkillNames = await listInstalledSkillNames(ctx);
-  for (const entry of SKILL_BUNDLE) {
+  for (const entry of entriesToInstall) {
     if (installedSkillNames.has(entry.skillName)) {
       if (!hasAnyRecordForSkill(ctx, entry.skillName)) {
         await ctx.manifest.recordAction({
@@ -213,10 +245,16 @@ async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
     return { ok: true, detail: "dry-run" };
   }
 
+  const recordedGroups = getRecordedGroups(ctx);
+  const recordedEntries = flattenSkills(recordedGroups);
+  if (recordedEntries.length === 0) {
+    return { ok: false, detail: "No skill groups installed yet" };
+  }
+
   const installedSkillNames = await listInstalledSkillNames(ctx);
-  const missingSkillNames = SKILL_BUNDLE.map((entry) => entry.skillName).filter(
-    (skillName) => !installedSkillNames.has(skillName),
-  );
+  const missingSkillNames = recordedEntries
+    .map((entry) => entry.skillName)
+    .filter((skillName) => !installedSkillNames.has(skillName));
 
   if (missingSkillNames.length > 0) {
     return {
@@ -227,7 +265,7 @@ async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
 
   return {
     ok: true,
-    detail: `${SKILL_BUNDLE.length} skill bundle entries present`,
+    detail: `${recordedGroups.length} skill group(s), ${recordedEntries.length} skill(s) present`,
   };
 }
 

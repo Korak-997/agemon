@@ -13,7 +13,10 @@ Current v0.1 behavior is plugin-driven and runs in this order:
 2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user`, under a
    unit name derived from the current git repo (or plain directory, outside a repo) —
    see [Daemon naming](#daemon-naming).
-3. `skills`: installs bundled skills via `npx skills`.
+3. `skills`: installs bundled skills via `npx skills`. Always installs the `essentials` group;
+   additional groups (design, security, code quality, architecture, self-review, performance)
+   are selected interactively, via `--skill-groups`, or skipped entirely in a non-interactive
+   session — see [Skill Groups](#skill-groups).
 4. `workflow-scaffolder`: writes bundled GitHub workflow files.
 5. `cli-tool`: installs bundled global CLI tools.
 6. `master-prompt`: consolidates agent rule files and pointer files.
@@ -31,6 +34,41 @@ Every plugin's `detect` + `verify` runs on each invocation, not just on first in
   currently there and asks whether to rewrite/fix it. `--yes` answers yes automatically;
   a non-interactive session (CI, piped output) answers no automatically and just reports
   the problem, matching the [update check](#update-checks)'s non-interactive behavior.
+
+### Skill Groups
+
+The `skills` plugin installs one always-on group plus whichever optional groups you select:
+
+| Group | Skills | What it covers |
+|---|---|---|
+| `essentials` (always on) | `web-design-guidelines`, `writing-guidelines` | Vercel Labs' general web design and writing review guidelines. Not vendored/renamed — see note below. |
+| `design` | `agemon-design` + 3 recipe variants (`agemon-design-minimal`, `agemon-design-editorial`, `agemon-design-dashboard`) | Design engineering: anti-slop rules, discovery, and outcome recipes (dashboard/landing/auth), covering both visual design and UI/UX. |
+| `security` | `agemon-security` | Exploit-driven security review — no finding without a working proof-of-concept. |
+| `code-quality` | `agemon-clean-code`, `agemon-house-rules` | Simplicity, DRY architecture, self-documenting naming, surgical scope control. |
+| `architecture` | `agemon-architecture` | Clean Architecture review: dependency rule, layering, boundary crossing, SOLID. |
+| `self-review` | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | Verification before claiming completion, giving/receiving code review, root-cause debugging. |
+| `performance` | `agemon-performance` | Algorithmic-complexity-first discipline: N+1 detection, hot-loop hygiene, when not to optimize. |
+
+Selection order:
+
+- `--skill-groups <ids>`: explicit, non-interactive. Comma-separated group ids, or the keywords
+  `all` / `none`. Always includes `essentials` regardless of what you pass.
+- No flag, interactive terminal: asks once per optional group.
+- No flag, non-interactive (CI, piped output, or `--dry-run`): only `essentials` installs —
+  pass `--skill-groups` explicitly to get optional groups without a prompt.
+
+Re-running `agemon` in a repo only re-verifies the groups that repo already selected — it never
+asks you to newly opt into groups you previously declined.
+
+Every non-essential skill is vendored into agemon's own repo under `assets/skills/` and renamed
+under an `agemon-*` identity, rather than fetched and installed under its original upstream name
+at bootstrap time — so installs don't depend on GitHub being reachable, won't drift if an
+upstream repo changes, and read as agemon's own rather than a third-party project name. See
+[Vendored Skills](#vendored-skills--attribution) for sources and licenses.
+
+`essentials` is the one exception: `vercel-labs/agent-skills` carries no detected license, so
+agemon can't vendor (redistribute) a renamed copy of it — it's still fetched live from that repo
+under its original names, exactly as before this skill-groups feature existed.
 
 ### Daemon naming
 
@@ -124,6 +162,8 @@ agemon nuke [options]
 - `--yes`: skip confirmation prompts.
 - `--only <plugins>`: run only a comma-separated subset of plugins.
 - `--skip-daemon`: skip daemon registration during install.
+- `--skill-groups <groups>`: comma-separated skill group ids to install, or `all`/`none` — see
+  [Skill Groups](#skill-groups).
 - `--no-color`: disable ANSI colors.
 - `-v, --verbose`: show raw subprocess output beneath each step.
 - `-q, --quiet`: reduce output to minimal step/final lines.
@@ -139,6 +179,12 @@ agemon --only skills,workflow-scaffolder
 
 # Reverse only specific plugins
 agemon nuke --only skills,workflow-scaffolder
+
+# Install every skill group non-interactively (e.g. in CI)
+agemon --yes --skill-groups all
+
+# Install only the security and architecture groups on top of essentials
+agemon --yes --skill-groups security,architecture
 ```
 
 ## Reversibility Guarantees
@@ -215,6 +261,33 @@ Useful sandbox flags:
 - Release process: `docs/releasing.md`
 - Audit and review report: `docs/review-2026-08-13.md`
 - Historical implementation plan: `docs/implementation-plan.md`
+
+## Vendored Skills & Attribution
+
+The `design`, `security`, `code-quality`, `architecture`, `self-review`, and `performance` skill
+groups (see [Skill Groups](#skill-groups)) are vendored under `assets/skills/<group>/<skill>/`.
+Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
+and a copy of its upstream `LICENSE`. Sources, all MIT-licensed:
+
+Every vendored skill is renamed to an `agemon-*` identity (frontmatter `name` and directory) —
+it should never be obvious from installing it that the content originated elsewhere. Original
+upstream names are preserved only in each skill's `NOTICE.md`, for attribution.
+
+| Renamed to | Originally | Source |
+|---|---|---|
+| `agemon-design`, `agemon-design-minimal`, `agemon-design-editorial`, `agemon-design-dashboard` | `ui-craft` + 3 recipe variants | [educlopez/ui-craft](https://github.com/educlopez/ui-craft) |
+| `agemon-security` | `security-review` (also avoids colliding with Claude Code's own built-in skill of the same name) | [Dilaz/security-review-skill](https://github.com/Dilaz/security-review-skill) |
+| `agemon-architecture` | `clean-architecture` | [nathankim0/clean-architecture-skills](https://github.com/nathankim0/clean-architecture-skills) |
+| `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | `verification-before-completion`, `receiving-code-review`, `requesting-code-review`, `systematic-debugging` | [obra/superpowers](https://github.com/obra/superpowers) (cherry-picked; not a full vendor of that framework) |
+| `agemon-clean-code` | `karpathy-guidelines` | [swarmclawai/andrej-karpathy-skills](https://github.com/swarmclawai/andrej-karpathy-skills) |
+| `agemon-house-rules`, `agemon-performance` | — | Original — authored for this project, `agemon-house-rules` distilled from this repo's own `AGENTS.md`. |
+
+`ui-craft`'s own reference files (33 files under `agemon-design/references/`) still mention
+"ui-craft" by name in prose in a few places — they document that project's own separate CLI/MCP
+tooling (`ui-craft-detect`, the `ui-craft` MCP server's `route_task`), which genuinely still goes
+by that name and isn't part of what agemon ships. Rewriting 33 files of someone else's authored
+guidance to scrub every mention was judged higher-risk than leaving a few internal citations
+intact; the skill's own identity (what gets installed, listed, and invoked) is fully renamed.
 
 ## Roadmap Notes
 

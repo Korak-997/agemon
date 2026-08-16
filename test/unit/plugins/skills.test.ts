@@ -6,6 +6,7 @@ import type { Context } from "../../../src/core/context.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 
 const createdTempDirectories: string[] = [];
@@ -50,7 +51,7 @@ function createNoOpUi(): Context["ui"] {
   };
 }
 
-async function createTestContext(): Promise<Context> {
+async function createTestContext(skillGroupsOption?: string): Promise<Context> {
   const sandboxDirectory = await mkdtemp(join(tmpdir(), "agemon-skills-test-"));
   createdTempDirectories.push(sandboxDirectory);
 
@@ -70,6 +71,7 @@ async function createTestContext(): Promise<Context> {
     run: runSubprocess,
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    skillGroupsOption,
   };
 }
 
@@ -102,5 +104,77 @@ describe("skills plugin", () => {
       .getActions()
       .filter((action) => action.plugin === "skills");
     expect(actionsAfterUninstall).toEqual([]);
+  });
+
+  it("declines every optional group when confirm always says no", async () => {
+    const context = await createTestContext();
+
+    await skillsPlugin.install(context);
+
+    const installedSkillNames = context.manifest
+      .getActions()
+      .filter((action) => action.plugin === "skills")
+      .map((action) => action.target);
+    expect(installedSkillNames.sort()).toEqual(
+      findSkillGroup("essentials")
+        ?.skills.map((skill) => skill.skillName)
+        .sort(),
+    );
+  });
+
+  it("installs an explicitly requested group on top of the defaults", async () => {
+    const context = await createTestContext("architecture");
+
+    await skillsPlugin.install(context);
+
+    const installedSkillNames = context.manifest
+      .getActions()
+      .filter((action) => action.plugin === "skills")
+      .map((action) => action.target);
+    const expectedSkillNames = [
+      ...(findSkillGroup("essentials")?.skills ?? []),
+      ...(findSkillGroup("architecture")?.skills ?? []),
+    ].map((skill) => skill.skillName);
+    expect(installedSkillNames.sort()).toEqual(expectedSkillNames.sort());
+
+    const verification = await skillsPlugin.verify(context);
+    expect(verification.ok).toBe(true);
+  });
+
+  it("installs every group with --skill-groups all", async () => {
+    const context = await createTestContext("all");
+
+    await skillsPlugin.install(context);
+
+    const installedSkillNames = new Set(
+      context.manifest
+        .getActions()
+        .filter((action) => action.plugin === "skills")
+        .map((action) => action.target),
+    );
+    expect(installedSkillNames.has("agemon-design")).toBe(true);
+    expect(installedSkillNames.has("agemon-security")).toBe(true);
+    expect(installedSkillNames.has("agemon-architecture")).toBe(true);
+    expect(installedSkillNames.has("agemon-performance")).toBe(true);
+  });
+
+  it("rejects an unknown skill group id", async () => {
+    const context = await createTestContext("not-a-real-group");
+
+    await expect(skillsPlugin.install(context)).rejects.toThrow(
+      "Unknown skill group id(s): not-a-real-group",
+    );
+  });
+
+  it("verification does not require groups outside the ones actually installed", async () => {
+    const context = await createTestContext("architecture");
+    await skillsPlugin.install(context);
+
+    // Regression guard: verify() must scope to recorded groups, not the full
+    // static catalog — installing only "essentials" + "architecture" must
+    // not fail verification just because "design" was never selected.
+    const verification = await skillsPlugin.verify(context);
+    expect(verification.ok).toBe(true);
+    expect(verification.detail).toContain("2 skill group(s)");
   });
 });

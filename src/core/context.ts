@@ -39,12 +39,21 @@ export interface Context {
    * otherwise shows a real y/N prompt. See core/prompt.ts.
    */
   confirm: (message: string) => Promise<boolean>;
+  /**
+   * Raw `--skill-groups` CLI value, or undefined when the flag was omitted.
+   * Parsed and resolved by the skills plugin itself (see
+   * plugins/skills/group-selection.ts) — kept as a raw string here so
+   * Context stays a plain passthrough of CLI input, not plugin-specific
+   * state.
+   */
+  skillGroupsOption?: string;
 }
 
 export interface CreateContextInput {
   dryRun: boolean;
   yes: boolean;
   ui: StepSpinner;
+  skillGroups?: string;
 }
 
 export async function createContext(
@@ -68,6 +77,7 @@ export async function createContext(
     binaries: REQUIRED_BINARIES.map((name) => platform.binaries[name]),
     dryRun: input.dryRun,
     yes: input.yes,
+    skillGroupsOption: input.skillGroups,
     log: console,
     ui: input.ui,
     run: runSubprocess,
