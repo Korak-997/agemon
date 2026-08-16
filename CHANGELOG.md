@@ -1,5 +1,10 @@
 # agemon
 
+## 2.1.0
+
+- feat: enhance daemon plugin with dynamic unit naming and confirmation prompts
+- fix: update daemon service command to use 'code-review-graph watch'
+
 ## 2.0.0
 
 - feat: add update checking mechanism for agemon CLI
