@@ -10,7 +10,9 @@ and can cleanly reverse those actions with `nuke`.
 Current v0.1 behavior is plugin-driven and runs in this order:
 
 1. `crg`: installs and verifies `code-review-graph`.
-2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user`.
+2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user`, under a
+   unit name derived from the current git repo (or plain directory, outside a repo) —
+   see [Daemon naming](#daemon-naming).
 3. `skills`: installs bundled skills via `npx skills`.
 4. `workflow-scaffolder`: writes bundled GitHub workflow files.
 5. `cli-tool`: installs bundled global CLI tools.
@@ -18,6 +20,26 @@ Current v0.1 behavior is plugin-driven and runs in this order:
 
 Every mutating plugin action is recorded in `.agemon/state.json` and used by `nuke` for
 targeted reversal.
+
+### Re-running against an already-bootstrapped repo
+
+Every plugin's `detect` + `verify` runs on each invocation, not just on first install:
+
+- Not detected: fresh install, as above.
+- Detected and healthy: reported and left alone — no reinstalling on every run.
+- Detected but `verify` fails (e.g. a daemon stuck crash-looping): agemon reports what's
+  currently there and asks whether to rewrite/fix it. `--yes` answers yes automatically;
+  a non-interactive session (CI, piped output) answers no automatically and just reports
+  the problem, matching the [update check](#update-checks)'s non-interactive behavior.
+
+### Daemon naming
+
+The daemon's systemd unit is named `agemon-crg-daemon-<slug>.service`, where `<slug>` is
+derived from the current git repository's top-level directory name (or the plain working
+directory name outside a repo). This keeps repos independent — without it, running
+`agemon` in two different repos on the same machine would register the *same* systemd
+user unit, and the second repo would silently overwrite and restart the first repo's
+daemon on its own `WorkingDirectory`.
 
 ## Requirements
 
@@ -48,10 +70,11 @@ Or, from a local clone:
 sh ./install.sh
 ```
 
-Then run it in any repository you want to bootstrap:
+Then run it in any repository you want to bootstrap — plain `agemon` *is* the install
+command, there is no separate `install` subcommand:
 
 ```bash
-agemon install
+agemon
 ```
 
 ### Installer options
@@ -71,7 +94,7 @@ sudo rm -rf /usr/local/lib/agemon /usr/local/bin/agemon   # root/system install
 
 ### Update checks
 
-Each run of `agemon install`/`agemon nuke` (skipped for `--dry-run`) checks once a day
+Each run of `agemon`/`agemon nuke` (skipped for `--dry-run`) checks once a day
 whether a newer GitHub Release exists:
 
 - Interactive terminal: prompts to install the update now; on yes, re-runs `install.sh`
@@ -109,10 +132,10 @@ Examples:
 
 ```bash
 # See planned actions only
-agemon install --dry-run
+agemon --dry-run
 
 # Install only skills and workflows
-agemon install --only skills,workflow-scaffolder
+agemon --only skills,workflow-scaffolder
 
 # Reverse only specific plugins
 agemon nuke --only skills,workflow-scaffolder

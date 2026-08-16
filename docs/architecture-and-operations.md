@@ -26,6 +26,9 @@ Context is created in `src/core/context.ts` and includes:
 - `run`: subprocess runner abstraction.
 - `manifest`: `.agemon/state.json` handler.
 - `serviceManager`: platform-specific daemon manager.
+- `confirm`: shared mid-run confirmation policy (`src/core/prompt.ts`) — resolves `true`
+  immediately under `--yes`, `false` immediately with no TTY to prompt on, otherwise
+  shows a real y/N prompt.
 
 Platform detection lives in `src/platform/detect.ts` and validates Ubuntu via
 `/etc/os-release` (`ID=ubuntu`).
@@ -61,9 +64,13 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 
 ### `daemon`
 
-- Registers `agemon-crg-daemon.service` with `systemd --user`.
+- Registers `agemon-crg-daemon-<slug>.service` with `systemd --user`, where `<slug>` is
+  derived from the current git repository's top-level directory name (`git rev-parse
+  --show-toplevel`), falling back to the plain working directory name outside a repo.
+  This keeps repos independent: a single fixed unit name would mean the second repo
+  bootstrapped on a machine silently overwrites and restarts the first repo's daemon.
 - Ensures `loginctl` linger enabled when needed.
-- Verifies service active.
+- Verifies service active; `verify`'s detail includes the resolved unit name.
 - On uninstall, disables service and optionally disables linger if agemon enabled it.
 
 ### `skills`
@@ -117,11 +124,14 @@ Current bundle (`src/plugins/cli-tool/catalog.ts`):
 
 - Resolves dependency order with DFS and cycle detection.
 - Supports `--only` selection.
-- Install path:
+- Install path, per plugin:
   - `detect`
-  - skip if already present
-  - `install`
-  - `verify` (throws on failure)
+  - not present: fresh install — `install` then `verify` (throws on failure)
+  - present: `verify` runs regardless, surfacing what's currently there
+    - healthy (`ok: true`): reported and left alone, no reinstalling on every run
+    - unhealthy: reports the problem and calls `ctx.confirm(...)` to ask whether to
+      rewrite/fix it; if confirmed, `install` runs again followed by a re-`verify`
+      (throws if still unhealthy); if declined, reported and left as-is
 - Uninstall path:
   - reverse order
   - `uninstall`
@@ -215,8 +225,8 @@ Used for sandbox and unit/integration tests:
 Primary commands:
 
 ```bash
-# install
-agemon install
+# install (plain `agemon` — there is no separate `install` subcommand)
+agemon
 
 # uninstall/reverse
 agemon nuke

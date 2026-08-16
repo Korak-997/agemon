@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { Context } from "../../core/context.js";
 import type {
   AgemonPlugin,
@@ -6,11 +7,35 @@ import type {
 } from "../types.js";
 
 const PLUGIN_ID = "daemon";
-const UNIT_NAME = "agemon-crg-daemon.service";
+const UNIT_NAME_PREFIX = "agemon-crg-daemon";
+const UNIT_NAME_MAX_SLUG_LENGTH = 40;
+const GIT_TOPLEVEL_TIMEOUT_MS = 10_000;
 
 const ACTION_TYPE_REGISTERED_SERVICE = "registered-service";
 const ACTION_TYPE_PREEXISTING_SERVICE = "preexisting-service";
 const ACTION_TYPE_ENABLED_LINGER = "enabled-linger";
+
+function slugifyForUnitName(raw: string): string {
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return (normalized || "repo").slice(0, UNIT_NAME_MAX_SLUG_LENGTH);
+}
+
+/**
+ * The unit is named after the repo (or plain directory, outside a git repo)
+ * agemon is running in — a single fixed unit name would collide across
+ * every project on the machine, with the daemon registered last silently
+ * overwriting and restarting every other project's unit file.
+ */
+async function resolveUnitName(ctx: Context): Promise<string> {
+  const gitToplevel = await ctx.run("git", ["rev-parse", "--show-toplevel"], {
+    timeoutMs: GIT_TOPLEVEL_TIMEOUT_MS,
+  });
+  const repoRoot = gitToplevel.code === 0 ? gitToplevel.stdout.trim() : ctx.cwd;
+  return `${UNIT_NAME_PREFIX}-${slugifyForUnitName(basename(repoRoot))}.service`;
+}
 
 type HardeningProfile = "strict" | "compat";
 
@@ -83,7 +108,8 @@ function enabledLingerByAgemon(ctx: Context): boolean {
 }
 
 async function detectDaemon(ctx: Context): Promise<PluginPresence> {
-  const status = await ctx.serviceManager.isActive(UNIT_NAME);
+  const unitName = await resolveUnitName(ctx);
+  const status = await ctx.serviceManager.isActive(unitName);
   if (!status.active) {
     return { present: false, preExisting: false };
   }
@@ -96,7 +122,7 @@ async function detectDaemon(ctx: Context): Promise<PluginPresence> {
     await ctx.manifest.recordAction({
       plugin: PLUGIN_ID,
       type: ACTION_TYPE_PREEXISTING_SERVICE,
-      target: UNIT_NAME,
+      target: unitName,
       preExisting: true,
     });
   }
@@ -105,8 +131,10 @@ async function detectDaemon(ctx: Context): Promise<PluginPresence> {
 }
 
 async function installDaemon(ctx: Context): Promise<void> {
+  const unitName = await resolveUnitName(ctx);
+
   if (ctx.dryRun) {
-    ctx.ui.info(`Would register user service ${UNIT_NAME}`);
+    ctx.ui.info(`Would register user service ${unitName}`);
     ctx.ui.info("Would enable user linger when not already enabled");
     return;
   }
@@ -115,7 +143,7 @@ async function installDaemon(ctx: Context): Promise<void> {
   const registration = await (async () => {
     try {
       return await ctx.serviceManager.registerAutostart({
-        unitName: UNIT_NAME,
+        unitName,
         unitContents: buildUnitContents(ctx.cwd, configuredProfile),
       });
     } catch (error) {
@@ -127,7 +155,7 @@ async function installDaemon(ctx: Context): Promise<void> {
         "Strict daemon hardening failed; retrying with compatibility hardening.",
       );
       return await ctx.serviceManager.registerAutostart({
-        unitName: UNIT_NAME,
+        unitName,
         unitContents: buildUnitContents(ctx.cwd, "compat"),
       });
     }
@@ -155,32 +183,34 @@ async function verifyDaemon(ctx: Context): Promise<PluginVerificationResult> {
     return { ok: true, detail: "dry-run" };
   }
 
-  const status = await ctx.serviceManager.isActive(UNIT_NAME);
+  const unitName = await resolveUnitName(ctx);
+  const status = await ctx.serviceManager.isActive(unitName);
   if (!status.active) {
-    return { ok: false, detail: "user service is not active" };
+    return { ok: false, detail: `${unitName} is not active` };
   }
 
-  return { ok: true, detail: "service active" };
+  return { ok: true, detail: `${unitName} active` };
 }
 
 async function uninstallDaemon(ctx: Context): Promise<void> {
+  const unitName = await resolveUnitName(ctx);
   const managedService = hasManagedServiceRegistration(ctx);
 
   if (ctx.dryRun) {
     if (managedService) {
-      ctx.ui.info(`Would unregister user service ${UNIT_NAME}`);
+      ctx.ui.info(`Would unregister user service ${unitName}`);
       if (enabledLingerByAgemon(ctx)) {
         ctx.ui.info("Would disable user linger because agemon enabled it");
       }
     } else {
-      ctx.ui.info(`Would keep pre-existing user service ${UNIT_NAME}`);
+      ctx.ui.info(`Would keep pre-existing user service ${unitName}`);
     }
     return;
   }
 
   if (managedService) {
     await ctx.serviceManager.unregisterAutostart({
-      unitName: UNIT_NAME,
+      unitName,
       disableLinger: enabledLingerByAgemon(ctx),
     });
   }

@@ -62,6 +62,7 @@ async function createTestContext(): Promise<Context> {
     binaries: [],
     dryRun: false,
     yes: true,
+    confirm: async () => false,
     log: console,
     ui: createNoOpUi(),
     run: async () => ({ code: 0, stdout: "", stderr: "" }),

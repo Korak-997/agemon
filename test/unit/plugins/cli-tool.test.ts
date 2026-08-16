@@ -72,6 +72,7 @@ async function createTestContext(
     binaries: [],
     dryRun: false,
     yes: true,
+    confirm: async () => false,
     log: console,
     ui: createNoOpUi(),
     run: runSubprocess,

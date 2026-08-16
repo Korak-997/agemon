@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { theme } from "../ui/theme.js";
+import { isInteractiveTerminal, promptYesNo } from "./prompt.js";
 
 const GITHUB_REPO = "Korak-997/agemon";
 const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
@@ -97,16 +97,6 @@ async function resolveLatestVersion(): Promise<string | undefined> {
   return cached?.latestVersion;
 }
 
-async function promptYesNo(message: string): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question(`${message} [y/N] `);
-    return answer.trim().toLowerCase() === "y";
-  } finally {
-    rl.close();
-  }
-}
-
 function runInstaller(): boolean {
   try {
     execFileSync("sh", ["-c", `curl -fsSL ${INSTALL_SCRIPT_URL} | sh`], {
@@ -146,7 +136,7 @@ export async function checkForUpdate(
     return false;
   }
 
-  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const isInteractive = isInteractiveTerminal();
   const updateNotice = `A new version of agemon is available: ${input.currentVersion} -> ${latestVersion}.`;
 
   if (!isInteractive) {

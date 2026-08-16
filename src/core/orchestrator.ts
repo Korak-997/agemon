@@ -67,6 +67,70 @@ function buildVerificationMessage(pluginId: string, detail?: string): string {
   return `Installed ${pluginId} (${detail})`;
 }
 
+function buildPresenceMessage(pluginId: string, detail?: string): string {
+  if (!detail) return `Already installed ${pluginId}`;
+  return `Already installed ${pluginId} (${detail})`;
+}
+
+async function installFresh(ctx: Context, plugin: AgemonPlugin): Promise<void> {
+  ctx.ui.info(`${plugin.id} not detected — running a fresh install`);
+  await plugin.install(ctx);
+  const verification = await plugin.verify(ctx);
+  if (!verification.ok) {
+    ctx.ui.fail(`Verification failed for ${plugin.id}`);
+    throw new Error(
+      verification.detail ?? `Verification failed for plugin '${plugin.id}'.`,
+    );
+  }
+
+  ctx.ui.succeed(buildVerificationMessage(plugin.id, verification.detail));
+}
+
+/**
+ * A plugin whose `detect` reports it present isn't necessarily healthy — its
+ * own `verify` is the real source of truth, and is what surfaces "what's
+ * currently there" to the user. Only an unhealthy result is worth
+ * interrupting the run for; a healthy one just gets reported and skipped.
+ */
+async function reconcileExisting(
+  ctx: Context,
+  plugin: AgemonPlugin,
+): Promise<void> {
+  const verification = await plugin.verify(ctx);
+  if (verification.ok) {
+    ctx.ui.succeed(buildPresenceMessage(plugin.id, verification.detail));
+    return;
+  }
+
+  ctx.ui.info(
+    `${plugin.id} is already present but not healthy: ${
+      verification.detail ?? "no details available"
+    }`,
+  );
+
+  const shouldFix = await ctx.confirm(`Rewrite/fix ${plugin.id} now?`);
+  if (!shouldFix) {
+    ctx.ui.fail(
+      `Left ${plugin.id} as-is — re-run with --yes, or interactively, to fix it.`,
+    );
+    return;
+  }
+
+  await plugin.install(ctx);
+  const reverification = await plugin.verify(ctx);
+  if (!reverification.ok) {
+    ctx.ui.fail(`Fix failed for ${plugin.id}`);
+    throw new Error(
+      reverification.detail ??
+        `Verification failed for plugin '${plugin.id}' after a fix attempt.`,
+    );
+  }
+
+  ctx.ui.succeed(
+    `Fixed ${plugin.id} (${reverification.detail ?? "now healthy"})`,
+  );
+}
+
 export async function installPlugins(
   ctx: Context,
   allPlugins: AgemonPlugin[],
@@ -81,24 +145,15 @@ export async function installPlugins(
   }
 
   for (const plugin of plugins) {
-    ctx.ui.start(`Installing ${plugin.id}`);
+    ctx.ui.start(`Checking ${plugin.id}`);
     const presence = await plugin.detect(ctx);
 
     if (presence.present) {
-      ctx.ui.succeed(`Already installed ${plugin.id}`);
+      await reconcileExisting(ctx, plugin);
       continue;
     }
 
-    await plugin.install(ctx);
-    const verification = await plugin.verify(ctx);
-    if (!verification.ok) {
-      ctx.ui.fail(`Verification failed for ${plugin.id}`);
-      throw new Error(
-        verification.detail ?? `Verification failed for plugin '${plugin.id}'.`,
-      );
-    }
-
-    ctx.ui.succeed(buildVerificationMessage(plugin.id, verification.detail));
+    await installFresh(ctx, plugin);
   }
 }
 
