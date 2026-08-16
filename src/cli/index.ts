@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import { createContext } from "../core/context.js";
@@ -8,7 +10,28 @@ import { renderBanner } from "../ui/banner.js";
 import { createStepSpinner } from "../ui/spinner.js";
 import { theme } from "../ui/theme.js";
 
-const VERSION = "0.1.0";
+const PACKAGE_JSON_SEARCH_DEPTH = 5;
+
+// This file's own directory differs between dev (src/cli/index.ts, run via
+// tsx) and the built/installed layout (dist/index.js, one level closer to
+// the package root) — walk up until the nearest package.json is found
+// rather than hardcoding a relative path that would only match one of them.
+function resolvePackageVersion(): string {
+  let currentDir = dirname(fileURLToPath(import.meta.url));
+  for (let depth = 0; depth < PACKAGE_JSON_SEARCH_DEPTH; depth += 1) {
+    try {
+      const contents = readFileSync(join(currentDir, "package.json"), "utf8");
+      return JSON.parse(contents).version;
+    } catch {
+      currentDir = join(currentDir, "..");
+    }
+  }
+  throw new Error(
+    "Unable to locate agemon's package.json to resolve its version.",
+  );
+}
+
+const VERSION = resolvePackageVersion();
 const DESCRIPTION =
   "Bootstraps and reverses an AI coding agent's working environment in a repo.";
 
