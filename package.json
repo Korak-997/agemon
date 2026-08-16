@@ -3,6 +3,25 @@
   "version": "0.1.0",
   "description": "One command bootstraps an AI coding agent's working environment in any repo.",
   "license": "MIT",
+  "author": "Korak-997",
+  "homepage": "https://github.com/Korak-997/agemon#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Korak-997/agemon.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Korak-997/agemon/issues"
+  },
+  "keywords": [
+    "cli",
+    "ai-agent",
+    "claude-code",
+    "agent-rules",
+    "bootstrap",
+    "code-review-graph",
+    "developer-tools",
+    "automation"
+  ],
   "type": "module",
   "bin": {
     "agemon": "bin/agemon.js"
@@ -16,6 +35,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "npm run build",
     "dev": "AGEMON_DEV=1 tsx src/cli/index.ts",
     "changeset": "changeset",
     "version-packages": "changeset version",
