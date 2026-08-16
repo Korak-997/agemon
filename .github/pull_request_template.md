@@ -10,10 +10,10 @@ Describe what changed and why.
 - [ ] `npm run sandbox -- run clean-repo --dry-run`
 - [ ] `npm run sandbox -- roundtrip clean-repo`
 
-## Changeset
+## Changelog
 
-- [ ] Added a changeset (`npm run changeset`) for user-facing changes
-- [ ] No changeset needed (internal-only change)
+- [ ] Added a `## X.Y.Z` entry to `CHANGELOG.md` for user-facing changes
+- [ ] No changelog entry needed (internal-only change)
 
 ## Notes
 

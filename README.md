@@ -22,8 +22,8 @@ targeted reversal.
 ## Requirements
 
 - Linux with Ubuntu (`/etc/os-release` must report `ID=ubuntu`).
-- Node.js `>=24`.
-- `npx`.
+- Node.js `>=24` (used to run the installed CLI; no other Node tooling needed).
+- `curl` and `tar` (used by the installer only).
 - Binaries checked at runtime: `python3`, `pip`, `pipx`, `uv`, `crg`.
 
 Notes:
@@ -32,16 +32,41 @@ Notes:
 
 ## Install
 
-Install in the current repository:
+Install `agemon` system-wide with the installer script:
 
 ```bash
-npx agemon@latest install
+curl -fsSL https://raw.githubusercontent.com/Korak-997/agemon/master/install.sh | sh
 ```
 
-Or use the local preflight script:
+This downloads the latest self-contained release build (no `node_modules` required),
+and links it onto your `PATH` — as `/usr/local/bin/agemon` when run as root, or
+`~/.local/bin/agemon` otherwise.
+
+Or, from a local clone:
 
 ```bash
 sh ./install.sh
+```
+
+Then run it in any repository you want to bootstrap:
+
+```bash
+agemon install
+```
+
+### Installer options
+
+- `AGEMON_VERSION`: install a specific release tag instead of `latest` (e.g. `AGEMON_VERSION=0.1.0 sh install.sh`).
+- `AGEMON_INSTALL_DIR`: override the install directory instead of the root/user default.
+
+### Uninstalling agemon itself
+
+`agemon nuke` reverses changes `agemon` made *inside a repository* — it does not remove
+the `agemon` binary. To remove the CLI itself:
+
+```bash
+rm -rf ~/.local/share/agemon ~/.local/bin/agemon   # user install
+sudo rm -rf /usr/local/lib/agemon /usr/local/bin/agemon   # root/system install
 ```
 
 ## CLI Usage
@@ -72,13 +97,13 @@ Examples:
 
 ```bash
 # See planned actions only
-npx agemon@latest install --dry-run
+agemon install --dry-run
 
 # Install only skills and workflows
-npx agemon@latest install --only skills,workflow-scaffolder
+agemon install --only skills,workflow-scaffolder
 
 # Reverse only specific plugins
-npx agemon@latest nuke --only skills,workflow-scaffolder
+agemon nuke --only skills,workflow-scaffolder
 ```
 
 ## Reversibility Guarantees

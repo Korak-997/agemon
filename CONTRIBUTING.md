@@ -56,16 +56,13 @@ npm run format
 
 ## Commit and Release Flow
 
-This repository uses Changesets.
+This repository does not publish to npm — releases are self-contained tarballs attached
+to GitHub Releases, installed via `install.sh`. See `docs/releasing.md` for the full flow.
 
-1. Add a changeset for user-facing changes:
-
-```bash
-npm run changeset
-```
-
-2. CI validates code quality and sandbox checks.
-3. Release/version updates are generated via Changesets.
+1. For user-facing changes, add a `## X.Y.Z` entry to the top of `CHANGELOG.md` describing
+   them (a maintainer will fold this into the next release's version bump).
+2. CI validates code quality and sandbox checks on every PR.
+3. Maintainers cut releases by tagging `vX.Y.Z` — see `docs/releasing.md`.
 
 ## Pull Requests
 

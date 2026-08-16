@@ -199,10 +199,10 @@ Primary commands:
 
 ```bash
 # install
-npx agemon@latest install
+agemon install
 
 # uninstall/reverse
-npx agemon@latest nuke
+agemon nuke
 ```
 
 Local development:
