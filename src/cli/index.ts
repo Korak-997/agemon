@@ -5,6 +5,7 @@ import { Command, CommanderError } from "commander";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
 import { installPlugins, uninstallPlugins } from "../core/orchestrator.js";
+import { checkForUpdate } from "../core/update-check.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
 import { renderBanner } from "../ui/banner.js";
 import { createStepSpinner } from "../ui/spinner.js";
@@ -43,6 +44,14 @@ interface CliOptions {
 }
 
 async function runInstall(options: CliOptions): Promise<void> {
+  const didUpdate = await checkForUpdate({
+    currentVersion: VERSION,
+    dryRun: Boolean(options.dryRun),
+  });
+  if (didUpdate) {
+    return;
+  }
+
   const spinner = createStepSpinner();
   const plugins = getRegisteredPlugins().filter(
     (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
@@ -57,6 +66,14 @@ async function runInstall(options: CliOptions): Promise<void> {
 }
 
 async function runNuke(options: CliOptions): Promise<void> {
+  const didUpdate = await checkForUpdate({
+    currentVersion: VERSION,
+    dryRun: Boolean(options.dryRun),
+  });
+  if (didUpdate) {
+    return;
+  }
+
   const spinner = createStepSpinner();
   const plugins = getRegisteredPlugins();
   const context = await createContext({

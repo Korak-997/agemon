@@ -160,6 +160,23 @@ Key behavior:
 - Non-interactive/`NO_COLOR`: plain line output.
 - Commander supports `--no-color`, `--verbose`, `--quiet` flags.
 
+## Update Checking
+
+`src/core/update-check.ts`, invoked at the top of both `install` and `nuke` action
+handlers in `src/cli/index.ts`:
+
+- Skipped entirely when `--dry-run`, `AGEMON_DEV=1`, or `AGEMON_NO_UPDATE_CHECK=1`.
+- Queries `GET /repos/Korak-997/agemon/releases/latest` (GitHub API), cached in
+  `$XDG_CACHE_HOME/agemon/update-check.json` (or `~/.cache/...`) for 24h to avoid a
+  network round-trip on every invocation and avoid rate-limiting.
+- Network/cache failures are swallowed silently — never blocks the actual command.
+- Non-interactive stdin/stdout (CI, piped output): prints a one-line notice only, never
+  prompts.
+- Interactive TTY with a newer version available: prompts to update; on yes, shells out
+  to the same `curl -fsSL .../install.sh | sh` one-liner documented in the README (single
+  source of truth for the install mechanism), then returns `true` so the caller stops
+  instead of proceeding with code that was just replaced on disk.
+
 ## Sandbox Harness
 
 Script: `scripts/sandbox.ts`

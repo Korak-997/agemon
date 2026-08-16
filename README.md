@@ -69,6 +69,18 @@ rm -rf ~/.local/share/agemon ~/.local/bin/agemon   # user install
 sudo rm -rf /usr/local/lib/agemon /usr/local/bin/agemon   # root/system install
 ```
 
+### Update checks
+
+Each run of `agemon install`/`agemon nuke` (skipped for `--dry-run`) checks once a day
+whether a newer GitHub Release exists:
+
+- Interactive terminal: prompts to install the update now; on yes, re-runs `install.sh`
+  in place and asks you to re-run your command against the new version.
+- Non-interactive (CI, piped output): prints a one-line notice and continues — never
+  blocks on a prompt.
+
+Set `AGEMON_NO_UPDATE_CHECK=1` to disable this entirely.
+
 ## CLI Usage
 
 `install` is the default command:
