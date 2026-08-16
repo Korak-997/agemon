@@ -1,5 +1,10 @@
 # agemon
 
+## 2.0.0
+
+- feat: add update checking mechanism for agemon CLI
+- feat: implement dynamic package version resolution from package.json
+
 ## 1.1.0
 
 - feat: enhance deploy script with changelog entry management and prompt interface
