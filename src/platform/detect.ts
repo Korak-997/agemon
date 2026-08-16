@@ -7,7 +7,7 @@ export const REQUIRED_BINARIES = [
   "pip",
   "pipx",
   "uv",
-  "crg",
+  "code-review-graph",
 ] as const;
 
 export type RequiredBinary = (typeof REQUIRED_BINARIES)[number];

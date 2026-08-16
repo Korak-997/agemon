@@ -46,7 +46,7 @@ daemon on its own `WorkingDirectory`.
 - Linux with Ubuntu (`/etc/os-release` must report `ID=ubuntu`).
 - Node.js `>=24` (used to run the installed CLI; no other Node tooling needed).
 - `curl` and `tar` (used by the installer only).
-- Binaries checked at runtime: `python3`, `pip`, `pipx`, `uv`, `crg`.
+- Binaries checked at runtime: `python3`, `pip`, `pipx`, `uv`, `code-review-graph`.
 
 Notes:
 - The CLI reports binary availability but does not auto-install missing dependencies.

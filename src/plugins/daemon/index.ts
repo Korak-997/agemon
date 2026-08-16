@@ -7,9 +7,11 @@ import type {
 } from "../types.js";
 
 const PLUGIN_ID = "daemon";
+const CRG_COMMAND = "code-review-graph";
 const UNIT_NAME_PREFIX = "agemon-crg-daemon";
 const UNIT_NAME_MAX_SLUG_LENGTH = 40;
 const GIT_TOPLEVEL_TIMEOUT_MS = 10_000;
+const WHICH_TIMEOUT_MS = 10_000;
 
 const ACTION_TYPE_REGISTERED_SERVICE = "registered-service";
 const ACTION_TYPE_PREEXISTING_SERVICE = "preexisting-service";
@@ -57,7 +59,32 @@ function getHardeningDirectives(profile: HardeningProfile): string[] {
   ];
 }
 
-function buildUnitContents(cwd: string, profile: HardeningProfile): string {
+/**
+ * `systemd --user` runs services with its own manager environment, not the
+ * interactive shell's — it does not inherit PATH entries like `~/.local/bin`,
+ * where pipx/uv install `code-review-graph`. Baking in the absolute path
+ * (rather than trusting ExecStart's own PATH lookup) keeps the unit working
+ * regardless of what systemd's manager environment does or doesn't include.
+ */
+async function resolveCrgExecutablePath(ctx: Context): Promise<string> {
+  const which = await ctx.run("which", [CRG_COMMAND], {
+    timeoutMs: WHICH_TIMEOUT_MS,
+  });
+  const resolvedPath = which.stdout.trim();
+  if (which.code !== 0 || !resolvedPath) {
+    throw new Error(
+      `Unable to resolve an absolute path for '${CRG_COMMAND}' on PATH; ` +
+        "is it installed (e.g. via 'pipx install code-review-graph')?",
+    );
+  }
+  return resolvedPath;
+}
+
+function buildUnitContents(
+  cwd: string,
+  profile: HardeningProfile,
+  crgExecutablePath: string,
+): string {
   return [
     "[Unit]",
     "Description=agemon code-review-graph daemon",
@@ -66,7 +93,7 @@ function buildUnitContents(cwd: string, profile: HardeningProfile): string {
     "[Service]",
     "Type=simple",
     `WorkingDirectory=${cwd}`,
-    "ExecStart=code-review-graph watch",
+    `ExecStart=${crgExecutablePath} watch`,
     ...getHardeningDirectives(profile),
     "Restart=always",
     "RestartSec=3",
@@ -139,12 +166,17 @@ async function installDaemon(ctx: Context): Promise<void> {
     return;
   }
 
+  const crgExecutablePath = await resolveCrgExecutablePath(ctx);
   const configuredProfile = readHardeningProfileFromEnv();
   const registration = await (async () => {
     try {
       return await ctx.serviceManager.registerAutostart({
         unitName,
-        unitContents: buildUnitContents(ctx.cwd, configuredProfile),
+        unitContents: buildUnitContents(
+          ctx.cwd,
+          configuredProfile,
+          crgExecutablePath,
+        ),
       });
     } catch (error) {
       if (configuredProfile !== "strict") {
@@ -156,7 +188,7 @@ async function installDaemon(ctx: Context): Promise<void> {
       );
       return await ctx.serviceManager.registerAutostart({
         unitName,
-        unitContents: buildUnitContents(ctx.cwd, "compat"),
+        unitContents: buildUnitContents(ctx.cwd, "compat", crgExecutablePath),
       });
     }
   })();
