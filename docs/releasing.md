@@ -60,7 +60,29 @@ Important:
 
 ## Maintainer release workflow
 
-### 1. Sync and verify
+### Fast path: `npm run deploy`
+
+For a stable `patch`/`minor`/`major` release, `npm run deploy` automates everything below:
+it verifies you're on `master` with a clean working tree, syncs with `origin`, runs
+`lint`/`typecheck`/`test`/`build`, prompts for the bump type (or takes it as an argument),
+bumps `package.json`, checks `CHANGELOG.md` has a matching `## X.Y.Z` entry (reverting the
+bump if not), then commits, tags, and pushes after a final confirmation.
+
+```bash
+npm run deploy                # prompts for patch/minor/major
+npm run deploy -- patch       # skip the prompt
+npm run deploy -- patch --yes # also skip the final confirmation
+```
+
+Add the `CHANGELOG.md` entry for the version you intend to release *before* running this
+— it aborts and reverts the version bump if the entry is missing.
+
+This only covers stable releases from `master`. For `alpha`/`beta` prereleases, use the
+manual steps below.
+
+### Manual steps (prereleases, or if you'd rather do it by hand)
+
+#### 1. Sync and verify
 
 ```bash
 git checkout master
@@ -72,7 +94,7 @@ npm test
 npm run build
 ```
 
-### 2. Update version and changelog
+#### 2. Update version and changelog
 
 Edit `package.json`'s `"version"` and add a matching `## X.Y.Z` section to the top of
 `CHANGELOG.md` by hand. Then commit:
@@ -82,9 +104,12 @@ git add package.json CHANGELOG.md
 git commit -m "release: X.Y.Z"
 ```
 
-### 3. Create release tag
+#### 3. Create release tag
 
-Choose one of these paths.
+Choose one of these paths. Tags must be **annotated** (`git tag -a`) — a lightweight tag
+(`git tag v0.2.0` with no `-a`) is not pushed by `git push --follow-tags`, so the release
+workflow would never see it. Push the tag explicitly by name rather than relying on
+`--follow-tags` alone.
 
 Alpha:
 
@@ -92,8 +117,8 @@ Alpha:
 npm version 0.2.0-alpha.0 --no-git-tag-version
 git add package.json
 git commit -m "release: 0.2.0-alpha.0"
-git tag v0.2.0-alpha.0
-git push origin master --follow-tags
+git tag -a v0.2.0-alpha.0 -m v0.2.0-alpha.0
+git push origin master v0.2.0-alpha.0
 ```
 
 Beta: same as above with `0.2.0-beta.0` / `v0.2.0-beta.0`.
@@ -104,8 +129,8 @@ Stable:
 npm version 0.2.0 --no-git-tag-version
 git add package.json
 git commit -m "release: 0.2.0"
-git tag v0.2.0
-git push origin master --follow-tags
+git tag -a v0.2.0 -m v0.2.0
+git push origin master v0.2.0
 ```
 
 Note:

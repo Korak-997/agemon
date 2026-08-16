@@ -44,7 +44,8 @@
     "sandbox": "tsx scripts/sandbox.ts",
     "sandbox:watch": "tsx scripts/sandbox.ts watch",
     "sandbox:roundtrip": "tsx scripts/sandbox.ts roundtrip",
-    "sandbox:reset": "tsx scripts/sandbox.ts reset"
+    "sandbox:reset": "tsx scripts/sandbox.ts reset",
+    "deploy": "tsx scripts/deploy.ts"
   },
   "dependencies": {
     "boxen": "^8.0.1",
