@@ -1,5 +1,9 @@
 # agemon
 
+## 2.1.1
+
+- fix: update references to 'crg' with 'code-review-graph' for clarity and consistency
+
 ## 2.1.0
 
 - feat: enhance daemon plugin with dynamic unit naming and confirmation prompts
