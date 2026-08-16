@@ -53,7 +53,7 @@ jobs:
             exit 1
           fi
 
-          PACKAGE_VERSION="$(node -p \"JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version\")"
+          PACKAGE_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
           if [[ "$PACKAGE_VERSION" != "$VERSION" ]]; then
             echo "Tag version ($VERSION) does not match package.json version ($PACKAGE_VERSION)."
             exit 1
