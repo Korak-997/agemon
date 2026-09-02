@@ -1,5 +1,6 @@
 import type { AgemonPlugin } from "../plugins/types.js";
 import type { Context } from "./context.js";
+import { ensureAgemonGitignored } from "./gitignore.js";
 
 export interface OrchestratorOptions {
   only?: string;
@@ -155,6 +156,8 @@ export async function installPlugins(
 
     await installFresh(ctx, plugin);
   }
+
+  await ensureAgemonGitignored(ctx.cwd, ctx.dryRun);
 }
 
 export async function uninstallPlugins(

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -62,6 +62,7 @@ function createRecordingUi(): { ui: Context["ui"]; calls: RecordedUiCall[] } {
 
 async function createTestContext(overrides: {
   ui: Context["ui"];
+  dryRun?: boolean;
   yes?: boolean;
   confirm: (message: string) => Promise<boolean>;
 }): Promise<Context> {
@@ -74,7 +75,7 @@ async function createTestContext(overrides: {
     cwd: sandboxDirectory,
     os: "ubuntu",
     binaries: [],
-    dryRun: false,
+    dryRun: overrides.dryRun ?? false,
     yes: overrides.yes ?? false,
     log: console,
     ui: overrides.ui,
@@ -151,6 +152,67 @@ describe("installPlugins", () => {
           call.label === "Installed fresh (all good)",
       ),
     ).toBe(true);
+  });
+
+  it("appends .agemon to an existing .gitignore after installation", async () => {
+    const { ui } = createRecordingUi();
+    const context = await createTestContext({
+      ui,
+      confirm: async () => false,
+    });
+    await writeFile(join(context.cwd, ".gitignore"), "dist\n", "utf8");
+    const { plugin } = createFakePlugin({
+      id: "fresh",
+      presence: { present: false, preExisting: false },
+      verifyResults: [{ ok: true }],
+    });
+
+    await installPlugins(context, [plugin], {});
+
+    await expect(
+      readFile(join(context.cwd, ".gitignore"), "utf8"),
+    ).resolves.toBe("dist\n.agemon\n");
+  });
+
+  it("does not create or modify .gitignore when it is absent or dry-running", async () => {
+    const { ui } = createRecordingUi();
+    const context = await createTestContext({
+      ui,
+      dryRun: true,
+      confirm: async () => false,
+    });
+    const { plugin } = createFakePlugin({
+      id: "fresh",
+      presence: { present: false, preExisting: false },
+      verifyResults: [{ ok: true }],
+    });
+
+    await installPlugins(context, [plugin], {});
+
+    await expect(
+      readFile(join(context.cwd, ".gitignore"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not duplicate an existing .agemon entry", async () => {
+    const { ui } = createRecordingUi();
+    const context = await createTestContext({
+      ui,
+      confirm: async () => false,
+    });
+    const gitignorePath = join(context.cwd, ".gitignore");
+    await writeFile(gitignorePath, "dist\n.agemon\n", "utf8");
+    const { plugin } = createFakePlugin({
+      id: "fresh",
+      presence: { present: false, preExisting: false },
+      verifyResults: [{ ok: true }],
+    });
+
+    await installPlugins(context, [plugin], {});
+
+    await expect(readFile(gitignorePath, "utf8")).resolves.toBe(
+      "dist\n.agemon\n",
+    );
   });
 
   it("skips a healthy, already-present plugin without reinstalling or prompting", async () => {
