@@ -22,7 +22,10 @@ function setOrDeleteEnv(name: string, value: string | undefined): void {
   process.env[name] = value;
 }
 
-async function runRoundtripFixture(fixtureName: string): Promise<void> {
+async function runRoundtripFixture(
+  fixtureName: string,
+  nukeArgs = ["nuke", "--yes"],
+) {
   const sandboxDirectory = await mkdtemp(
     join(tmpdir(), "agemon-roundtrip-test-"),
   );
@@ -62,7 +65,7 @@ async function runRoundtripFixture(fixtureName: string): Promise<void> {
     const installExitCode = await runCli(["--yes"]);
     expect(installExitCode).toBe(0);
 
-    const nukeExitCode = await runCli(["nuke", "--yes"]);
+    const nukeExitCode = await runCli(nukeArgs);
     expect(nukeExitCode).toBe(0);
   } finally {
     process.chdir(originalCwd);
@@ -75,7 +78,7 @@ async function runRoundtripFixture(fixtureName: string): Promise<void> {
   }
 
   const afterSnapshot = await snapshotTree(sandboxDirectory);
-  expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
+  return { beforeSnapshot, afterSnapshot };
 }
 
 async function runInstallFixture(
@@ -137,20 +140,39 @@ async function runInstallFixture(
 }
 
 describe("nuke roundtrip", () => {
+  it("scopes nuke to the requested plugin", async () => {
+    const { afterSnapshot } = await runRoundtripFixture("clean-repo", [
+      "nuke",
+      "--yes",
+      "--only",
+      "skills",
+    ]);
+
+    expect(afterSnapshot.has("repo/AGENTS.md")).toBe(true);
+  });
+
   it("restores clean fixture byte-identically", async () => {
-    await runRoundtripFixture("clean-repo");
+    const { beforeSnapshot, afterSnapshot } =
+      await runRoundtripFixture("clean-repo");
+    expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
   it("restores existing CLAUDE fixture byte-identically", async () => {
-    await runRoundtripFixture("existing-claude-md");
+    const { beforeSnapshot, afterSnapshot } =
+      await runRoundtripFixture("existing-claude-md");
+    expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
   it("restores messy agent rules fixture byte-identically", async () => {
-    await runRoundtripFixture("messy-agent-rules");
+    const { beforeSnapshot, afterSnapshot } =
+      await runRoundtripFixture("messy-agent-rules");
+    expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
   it("restores preexisting CRG fixture byte-identically", async () => {
-    await runRoundtripFixture("preexisting-crg");
+    const { beforeSnapshot, afterSnapshot } =
+      await runRoundtripFixture("preexisting-crg");
+    expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
   it("fails install on unsupported non-Ubuntu platform", async () => {

@@ -119,7 +119,9 @@ function createProgram(): Command {
     .option("--dry-run", "narrate actions without making changes")
     .option("--yes", "skip confirmation prompts")
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
-    .action((options: CliOptions) => runNuke(options));
+    .action((_options: CliOptions, command: Command) =>
+      runNuke({ ...command.parent?.opts(), ...command.opts() }),
+    );
 
   program.exitOverride();
 
