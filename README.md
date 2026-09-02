@@ -17,9 +17,8 @@ Current v0.1 behavior is plugin-driven and runs in this order:
    additional groups (design, security, code quality, architecture, self-review, performance)
    are selected interactively, via `--skill-groups`, or skipped entirely in a non-interactive
    session — see [Skill Groups](#skill-groups).
-4. `workflow-scaffolder`: writes bundled GitHub workflow files.
-5. `cli-tool`: installs bundled global CLI tools.
-6. `master-prompt`: consolidates agent rule files and pointer files.
+4. `cli-tool`: installs bundled global CLI tools.
+5. `master-prompt`: consolidates agent rule files and pointer files.
 
 Every mutating plugin action is recorded in `.agemon/state.json` and used by `nuke` for
 targeted reversal.
@@ -174,12 +173,6 @@ Examples:
 # See planned actions only
 agemon --dry-run
 
-# Install only skills and workflows
-agemon --only skills,workflow-scaffolder
-
-# Reverse only specific plugins
-agemon nuke --only skills,workflow-scaffolder
-
 # Install every skill group non-interactively (e.g. in CI)
 agemon --yes --skill-groups all
 
@@ -200,8 +193,6 @@ By default, agemon may manage these paths:
 
 - `.agemon/state.json`
 - `.agemon/backups/master-prompt/*.bak`
-- `.github/workflows/claude-code-security-review.yml`
-- `.github/workflows/code-review-graph-action.yml`
 - `AGENTS.md`
 - `CLAUDE.md`
 - `GEMINI.md`

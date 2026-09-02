@@ -153,14 +153,6 @@ describe("nuke roundtrip", () => {
     await runRoundtripFixture("preexisting-crg");
   });
 
-  it("fails install on unmanaged workflow collision", async () => {
-    const { installExitCode } = await runInstallFixture(
-      "colliding-workflow",
-      "ubuntu",
-    );
-    expect(installExitCode).toBe(1);
-  });
-
   it("fails install on unsupported non-Ubuntu platform", async () => {
     const { installExitCode, beforeSnapshot, afterSnapshot } =
       await runInstallFixture("non-ubuntu", "debian");

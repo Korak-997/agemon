@@ -47,9 +47,8 @@ Registered core plugin order (`src/plugins/index.ts`):
 1. `crg`
 2. `daemon` (depends on `crg`)
 3. `skills`
-4. `workflow-scaffolder`
-5. `cli-tool`
-6. `master-prompt`
+4. `cli-tool`
+5. `master-prompt`
 
 Dev-only plugins are enabled when `AGEMON_DEV=1`.
 
@@ -84,17 +83,6 @@ Current bundle (`src/plugins/skills/catalog.ts`):
 
 - `web-design-guidelines`
 - `writing-guidelines`
-
-### `workflow-scaffolder`
-
-- Writes bundled workflows to `.github/workflows/`.
-- Fails fast on unmanaged filename collisions.
-- Removes only managed workflow files on uninstall.
-
-Current bundle (`src/plugins/workflow-scaffolder/catalog.ts`):
-
-- `claude-code-security-review.yml`
-- `code-review-graph-action.yml`
 
 ### `cli-tool`
 
