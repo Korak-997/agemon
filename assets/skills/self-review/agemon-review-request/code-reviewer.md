@@ -57,6 +57,12 @@ Subagent (general-purpose):
     - DRY without premature abstraction?
     - Edge cases handled?
 
+   **Readability and self-documenting code (mandatory):**
+   - Can a maintainer understand the changed code from its names, function boundaries, and control flow without ordinary explanatory comments?
+   - Are functions focused enough that distinct responsibilities are split into readable units?
+   - Are comments limited to non-obvious context that cannot be expressed in code, such as compatibility constraints or external contracts?
+   - Flag comments that explain routine logic, variable meaning, or control flow as an **Important** issue. Require the implementation to be simplified or split instead of retaining explanatory comments.
+
     **Architecture:**
     - Sound design decisions?
     - Reasonable scalability and performance?
@@ -132,6 +138,7 @@ Subagent (general-purpose):
     - Give feedback on code you didn't actually read
     - Be vague ("improve error handling")
     - Avoid giving a clear verdict
+   - Approve work with unresolved Important readability or self-documenting-code issues
 ```
 
 **Placeholders:**

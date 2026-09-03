@@ -42,8 +42,17 @@ Dispatch a `general-purpose` subagent, filling the template at [code-reviewer.md
 **3. Act on feedback:**
 - Fix Critical issues immediately
 - Fix Important issues before proceeding
+- Fix Important readability issues by simplifying or splitting the code; do not mask them with explanatory comments.
 - Note Minor issues for later
 - Push back if reviewer is wrong (with reasoning)
+
+## Mandatory Readability Gate
+
+Every review must explicitly assess whether the changed code is self-documenting. The reviewer must confirm that names, function boundaries, and control flow make the code understandable without ordinary explanatory comments.
+
+Treat code that needs comments to explain routine logic, variable meaning, or control flow as an **Important** issue. The required fix is to rewrite or split the code until the comment is unnecessary. Comments remain appropriate only for non-obvious context that cannot be expressed in code, such as compatibility constraints or external contracts.
+
+Do not mark work ready to merge while an Important readability issue remains unresolved.
 
 ## Example
 
