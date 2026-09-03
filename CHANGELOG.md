@@ -1,5 +1,14 @@
 # agemon
 
+## 2.3.0
+
+- feat: add 'researches/' to .gitignore to exclude research files from version control
+- feat: update code quality guidelines to emphasize self-documenting code and readability in reviews
+- feat(nuke): enhance runNuke action to merge command options and add scoped nuke test
+- refactor: remove workflow-scaffolder plugin and related files
+- Merge pull request #3 from Korak-997/fix-1
+- feat: implement ensureAgemonGitignored function and integrate it into plugin installation process
+
 ## 2.2.0
 
 - feat(skills): introduce skill groups and enhance installation process

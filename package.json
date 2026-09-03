@@ -1,6 +1,6 @@
 {
   "name": "agemon",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "One command bootstraps an AI coding agent's working environment in any repo.",
   "license": "MIT",
   "author": "Korak-997",
