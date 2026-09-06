@@ -1,5 +1,9 @@
 # agemon
 
+## 3.0.0
+
+- V3 (#5)
+
 ## 2.3.0
 
 - feat: add 'researches/' to .gitignore to exclude research files from version control
