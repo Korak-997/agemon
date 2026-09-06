@@ -12,8 +12,11 @@ import type { Context } from "./context.js";
 import {
   computePlanId,
   type Plan,
+  renderPlan,
   resolveDesiredStateHash,
+  writePlan,
 } from "./plan-store.js";
+import { isInteractiveTerminal } from "./prompt.js";
 
 type ConflictDecisionMap = Record<string, "keep-mine" | "skip">;
 
@@ -191,6 +194,17 @@ async function removeDesiredStateConfig(ctx: Context): Promise<void> {
   await rm(resolveConfigPath(ctx.cwd), { force: true });
 }
 
+async function previewAndStop(ctx: Context, plan: Plan): Promise<void> {
+  const planPath = await writePlan(ctx.cwd, plan);
+  ctx.log.log(renderPlan(plan));
+  ctx.log.log(`\nPlan written to ${relative(ctx.cwd, planPath)}`);
+  if (plan.operations.length > 0) {
+    ctx.log.log(
+      `Review, then re-run interactively or with --yes, or 'agemon apply --plan ${plan.id}'.`,
+    );
+  }
+}
+
 export async function reconcile(
   ctx: Context,
   allPlugins: AgemonPlugin[],
@@ -212,6 +226,16 @@ export async function reconcile(
       only: options.only,
       agemonVersion: options.agemonVersion,
     }));
+
+  const sessionCannotConsent = !ctx.yes && !isInteractiveTerminal();
+  const isFirstRun = options.persistConfig === true;
+  if (
+    ctx.dryRun ||
+    (plan.operations.length > 0 && sessionCannotConsent && isFirstRun)
+  ) {
+    await previewAndStop(ctx, plan);
+    return;
+  }
 
   if (plan.operations.length === 0) {
     const driftProblems = await verifyManagedState(ctx, plugins);

@@ -145,11 +145,6 @@ async function runInstall(options: CliOptions): Promise<void> {
     return;
   }
 
-  if (options.dryRun) {
-    await runPlanCommand(options);
-    return;
-  }
-
   const spinner = createStepSpinner();
   const plugins = selectPlugins(options);
   const { config, only, skillGroups } = await resolveDesiredStateDefaults(

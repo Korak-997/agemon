@@ -223,6 +223,65 @@ describe("reconcile", () => {
     );
   });
 
+  it("stops after writing a reviewable plan when a first non-interactive run cannot consent", async () => {
+    const context = await createTestContext(() => {
+      throw new Error("consent must not be reached");
+    });
+    context.yes = false;
+    const { plugin, installCallCount } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+
+    await reconcile(context, [plugin], {
+      ...RECONCILE_OPTIONS,
+      persistConfig: true,
+    });
+
+    expect(installCallCount()).toBe(0);
+    const planFiles = await readdir(join(context.cwd, ".agemon/plans"));
+    expect(planFiles.filter((name) => name.endsWith(".json"))).toHaveLength(1);
+    await expect(
+      readFile(join(context.cwd, "agemon.toml"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(join(context.cwd, "alpha.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("stops after the preview under --dry-run even when the session could consent", async () => {
+    const context = await createTestContext(() => {
+      throw new Error("consent must not be reached");
+    });
+    context.dryRun = true;
+    const { plugin, installCallCount } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+
+    await reconcile(context, [plugin], RECONCILE_OPTIONS);
+
+    expect(installCallCount()).toBe(0);
+    const planFiles = await readdir(join(context.cwd, ".agemon/plans"));
+    expect(planFiles.filter((name) => name.endsWith(".json"))).toHaveLength(1);
+  });
+
+  it("applies non-interactively when agemon.toml intent is already present", async () => {
+    const context = await createTestContext(approveEveryGate);
+    context.yes = false;
+    const { plugin, installCallCount } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+
+    await reconcile(context, [plugin], {
+      ...RECONCILE_OPTIONS,
+      persistConfig: false,
+    });
+
+    expect(installCallCount()).toBe(1);
+  });
+
   it("uses a supplied plan instead of rebuilding one", async () => {
     const context = await createTestContext(approveEveryGate);
     const { plugin, planCallCount, installCallCount } = createFakeCapability({

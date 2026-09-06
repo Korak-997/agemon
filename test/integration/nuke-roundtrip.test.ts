@@ -337,3 +337,40 @@ describe("phase 6 — re-check, status, and persisted intent", () => {
     });
   });
 });
+
+describe("non-interactive & --dry-run parity", () => {
+  it("a first non-interactive run previews an applyable plan and writes nothing else", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      const before = await snapshotTree(repoDirectory);
+
+      expect(await runCli([])).toBe(0);
+
+      const changes = diffSnapshots(before, await snapshotTree(repoDirectory));
+      expect(changes.every((line) => line.path.startsWith(".agemon/"))).toBe(
+        true,
+      );
+      expect(
+        changes.some(
+          (line) =>
+            line.kind === "added" &&
+            /^\.agemon\/plans\/.+\.json$/.test(line.path),
+        ),
+      ).toBe(true);
+      expect(changes.some((line) => line.path === "agemon.toml")).toBe(false);
+    });
+  });
+
+  it("--dry-run stops after the preview and leaves the repo untouched", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      const before = await snapshotTree(repoDirectory);
+
+      expect(await runCli(["--dry-run"])).toBe(0);
+
+      const changes = diffSnapshots(before, await snapshotTree(repoDirectory));
+      expect(changes.every((line) => line.path.startsWith(".agemon/"))).toBe(
+        true,
+      );
+      expect(changes.some((line) => line.path === "agemon.toml")).toBe(false);
+    });
+  });
+});
