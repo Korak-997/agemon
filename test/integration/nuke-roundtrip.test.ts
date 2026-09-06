@@ -289,6 +289,56 @@ describe("phase 5 — dedup-safe rule-file reconciliation", () => {
   });
 });
 
+describe("phase 5 — block-level revert without a backup dependency", () => {
+  it("restores hand-written AGENTS.md prose by excising the block when backups are gone", async () => {
+    await withFixtureRepo("messy-agent-rules", async (repoDirectory) => {
+      const agentsPath = join(repoDirectory, "AGENTS.md");
+      const originalAgents = await readFile(agentsPath, "utf8");
+
+      expect(await runCli(["--yes"])).toBe(0);
+      expect(await readFile(agentsPath, "utf8")).not.toBe(originalAgents);
+
+      await rm(join(repoDirectory, ".agemon", "backups"), {
+        recursive: true,
+        force: true,
+      });
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+      expect(await readFile(agentsPath, "utf8")).toBe(originalAgents);
+    });
+  });
+
+  it("falls back to backup restore when the managed block markers are unbalanced", async () => {
+    await withFixtureRepo("messy-agent-rules", async (repoDirectory) => {
+      const agentsPath = join(repoDirectory, "AGENTS.md");
+      const originalAgents = await readFile(agentsPath, "utf8");
+
+      expect(await runCli(["--yes"])).toBe(0);
+
+      const merged = await readFile(agentsPath, "utf8");
+      await writeFile(
+        agentsPath,
+        merged.replace("<!-- agemon:end:agent-rules -->", ""),
+        "utf8",
+      );
+
+      const printed: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        printed.push(args.map(String).join(" "));
+      };
+      try {
+        expect(await runCli(["nuke", "--yes"])).toBe(0);
+      } finally {
+        console.log = originalLog;
+      }
+
+      expect(await readFile(agentsPath, "utf8")).toBe(originalAgents);
+      expect(printed.join("\n")).toContain("restoring from backup");
+    });
+  });
+});
+
 describe("phase 6 — re-check, status, and persisted intent", () => {
   it("writes a committed agemon.toml and a second run changes nothing on disk", async () => {
     await withFixtureRepo("clean-repo", async (repoDirectory) => {

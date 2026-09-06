@@ -10,7 +10,10 @@ import { fingerprintContent, fingerprintJson } from "../../core/fingerprint.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { renderUnifiedDiff } from "../../core/text-diff.js";
 import { detectDuplication } from "../../inspect/duplication.js";
-import { upsertManagedMarkdownBlock } from "../../patchers/markdown-block.js";
+import {
+  removeManagedMarkdownBlock,
+  upsertManagedMarkdownBlock,
+} from "../../patchers/markdown-block.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -606,19 +609,57 @@ async function revertMasterPrompt(
       resolveImmutableBackupPath(ctx.cwd, ruleFileResourceId(action.target));
 
     if (action.preExisting) {
-      if (!existsSync(backupPath)) {
-        throw new Error(
-          `Missing backup for pre-existing file ${action.target}`,
-        );
-      }
-      const backupContents = await readFile(backupPath, "utf8");
-      await writeFile(targetPath, backupContents, "utf8");
-      await rm(backupPath, { force: true });
+      await revertPreExistingRuleFile(ctx, action, targetPath, backupPath);
       continue;
     }
 
     await rm(targetPath, { force: true });
   }
+}
+
+async function restoreRuleFileFromBackup(
+  targetPath: string,
+  backupPath: string,
+  target: string,
+): Promise<void> {
+  if (!existsSync(backupPath)) {
+    throw new Error(`Missing backup for pre-existing file ${target}`);
+  }
+  const backupContents = await readFile(backupPath, "utf8");
+  await writeFile(targetPath, backupContents, "utf8");
+  await rm(backupPath, { force: true });
+}
+
+async function revertPreExistingRuleFile(
+  ctx: Context,
+  action: LedgerEntry,
+  targetPath: string,
+  backupPath: string,
+): Promise<void> {
+  if (action.ownershipMode === "delimited-block") {
+    const currentContents = await readFileIfExists(targetPath);
+    if (currentContents !== null) {
+      let excised: { nextContent: string; changed: boolean } | null = null;
+      try {
+        excised = removeManagedMarkdownBlock(
+          currentContents,
+          AGENT_RULES_BLOCK_ID,
+        );
+      } catch {
+        excised = null;
+      }
+      if (excised?.changed) {
+        await writeFile(targetPath, excised.nextContent, "utf8");
+        await rm(backupPath, { force: true });
+        return;
+      }
+    }
+    ctx.ui.info(
+      `${action.target}: managed block markers missing or unbalanced — restoring from backup`,
+    );
+  }
+
+  await restoreRuleFileFromBackup(targetPath, backupPath, action.target);
 }
 
 async function uninstallMasterPrompt(ctx: Context): Promise<void> {

@@ -85,13 +85,16 @@ export function removeManagedMarkdownBlock(
     return { nextContent: content, changed: false };
   }
 
-  const before = content.slice(0, range.start);
-  const after = content.slice(range.end);
+  const before = content.slice(0, range.start).replace(/\n+$/u, "");
+  const after = content.slice(range.end).replace(/^\n+/u, "");
 
-  let next = `${before}${after}`;
-  next = next.replace(/\n{3,}/gu, "\n\n");
-  if (next === "\n") {
-    next = "";
+  let next: string;
+  if (before.length === 0) {
+    next = after;
+  } else if (after.length === 0) {
+    next = `${before}\n`;
+  } else {
+    next = `${before}\n\n${after}`;
   }
 
   return { nextContent: next, changed: true };
