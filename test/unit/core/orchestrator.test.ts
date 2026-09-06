@@ -11,6 +11,7 @@ import { reconcile } from "../../../src/core/orchestrator.js";
 import type { Plan } from "../../../src/core/plan-store.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
 
@@ -44,6 +45,7 @@ function approveEveryGate(gates: ConsentGate[]): Promise<ApprovedOperationSet> {
     approved,
     skipped: [],
     workspaceIsolationApproved: true,
+    conflictResolutions: [],
   });
 }
 
@@ -153,6 +155,7 @@ describe("reconcile", () => {
       approved: [],
       skipped: [],
       workspaceIsolationApproved: false,
+      conflictResolutions: [],
     }));
     const { plugin, installCallCount } = createFakeCapability({
       id: "alpha",
@@ -182,6 +185,42 @@ describe("reconcile", () => {
 
     expect(alpha.installCallCount()).toBe(1);
     expect(beta.installCallCount()).toBe(0);
+  });
+
+  it("writes agemon.toml on first apply, then is a silent no-op that adds no ledger entries", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const succeeded: string[] = [];
+    context.ui = {
+      ...context.ui,
+      succeed: (message: string) => succeeded.push(message),
+    };
+
+    await reconcile(context, [masterPromptPlugin], {
+      ...RECONCILE_OPTIONS,
+      only: "master-prompt",
+      persistConfig: true,
+    });
+
+    const configContents = await readFile(
+      join(context.cwd, "agemon.toml"),
+      "utf8",
+    );
+    expect(configContents).toContain("master-prompt");
+    const ledgerEntriesAfterFirstRun = context.manifest.getActions().length;
+    expect(ledgerEntriesAfterFirstRun).toBeGreaterThan(0);
+
+    await reconcile(context, [masterPromptPlugin], {
+      ...RECONCILE_OPTIONS,
+      only: "master-prompt",
+      persistConfig: false,
+    });
+
+    expect(context.manifest.getActions()).toHaveLength(
+      ledgerEntriesAfterFirstRun,
+    );
+    expect(succeeded.some((message) => message.includes("Nothing to do"))).toBe(
+      true,
+    );
   });
 
   it("uses a supplied plan instead of rebuilding one", async () => {

@@ -335,9 +335,16 @@ async function recordManagedRuleFile(
     backup: { path: string; checksum: string } | null;
   },
 ): Promise<void> {
+  const fingerprintAfter = fingerprintContent(input.contentsAfter);
+
   if (hasActionForTarget(ctx, input.target)) {
+    await ctx.manifest.refreshResourceFingerprints(
+      ruleFileResourceId(input.target),
+      { fingerprintAfter },
+    );
     return;
   }
+
   await ctx.manifest.recordAction({
     plugin: PLUGIN_ID,
     type: ACTION_TYPE_MANAGED_RULE_FILE,
@@ -349,7 +356,7 @@ async function recordManagedRuleFile(
       input.contentsBefore === null
         ? null
         : fingerprintContent(input.contentsBefore),
-    fingerprintAfter: fingerprintContent(input.contentsAfter),
+    fingerprintAfter,
     backup: input.backup,
   });
 }

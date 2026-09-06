@@ -276,6 +276,27 @@ export class StateManifest {
     return action;
   }
 
+  async refreshResourceFingerprints(
+    resourceId: string,
+    fingerprints: {
+      fingerprintBefore?: string | null;
+      fingerprintAfter: string;
+    },
+  ): Promise<LedgerEntry | undefined> {
+    const entry = this.state.actions.find(
+      (action) => action.resourceId === resourceId,
+    );
+    if (!entry) {
+      return undefined;
+    }
+    if (fingerprints.fingerprintBefore !== undefined) {
+      entry.fingerprintBefore = fingerprints.fingerprintBefore;
+    }
+    entry.fingerprintAfter = fingerprints.fingerprintAfter;
+    await this.persist();
+    return entry;
+  }
+
   async removeActionsForPlugin(plugin: string): Promise<void> {
     const nextActions = this.state.actions.filter(
       (action) => action.plugin !== plugin,

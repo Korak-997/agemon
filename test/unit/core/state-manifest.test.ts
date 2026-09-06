@@ -130,6 +130,38 @@ describe("StateManifest ledger v2", () => {
     });
   });
 
+  it("refreshes a recorded resource's fingerprint in place and persists it", async () => {
+    const cwd = await createSandbox();
+    const manifest = await StateManifest.load(cwd);
+
+    await manifest.recordAction({
+      plugin: "master-prompt",
+      type: "managed-rule-file",
+      target: "AGENTS.md",
+      preExisting: false,
+      resourceId: "rule-file:AGENTS.md",
+      ownershipMode: "delimited-block",
+      fingerprintBefore: null,
+      fingerprintAfter: "first-hash",
+    });
+
+    const updated = await manifest.refreshResourceFingerprints(
+      "rule-file:AGENTS.md",
+      { fingerprintAfter: "second-hash" },
+    );
+    expect(updated?.fingerprintAfter).toBe("second-hash");
+    expect(updated?.fingerprintBefore).toBeNull();
+
+    const reloaded = await StateManifest.load(cwd);
+    expect(reloaded.getActions()[0].fingerprintAfter).toBe("second-hash");
+
+    expect(
+      await manifest.refreshResourceFingerprints("rule-file:missing", {
+        fingerprintAfter: "x",
+      }),
+    ).toBeUndefined();
+  });
+
   it("refuses an unrecognised schema version", async () => {
     const cwd = await createSandbox();
     await mkdir(join(cwd, ".agemon"), { recursive: true });

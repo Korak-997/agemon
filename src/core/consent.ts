@@ -33,10 +33,18 @@ export interface SkippedOperation {
   reason: string;
 }
 
+export type RecordedConflictDecision = "keep-mine" | "skip";
+
+export interface ConflictResolution {
+  resourceId: string;
+  decision: RecordedConflictDecision;
+}
+
 export interface ApprovedOperationSet {
   approved: ProposedOperation[];
   skipped: SkippedOperation[];
   workspaceIsolationApproved: boolean | null;
+  conflictResolutions: ConflictResolution[];
 }
 
 const INSTRUCTION_FILE_ACTIONS: ReadonlySet<ProposedOperationAction> = new Set([
@@ -180,6 +188,7 @@ export interface ResolveConsentInput {
   log: Pick<Console, "log">;
   interactive?: boolean;
   prompts?: GatePrompts;
+  conflictDecisions?: Record<string, RecordedConflictDecision>;
 }
 
 export async function resolveConsent(
@@ -189,6 +198,7 @@ export async function resolveConsent(
   const prompts = input.prompts ?? readlinePrompts;
   const approved: ProposedOperation[] = [];
   const skipped: SkippedOperation[] = [];
+  const conflictResolutions: ConflictResolution[] = [];
   let workspaceIsolationApproved: boolean | null = null;
 
   for (const gate of input.gates) {
@@ -209,14 +219,25 @@ export async function resolveConsent(
 
     if (gate.id === "resolve-conflict") {
       for (const operation of gate.operations) {
-        skipped.push({
-          operation,
-          reason: await resolveConflict(operation, {
-            interactive,
-            prompts,
-            log: input.log,
-          }),
-        });
+        const recordedDecision =
+          input.conflictDecisions?.[operation.resourceId];
+        const { decision, reason } = recordedDecision
+          ? {
+              decision: recordedDecision,
+              reason: `conflict ${recordedDecision === "keep-mine" ? "resolved by keeping your version" : "skipped"} per agemon.toml`,
+            }
+          : await resolveConflict(operation, {
+              interactive,
+              prompts,
+              log: input.log,
+            });
+        if (decision !== null) {
+          conflictResolutions.push({
+            resourceId: operation.resourceId,
+            decision,
+          });
+        }
+        skipped.push({ operation, reason });
       }
       continue;
     }
@@ -242,7 +263,12 @@ export async function resolveConsent(
     input.log.log(`Skipped ${gate.operations.length} operation(s): ${reason}.`);
   }
 
-  return { approved, skipped, workspaceIsolationApproved };
+  return {
+    approved,
+    skipped,
+    workspaceIsolationApproved,
+    conflictResolutions,
+  };
 }
 
 interface GateDecisionContext {
@@ -274,12 +300,21 @@ async function askGate(
   return reply === "approve";
 }
 
+interface ConflictOutcome {
+  decision: RecordedConflictDecision | null;
+  reason: string;
+}
+
 async function resolveConflict(
   operation: ProposedOperation,
   ctx: Omit<GateDecisionContext, "yes">,
-): Promise<string> {
+): Promise<ConflictOutcome> {
   if (!ctx.interactive) {
-    return "conflict left unresolved — needs an explicit decision (non-interactive)";
+    return {
+      decision: null,
+      reason:
+        "conflict left unresolved — needs an explicit decision (non-interactive)",
+    };
   }
 
   const reply = await ctx.prompts.conflict(
@@ -290,8 +325,11 @@ async function resolveConflict(
     return resolveConflict(operation, ctx);
   }
   return reply === "keep-mine"
-    ? "conflict resolved by keeping your version"
-    : "conflict skipped by choice";
+    ? {
+        decision: "keep-mine",
+        reason: "conflict resolved by keeping your version",
+      }
+    : { decision: "skip", reason: "conflict skipped by choice" };
 }
 
 function printOperationPreviews(

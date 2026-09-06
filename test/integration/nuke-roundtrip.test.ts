@@ -288,3 +288,52 @@ describe("phase 5 — dedup-safe rule-file reconciliation", () => {
     });
   });
 });
+
+describe("phase 6 — re-check, status, and persisted intent", () => {
+  it("writes a committed agemon.toml and a second run changes nothing on disk", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      expect(await runCli(["--yes"])).toBe(0);
+
+      const config = await readFile(join(repoDirectory, "agemon.toml"), "utf8");
+      expect(config).toContain("master-prompt");
+      expect(config).toContain("conflict_decisions");
+
+      const afterFirstRun = await snapshotTree(repoDirectory);
+      expect(await runCli(["--yes"])).toBe(0);
+      const afterSecondRun = await snapshotTree(repoDirectory);
+
+      expect(diffSnapshots(afterFirstRun, afterSecondRun)).toEqual([]);
+    });
+  });
+
+  it("agemon status reports a healthy environment after a successful run", async () => {
+    await withFixtureRepo("clean-repo", async () => {
+      expect(await runCli(["--yes"])).toBe(0);
+
+      const printed: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        printed.push(args.map(String).join(" "));
+      };
+      try {
+        expect(await runCli(["status"])).toBe(0);
+      } finally {
+        console.log = originalLog;
+      }
+
+      expect(printed.join("\n")).toContain("Environment healthy");
+    });
+  });
+
+  it("agemon.toml drives a non-interactive re-run after the ledger is wiped", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      expect(await runCli(["--yes"])).toBe(0);
+      await rm(join(repoDirectory, ".agemon"), {
+        recursive: true,
+        force: true,
+      });
+
+      expect(await runCli([])).toBe(0);
+    });
+  });
+});

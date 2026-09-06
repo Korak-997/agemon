@@ -93,8 +93,15 @@ async function detectCliTools(ctx: Context): Promise<PluginPresence> {
   return { present: true, preExisting: true };
 }
 
-async function planCliTools(_ctx: Context): Promise<ProposedOperation[]> {
-  return CLI_TOOL_BUNDLE.map((entry) =>
+async function planCliTools(ctx: Context): Promise<ProposedOperation[]> {
+  const missingEntries: CliToolBundleEntry[] = [];
+  for (const entry of CLI_TOOL_BUNDLE) {
+    if (!(await isToolBinaryAvailable(ctx, entry))) {
+      missingEntries.push(entry);
+    }
+  }
+
+  return missingEntries.map((entry) =>
     describeOperation({
       capabilityId: PLUGIN_ID,
       resourceId: `package:${entry.id}`,

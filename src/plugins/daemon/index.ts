@@ -148,6 +148,11 @@ async function detectDaemon(ctx: Context): Promise<PluginPresence> {
 
 async function planDaemon(ctx: Context): Promise<ProposedOperation[]> {
   const unitName = await resolveUnitName(ctx);
+  const status = await ctx.serviceManager.isActive(unitName);
+  if (status.active) {
+    return [];
+  }
+
   return [
     describeOperation({
       capabilityId: PLUGIN_ID,

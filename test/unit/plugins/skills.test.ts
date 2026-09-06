@@ -70,6 +70,7 @@ async function createTestContext(skillGroupsOption?: string): Promise<Context> {
       approved: [],
       skipped: [],
       workspaceIsolationApproved: null,
+      conflictResolutions: [],
     }),
     log: console,
     ui: createNoOpUi(),

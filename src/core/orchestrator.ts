@@ -1,6 +1,12 @@
+import { rm } from "node:fs/promises";
+import { relative } from "node:path";
 import { discoverRepository } from "../inspect/discover.js";
+import { verifyManagedState } from "../inspect/status.js";
+import { CORE_CAPABILITY_IDS } from "../plugins/index.js";
 import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
 import { applyPlan } from "./apply.js";
+import { resolveConfigPath, writeConfig } from "./config.js";
+import type { ConflictResolution } from "./consent.js";
 import { buildConsentGates } from "./consent.js";
 import type { Context } from "./context.js";
 import {
@@ -8,6 +14,8 @@ import {
   type Plan,
   resolveDesiredStateHash,
 } from "./plan-store.js";
+
+type ConflictDecisionMap = Record<string, "keep-mine" | "skip">;
 
 export interface OrchestratorOptions {
   only?: string;
@@ -18,6 +26,8 @@ export interface ReconcileOptions {
   agemonVersion: string;
   allowUnignoredState: boolean;
   plan?: Plan;
+  conflictDecisions?: ConflictDecisionMap;
+  persistConfig?: boolean;
 }
 
 export interface BuildPlanOptions {
@@ -127,6 +137,60 @@ function reportSkippedOperations(
   }
 }
 
+function reportSweepProblems(ctx: Context, problems: string[]): void {
+  for (const problem of problems) {
+    ctx.ui.info(`  - ${problem}`);
+  }
+}
+
+async function runPostApplySweep(
+  ctx: Context,
+  plugins: AgemonPlugin[],
+  appliedCapabilityIds: ReadonlySet<string>,
+): Promise<string[]> {
+  const problems: string[] = [];
+  for (const plugin of plugins) {
+    if (!appliedCapabilityIds.has(plugin.id)) {
+      continue;
+    }
+    const verification = await plugin.verify(ctx);
+    if (!verification.ok) {
+      problems.push(
+        `${plugin.id}: ${verification.detail ?? "verification failed"}`,
+      );
+    }
+  }
+  problems.push(...(await verifyManagedState(ctx)));
+  return problems;
+}
+
+async function persistDesiredStateConfig(
+  ctx: Context,
+  plugins: AgemonPlugin[],
+  conflictResolutions: ConflictResolution[],
+): Promise<void> {
+  const conflictDecisions: ConflictDecisionMap = {};
+  for (const resolution of conflictResolutions) {
+    conflictDecisions[resolution.resourceId] = resolution.decision;
+  }
+
+  const configPath = await writeConfig(ctx.cwd, {
+    capabilities: plugins
+      .map((plugin) => plugin.id)
+      .filter((id) => CORE_CAPABILITY_IDS.includes(id)),
+    skillGroups: ctx.skillGroupsOption ?? null,
+    conflictDecisions,
+  });
+
+  ctx.ui.info(
+    `Wrote ${relative(ctx.cwd, configPath)} — commit it so teammates and CI reconcile the same way.`,
+  );
+}
+
+async function removeDesiredStateConfig(ctx: Context): Promise<void> {
+  await rm(resolveConfigPath(ctx.cwd), { force: true });
+}
+
 export async function reconcile(
   ctx: Context,
   allPlugins: AgemonPlugin[],
@@ -149,12 +213,30 @@ export async function reconcile(
       agemonVersion: options.agemonVersion,
     }));
 
+  if (plan.operations.length === 0) {
+    const driftProblems = await verifyManagedState(ctx);
+    if (driftProblems.length > 0) {
+      ctx.ui.fail("Nothing to apply, but the environment has drifted:");
+      reportSweepProblems(ctx, driftProblems);
+      return;
+    }
+    if (options.persistConfig) {
+      await persistDesiredStateConfig(ctx, plugins, []);
+    }
+    ctx.ui.succeed(
+      "Nothing to do — every managed resource already matches the desired state.",
+    );
+    return;
+  }
+
   const { isolation } = await discoverRepository(ctx);
   const gates = buildConsentGates({
     plan,
     isolationStatus: isolation.status,
   });
-  const approval = await ctx.consent(gates);
+  const approval = await ctx.consent(gates, {
+    conflictDecisions: options.conflictDecisions,
+  });
 
   if (approval.approved.length === 0) {
     ctx.ui.info(
@@ -172,8 +254,31 @@ export async function reconcile(
     allowUnignoredState: options.allowUnignoredState,
   });
 
-  ctx.ui.succeed(`Applied ${result.applied.length} operation(s).`);
   reportSkippedOperations(ctx, approval.skipped);
+
+  const appliedCapabilityIds = new Set(
+    result.applied.map((operation) => operation.capabilityId),
+  );
+  const sweepProblems = await runPostApplySweep(
+    ctx,
+    plugins,
+    appliedCapabilityIds,
+  );
+  if (sweepProblems.length > 0) {
+    ctx.ui.fail(
+      `Applied ${result.applied.length} operation(s), but post-apply verification found problems:`,
+    );
+    reportSweepProblems(ctx, sweepProblems);
+    return;
+  }
+
+  if (options.persistConfig) {
+    await persistDesiredStateConfig(ctx, plugins, approval.conflictResolutions);
+  }
+
+  ctx.ui.succeed(
+    `Applied ${result.applied.length} operation(s); environment verified.`,
+  );
 }
 
 export async function uninstallPlugins(
@@ -193,6 +298,10 @@ export async function uninstallPlugins(
     ctx.ui.start(`Uninstalling ${plugin.id}`);
     await plugin.uninstall(ctx);
     ctx.ui.succeed(`Uninstalled ${plugin.id}`);
+  }
+
+  if (onlyIds.length === 0) {
+    await removeDesiredStateConfig(ctx);
   }
 
   await ctx.manifest.pruneIfEmpty();

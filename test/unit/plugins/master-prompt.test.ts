@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
+import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
@@ -67,6 +68,7 @@ async function createTestContext(): Promise<Context> {
       approved: [],
       skipped: [],
       workspaceIsolationApproved: null,
+      conflictResolutions: [],
     }),
     log: console,
     ui: createNoOpUi(),
@@ -199,6 +201,36 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
         .getActions()
         .some((action) => action.target === "CLAUDE.md"),
     ).toBe(false);
+  });
+
+  it("refreshes the ledger fingerprint after repairing a drifted managed block", async () => {
+    const context = await createTestContext();
+    await masterPromptPlugin.install(context);
+
+    const agentsPath = join(context.cwd, "AGENTS.md");
+    const entryFor = () =>
+      context.manifest
+        .getActions()
+        .find((action) => action.resourceId === "rule-file:AGENTS.md");
+    const fingerprintAfterFirstInstall = entryFor()?.fingerprintAfter;
+
+    await writeFile(
+      agentsPath,
+      "# Team heading kept by the user\n\n<!-- agemon:start:agent-rules -->\nmangled body\n<!-- agemon:end:agent-rules -->\n",
+      "utf8",
+    );
+
+    await masterPromptPlugin.install(context);
+
+    const repaired = await readFile(agentsPath, "utf8");
+    expect(repaired).not.toContain("mangled body");
+    expect(repaired).toContain("# Team heading kept by the user");
+    const refreshed = entryFor()?.fingerprintAfter;
+    expect(refreshed).not.toBe(fingerprintAfterFirstInstall);
+    expect(refreshed).toBe(fingerprintContent(repaired));
+    expect(await masterPromptPlugin.verify(context)).toMatchObject({
+      ok: true,
+    });
   });
 
   it("keeps the pristine backup when a managed AGENTS.md is edited and agemon re-runs", async () => {

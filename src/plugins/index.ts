@@ -14,6 +14,10 @@ const capabilityRegistry: AgemonPlugin[] = [
   masterPromptPlugin,
 ];
 
+export const CORE_CAPABILITY_IDS: string[] = capabilityRegistry.map(
+  (plugin) => plugin.id,
+);
+
 export function getRegisteredPlugins(): AgemonPlugin[] {
   const devOnlyPlugins: AgemonPlugin[] =
     process.env.AGEMON_DEV === "1" ? [testPlugin] : [];

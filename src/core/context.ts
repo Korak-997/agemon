@@ -40,7 +40,10 @@ export interface Context {
   serviceManager: ServiceManager;
 
   confirm: (message: string) => Promise<boolean>;
-  consent: (gates: ConsentGate[]) => Promise<ApprovedOperationSet>;
+  consent: (
+    gates: ConsentGate[],
+    options?: { conflictDecisions?: Record<string, "keep-mine" | "skip"> },
+  ) => Promise<ApprovedOperationSet>;
   skillGroupsOption?: string;
 }
 
@@ -84,6 +87,12 @@ export async function createContext(
       user: process.env.USER,
     }),
     confirm: createConfirmer({ yes: input.yes }),
-    consent: (gates) => resolveConsent({ gates, yes: input.yes, log: console }),
+    consent: (gates, options) =>
+      resolveConsent({
+        gates,
+        yes: input.yes,
+        log: console,
+        conflictDecisions: options?.conflictDecisions,
+      }),
   };
 }

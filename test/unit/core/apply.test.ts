@@ -55,6 +55,7 @@ async function createSandboxContext(): Promise<Context> {
       approved: [],
       skipped: [],
       workspaceIsolationApproved: null,
+      conflictResolutions: [],
     }),
   };
 }

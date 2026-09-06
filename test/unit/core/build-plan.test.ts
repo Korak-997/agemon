@@ -46,10 +46,14 @@ async function createTestContext(): Promise<Context> {
       approved: [],
       skipped: [],
       workspaceIsolationApproved: null,
+      conflictResolutions: [],
     }),
     log: console,
     ui: { start() {}, succeed() {}, fail() {}, info() {} },
-    run: async () => ({ code: 0, stdout: "", stderr: "" }),
+    run: async (_command: string, args: string[]) =>
+      args.includes("--version")
+        ? { code: 1, stdout: "", stderr: "not installed" }
+        : { code: 0, stdout: "", stderr: "" },
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
   };

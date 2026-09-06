@@ -109,6 +109,7 @@ async function createTestContext(options: {
       approved: [],
       skipped: [],
       workspaceIsolationApproved: null,
+      conflictResolutions: [],
     }),
     log: console,
     ui: createNoOpUi(),

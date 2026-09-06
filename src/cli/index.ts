@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
+import { type AgemonConfig, loadConfig } from "../core/config.js";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
 import {
@@ -12,7 +13,9 @@ import {
 import { readPlan, renderPlan, writePlan } from "../core/plan-store.js";
 import { checkForUpdate } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
+import { runStatus } from "../inspect/status.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
+import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
 import { createStepSpinner, type StepSpinner } from "../ui/spinner.js";
 import { theme } from "../ui/theme.js";
@@ -56,6 +59,40 @@ const SILENT_SPINNER: StepSpinner = {
   info() {},
 };
 
+function selectPlugins(options: CliOptions): AgemonPlugin[] {
+  return getRegisteredPlugins().filter(
+    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+  );
+}
+
+interface DesiredStateDefaults {
+  config: AgemonConfig | null;
+  only: string | undefined;
+  skillGroups: string | undefined;
+}
+
+async function resolveDesiredStateDefaults(
+  options: CliOptions,
+  availablePlugins: AgemonPlugin[],
+): Promise<DesiredStateDefaults> {
+  const config = await loadConfig(process.cwd());
+
+  let only = options.only;
+  if (!only && config) {
+    const availableIds = new Set(availablePlugins.map((plugin) => plugin.id));
+    const configuredIds = config.capabilities.filter((id) =>
+      availableIds.has(id),
+    );
+    only = configuredIds.length > 0 ? configuredIds.join(",") : undefined;
+  }
+
+  return {
+    config,
+    only,
+    skillGroups: options.skillGroups ?? config?.skillGroups ?? undefined,
+  };
+}
+
 async function runInspectCommand(options: CliOptions): Promise<void> {
   const context = await createContext({
     dryRun: false,
@@ -66,19 +103,31 @@ async function runInspectCommand(options: CliOptions): Promise<void> {
   await runInspect(context, { json: Boolean(options.json) });
 }
 
+async function runStatusCommand(options: CliOptions): Promise<void> {
+  const context = await createContext({
+    dryRun: false,
+    yes: Boolean(options.yes),
+    ui: SILENT_SPINNER,
+  });
+
+  await runStatus(context, getRegisteredPlugins());
+}
+
 async function runPlanCommand(options: CliOptions): Promise<void> {
+  const plugins = selectPlugins(options);
+  const { only, skillGroups } = await resolveDesiredStateDefaults(
+    options,
+    plugins,
+  );
   const context = await createContext({
     dryRun: true,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
-    skillGroups: options.skillGroups,
+    skillGroups,
   });
-  const plugins = getRegisteredPlugins().filter(
-    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
-  );
 
   const plan = await buildPlan(context, plugins, {
-    only: options.only,
+    only,
     agemonVersion: VERSION,
   });
   const planPath = await writePlan(context.cwd, plan);
@@ -102,20 +151,24 @@ async function runInstall(options: CliOptions): Promise<void> {
   }
 
   const spinner = createStepSpinner();
-  const plugins = getRegisteredPlugins().filter(
-    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+  const plugins = selectPlugins(options);
+  const { config, only, skillGroups } = await resolveDesiredStateDefaults(
+    options,
+    plugins,
   );
   const context = await createContext({
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: spinner,
-    skillGroups: options.skillGroups,
+    skillGroups,
   });
 
   await reconcile(context, plugins, {
-    only: options.only,
+    only,
     agemonVersion: VERSION,
     allowUnignoredState: Boolean(options.allowUnignoredState),
+    conflictDecisions: config?.conflictDecisions,
+    persistConfig: config === null,
   });
 }
 
@@ -129,14 +182,16 @@ async function runApply(options: CliOptions): Promise<void> {
   }
 
   const spinner = createStepSpinner();
-  const plugins = getRegisteredPlugins().filter(
-    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+  const plugins = selectPlugins(options);
+  const { config, only, skillGroups } = await resolveDesiredStateDefaults(
+    options,
+    plugins,
   );
   const context = await createContext({
     dryRun: false,
     yes: Boolean(options.yes),
     ui: spinner,
-    skillGroups: options.skillGroups,
+    skillGroups,
   });
 
   const plan = options.plan
@@ -144,10 +199,12 @@ async function runApply(options: CliOptions): Promise<void> {
     : undefined;
 
   await reconcile(context, plugins, {
-    only: options.only,
+    only,
     agemonVersion: VERSION,
     allowUnignoredState: Boolean(options.allowUnignoredState),
     plan,
+    conflictDecisions: config?.conflictDecisions,
+    persistConfig: config === null,
   });
 }
 
@@ -209,6 +266,15 @@ function createProgram(): Command {
     .option("--json", "emit the redacted JSON report instead of a table")
     .action((_options: CliOptions, command: Command) =>
       runInspectCommand({ ...command.parent?.opts(), ...command.opts() }),
+    );
+
+  program
+    .command("status")
+    .description(
+      "Post-install health + drift summary from the provenance ledger",
+    )
+    .action((_options: CliOptions, command: Command) =>
+      runStatusCommand({ ...command.parent?.opts(), ...command.opts() }),
     );
 
   program

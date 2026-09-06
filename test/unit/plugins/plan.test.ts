@@ -55,6 +55,7 @@ async function createTestContext(): Promise<Context> {
       approved: [],
       skipped: [],
       workspaceIsolationApproved: null,
+      conflictResolutions: [],
     }),
     log: console,
     ui: createNoOpUi(),

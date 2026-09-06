@@ -163,7 +163,19 @@ async function detectSkills(ctx: Context): Promise<PluginPresence> {
   return { present: true, preExisting: true };
 }
 
-async function planSkills(_ctx: Context): Promise<ProposedOperation[]> {
+async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
+  const recordedGroups = getRecordedGroups(ctx);
+  if (recordedGroups.length > 0) {
+    const recordedEntries = flattenSkills(recordedGroups);
+    const installedSkillNames = await listInstalledSkillNames(ctx);
+    const allRecordedSkillsPresent = recordedEntries.every((entry) =>
+      installedSkillNames.has(entry.skillName),
+    );
+    if (allRecordedSkillsPresent) {
+      return [];
+    }
+  }
+
   return [
     describeOperation({
       capabilityId: PLUGIN_ID,

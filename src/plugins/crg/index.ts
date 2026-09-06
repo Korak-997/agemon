@@ -69,7 +69,14 @@ async function detectCrgPresence(ctx: Context): Promise<PluginPresence> {
   return { present: true, preExisting: true };
 }
 
-async function planCrg(_ctx: Context): Promise<ProposedOperation[]> {
+async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
+  const versionCheck = await ctx.run("code-review-graph", ["--version"], {
+    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
+  });
+  if (versionCheck.code === 0) {
+    return [];
+  }
+
   return [
     describeOperation({
       capabilityId: PLUGIN_ID,
