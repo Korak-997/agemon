@@ -1,5 +1,3 @@
-import { readFile, writeFile } from "node:fs/promises";
-
 function startMarker(blockId: string): string {
   return `<!-- agemon:start:${blockId} -->`;
 }
@@ -97,41 +95,4 @@ export function removeManagedMarkdownBlock(
   }
 
   return { nextContent: next, changed: true };
-}
-
-async function readFileOrEmpty(filePath: string): Promise<string> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-export async function upsertManagedMarkdownBlockFile(
-  filePath: string,
-  blockId: string,
-  blockBody: string,
-): Promise<boolean> {
-  const content = await readFileOrEmpty(filePath);
-  const updated = upsertManagedMarkdownBlock(content, blockId, blockBody);
-  if (!updated.changed) {
-    return false;
-  }
-
-  await writeFile(filePath, updated.nextContent, "utf8");
-  return true;
-}
-
-export async function removeManagedMarkdownBlockFile(
-  filePath: string,
-  blockId: string,
-): Promise<boolean> {
-  const content = await readFileOrEmpty(filePath);
-  const updated = removeManagedMarkdownBlock(content, blockId);
-  if (!updated.changed) {
-    return false;
-  }
-
-  await writeFile(filePath, updated.nextContent, "utf8");
-  return true;
 }

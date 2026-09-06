@@ -7,7 +7,6 @@ import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { getRegisteredPlugins } from "../../../src/plugins/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
-import { patcherCheckpointPlugin } from "../../../src/plugins/patcher-checkpoint.js";
 import { testPlugin } from "../../../src/plugins/test-plugin.js";
 
 const createdTempDirectories: string[] = [];
@@ -67,11 +66,7 @@ async function createTestContext(): Promise<Context> {
 
 describe("capability plan()", () => {
   it("is implemented with a risk class on every registered capability", () => {
-    const capabilities = [
-      ...getRegisteredPlugins(),
-      testPlugin,
-      patcherCheckpointPlugin,
-    ];
+    const capabilities = [...getRegisteredPlugins(), testPlugin];
 
     for (const capability of capabilities) {
       expect(typeof capability.plan, capability.id).toBe("function");
@@ -108,7 +103,7 @@ describe("capability plan()", () => {
     const agentsOperation = first?.find(
       (operation) => operation.targetPath === "AGENTS.md",
     );
-    expect(agentsOperation?.action).toBe("replace");
+    expect(agentsOperation?.action).toBe("merge-block");
     expect(agentsOperation?.expectedFingerprint).not.toBeNull();
   });
 });
