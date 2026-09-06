@@ -1,4 +1,7 @@
 import type { Context } from "../core/context.js";
+import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
+import { getRegisteredPlugins } from "../plugins/index.js";
+import type { AgemonPlugin } from "../plugins/types.js";
 import { renderTable } from "../ui/table.js";
 import { type ClassifiedResource, classifyResources } from "./classify.js";
 import { discoverRepository } from "./discover.js";
@@ -27,9 +30,16 @@ export interface InspectReport {
   duplication: DuplicationReport;
 }
 
-export async function inspectRepository(ctx: Context): Promise<InspectReport> {
+export async function inspectRepository(
+  ctx: Context,
+  plugins: AgemonPlugin[] = getRegisteredPlugins(),
+): Promise<InspectReport> {
   const discovery = await discoverRepository(ctx);
-  const resources = classifyResources(discovery, ctx.manifest.getActions());
+  const resources = classifyResources(
+    discovery,
+    ctx.manifest.getActions(),
+    (resourceId) => resolveCurrentDesiredRevision(plugins, ctx, resourceId),
+  );
 
   const structuredConfig: RedactedStructuredConfig[] =
     discovery.structuredConfigs.map((resource) => {

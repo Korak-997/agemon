@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import {
   buildStatusReport,
+  checkManagedResources,
   verifyManagedState,
 } from "../../../src/inspect/status.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
@@ -63,6 +64,7 @@ async function recordManagedRuleFile(
   context: Context,
   target: string,
   contents: string,
+  desiredRevision?: string,
 ): Promise<void> {
   await context.manifest.recordAction({
     plugin: "master-prompt",
@@ -72,7 +74,23 @@ async function recordManagedRuleFile(
     resourceId: `rule-file:${target}`,
     ownershipMode: "delimited-block",
     fingerprintAfter: fingerprintContent(contents),
+    desiredRevision,
   });
+}
+
+function stubRevisionPlugin(revision: string | null): AgemonPlugin {
+  return {
+    id: "master-prompt",
+    desiredRevision: () => revision,
+    async detect() {
+      return { present: true, preExisting: false };
+    },
+    async install() {},
+    async verify() {
+      return { ok: true };
+    },
+    async uninstall() {},
+  };
 }
 
 describe("status", () => {
@@ -100,6 +118,45 @@ describe("status", () => {
     await rm(join(context.cwd, "AGENTS.md"));
     const missingReport = await buildStatusReport(context, []);
     expect(missingReport.managedResources[0].health).toBe("missing");
+  });
+
+  it("flags a fingerprint-matching file as drifted when agemon's template moved on", async () => {
+    const context = await createStatusContext();
+    const managed = "# rules\n\nagemon owns this.\n";
+    await writeFile(join(context.cwd, "AGENTS.md"), managed, "utf8");
+    await recordManagedRuleFile(
+      context,
+      "AGENTS.md",
+      managed,
+      "template-rev-1",
+    );
+
+    const currentRows = await checkManagedResources(context, [
+      stubRevisionPlugin("template-rev-1"),
+    ]);
+    expect(currentRows[0].health).toBe("managed-current");
+
+    const driftedRows = await checkManagedResources(context, [
+      stubRevisionPlugin("template-rev-2"),
+    ]);
+    expect(driftedRows[0].health).toBe("managed-drifted");
+    expect(driftedRows[0].detail).toBe(
+      "agemon template updated — re-run to refresh",
+    );
+
+    const report = await buildStatusReport(context, [
+      stubRevisionPlugin("template-rev-2"),
+    ]);
+    expect(report.healthy).toBe(false);
+    expect(
+      await verifyManagedState(context, [stubRevisionPlugin("rev-x")]),
+    ).toEqual([
+      "AGENTS.md is behind agemon's current template; re-run to refresh",
+    ]);
+
+    expect(await readFile(join(context.cwd, "AGENTS.md"), "utf8")).toBe(
+      managed,
+    );
   });
 
   it("surfaces daemon health only when the daemon is ledger-recorded", async () => {

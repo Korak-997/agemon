@@ -160,7 +160,7 @@ async function runPostApplySweep(
       );
     }
   }
-  problems.push(...(await verifyManagedState(ctx)));
+  problems.push(...(await verifyManagedState(ctx, plugins)));
   return problems;
 }
 
@@ -214,7 +214,7 @@ export async function reconcile(
     }));
 
   if (plan.operations.length === 0) {
-    const driftProblems = await verifyManagedState(ctx);
+    const driftProblems = await verifyManagedState(ctx, plugins);
     if (driftProblems.length > 0) {
       ctx.ui.fail("Nothing to apply, but the environment has drifted:");
       reportSweepProblems(ctx, driftProblems);

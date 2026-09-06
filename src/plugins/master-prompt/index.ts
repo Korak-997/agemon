@@ -6,7 +6,7 @@ import {
   writeImmutableBackup,
 } from "../../core/backups.js";
 import type { Context } from "../../core/context.js";
-import { fingerprintContent } from "../../core/fingerprint.js";
+import { fingerprintContent, fingerprintJson } from "../../core/fingerprint.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { renderUnifiedDiff } from "../../core/text-diff.js";
 import { detectDuplication } from "../../inspect/duplication.js";
@@ -121,6 +121,35 @@ function pointerContentsFor(target: string): string {
 
 function ruleFileResourceId(target: string): string {
   return `rule-file:${target}`;
+}
+
+function ruleFileTargetFromResourceId(resourceId: string): string | null {
+  const prefix = "rule-file:";
+  return resourceId.startsWith(prefix) ? resourceId.slice(prefix.length) : null;
+}
+
+function desiredRevisionForTarget(target: string): string | null {
+  if (target === AGENTS_FILE) {
+    return fingerprintJson({
+      block: buildAgentRulesBlockBody(),
+      pointer: null,
+    });
+  }
+  if (POINTER_TARGETS.some((pointer) => pointer.target === target)) {
+    return fingerprintJson({
+      block: null,
+      pointer: pointerContentsFor(target),
+    });
+  }
+  return null;
+}
+
+function masterPromptDesiredRevision(
+  _ctx: Context,
+  resourceId: string,
+): string | null {
+  const target = ruleFileTargetFromResourceId(resourceId);
+  return target === null ? null : desiredRevisionForTarget(target);
 }
 
 async function readFileIfExists(filePath: string): Promise<string | null> {
@@ -336,12 +365,13 @@ async function recordManagedRuleFile(
   },
 ): Promise<void> {
   const fingerprintAfter = fingerprintContent(input.contentsAfter);
+  const desiredRevision = desiredRevisionForTarget(input.target);
 
   if (hasActionForTarget(ctx, input.target)) {
-    await ctx.manifest.refreshResourceFingerprints(
-      ruleFileResourceId(input.target),
-      { fingerprintAfter },
-    );
+    await ctx.manifest.updateResourceEntry(ruleFileResourceId(input.target), {
+      fingerprintAfter,
+      desiredRevision,
+    });
     return;
   }
 
@@ -357,6 +387,7 @@ async function recordManagedRuleFile(
         ? null
         : fingerprintContent(input.contentsBefore),
     fingerprintAfter,
+    desiredRevision,
     backup: input.backup,
   });
 }
@@ -562,6 +593,7 @@ export const masterPromptPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   riskClass: "writes-config",
   detect: detectMasterPrompt,
+  desiredRevision: masterPromptDesiredRevision,
   plan: planMasterPrompt,
   apply: applyMasterPrompt,
   install: installMasterPrompt,

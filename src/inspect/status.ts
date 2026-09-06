@@ -3,8 +3,10 @@ import { join } from "node:path";
 import type { Context } from "../core/context.js";
 import { fingerprintContent } from "../core/fingerprint.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
+import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
 import type { AgemonPlugin } from "../plugins/types.js";
 import { renderTable } from "../ui/table.js";
+import { TEMPLATE_DRIFT_DETAIL, USER_DRIFT_DETAIL } from "./classify.js";
 import { discoverRepository } from "./discover.js";
 import { detectDuplication, type OverlapFinding } from "./duplication.js";
 
@@ -21,6 +23,7 @@ export interface ManagedResourceStatus {
   target: string;
   ownershipMode: string | null;
   health: ManagedResourceHealth;
+  detail: string | null;
 }
 
 export interface DaemonStatus {
@@ -56,6 +59,7 @@ function isFileBackedRuleEntry(entry: LedgerEntry): entry is LedgerEntry & {
 
 export async function checkManagedResources(
   ctx: Context,
+  plugins: AgemonPlugin[] = [],
 ): Promise<ManagedResourceStatus[]> {
   const seenResourceIds = new Set<string>();
   const results: ManagedResourceStatus[] = [];
@@ -70,35 +74,60 @@ export async function checkManagedResources(
     seenResourceIds.add(entry.resourceId);
 
     const contents = await readFileIfExists(join(ctx.cwd, entry.target));
-    const health: ManagedResourceHealth =
-      contents === null
-        ? "missing"
-        : fingerprintContent(contents) === entry.fingerprintAfter
-          ? "managed-current"
-          : "managed-drifted";
+    let health: ManagedResourceHealth;
+    let detail: string | null = null;
+    if (contents === null) {
+      health = "missing";
+    } else if (fingerprintContent(contents) !== entry.fingerprintAfter) {
+      health = "managed-drifted";
+      detail = USER_DRIFT_DETAIL;
+    } else if (entry.desiredRevision !== null) {
+      const currentRevision = resolveCurrentDesiredRevision(
+        plugins,
+        ctx,
+        entry.resourceId,
+      );
+      if (
+        currentRevision !== null &&
+        currentRevision !== entry.desiredRevision
+      ) {
+        health = "managed-drifted";
+        detail = TEMPLATE_DRIFT_DETAIL;
+      } else {
+        health = "managed-current";
+      }
+    } else {
+      health = "managed-current";
+    }
 
     results.push({
       resourceId: entry.resourceId,
       target: entry.target,
       ownershipMode: entry.ownershipMode,
       health,
+      detail,
     });
   }
 
   return results;
 }
 
-export async function verifyManagedState(ctx: Context): Promise<string[]> {
+export async function verifyManagedState(
+  ctx: Context,
+  plugins: AgemonPlugin[] = [],
+): Promise<string[]> {
   const problems: string[] = [];
 
-  for (const managed of await checkManagedResources(ctx)) {
+  for (const managed of await checkManagedResources(ctx, plugins)) {
     if (managed.health === "missing") {
       problems.push(
         `${managed.target} is recorded in the ledger but missing on disk`,
       );
     } else if (managed.health === "managed-drifted") {
       problems.push(
-        `${managed.target} no longer matches its ledger fingerprint`,
+        managed.detail === TEMPLATE_DRIFT_DETAIL
+          ? `${managed.target} is behind agemon's current template; re-run to refresh`
+          : `${managed.target} no longer matches its ledger fingerprint`,
       );
     }
   }
@@ -131,7 +160,7 @@ export async function buildStatusReport(
   ctx: Context,
   plugins: AgemonPlugin[],
 ): Promise<StatusReport> {
-  const managedResources = await checkManagedResources(ctx);
+  const managedResources = await checkManagedResources(ctx, plugins);
   const managedPaths = new Set(
     managedResources.map((resource) => resource.target),
   );
@@ -191,11 +220,12 @@ export function renderStatusReport(report: StatusReport): string {
   } else {
     sections.push(
       renderTable([
-        ["RESOURCE", "OWNERSHIP", "HEALTH"],
+        ["RESOURCE", "OWNERSHIP", "HEALTH", "DETAIL"],
         ...report.managedResources.map((resource) => [
           resource.target,
           resource.ownershipMode ?? "",
           resource.health,
+          resource.detail ?? "",
         ]),
       ]),
     );

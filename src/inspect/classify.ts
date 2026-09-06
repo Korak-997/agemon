@@ -29,6 +29,14 @@ const CANONICAL_RULE_FILE = "AGENTS.md";
 const POINTER_REFERENCE_PATTERN = /AGENTS\.md/i;
 const POINTER_MAX_NORMALIZED_LENGTH = 800;
 
+export const USER_DRIFT_DETAIL = "edited since agemon wrote it";
+export const TEMPLATE_DRIFT_DETAIL =
+  "agemon template updated — re-run to refresh";
+
+export type CurrentDesiredRevisionResolver = (
+  resourceId: string,
+) => string | null;
+
 function ledgerEntryForResource(
   entries: LedgerEntry[],
   resourceId: string,
@@ -36,17 +44,26 @@ function ledgerEntryForResource(
   return entries.find((entry) => entry.resourceId === resourceId);
 }
 
-function classifyManagedByFingerprint(
+function classifyManaged(
   entry: LedgerEntry,
   currentContents: string,
-): ResourceState {
-  if (
+  currentDesiredRevision: CurrentDesiredRevisionResolver | undefined,
+): { state: ResourceState; detail: string | null } {
+  const fingerprintMatches =
     entry.fingerprintAfter !== null &&
-    entry.fingerprintAfter === fingerprintContent(currentContents)
-  ) {
-    return "managed-current";
+    entry.fingerprintAfter === fingerprintContent(currentContents);
+  if (!fingerprintMatches) {
+    return { state: "managed-drifted", detail: USER_DRIFT_DETAIL };
   }
-  return "managed-drifted";
+
+  if (entry.desiredRevision !== null && currentDesiredRevision !== undefined) {
+    const current = currentDesiredRevision(entry.resourceId ?? "");
+    if (current !== null && current !== entry.desiredRevision) {
+      return { state: "managed-drifted", detail: TEMPLATE_DRIFT_DETAIL };
+    }
+  }
+
+  return { state: "managed-current", detail: entry.ownershipMode };
 }
 
 function looksLikePointerFile(contents: string): boolean {
@@ -61,6 +78,7 @@ function looksLikePointerFile(contents: string): boolean {
 function classifyRuleFile(
   resource: RuleFileResource,
   ledgerEntries: LedgerEntry[],
+  currentDesiredRevision: CurrentDesiredRevisionResolver | undefined,
 ): ClassifiedResource {
   const resourceId = `rule-file:${resource.path}`;
 
@@ -76,12 +94,17 @@ function classifyRuleFile(
 
   const entry = ledgerEntryForResource(ledgerEntries, resourceId);
   if (entry !== undefined) {
+    const { state, detail } = classifyManaged(
+      entry,
+      resource.contents,
+      currentDesiredRevision,
+    );
     return {
       resourceId,
       path: resource.path,
       kind: resource.kind,
-      state: classifyManagedByFingerprint(entry, resource.contents),
-      detail: entry.ownershipMode,
+      state,
+      detail,
     };
   }
 
@@ -166,10 +189,11 @@ function classifyCopilotInstruction(
 export function classifyResources(
   discovery: DiscoveryResult,
   ledgerEntries: LedgerEntry[],
+  currentDesiredRevision?: CurrentDesiredRevisionResolver,
 ): ClassifiedResource[] {
   return [
     ...discovery.ruleFiles.map((resource) =>
-      classifyRuleFile(resource, ledgerEntries),
+      classifyRuleFile(resource, ledgerEntries, currentDesiredRevision),
     ),
     ...discovery.structuredConfigs.map(classifyStructuredConfig),
     ...discovery.copilotInstructions.map(classifyCopilotInstruction),

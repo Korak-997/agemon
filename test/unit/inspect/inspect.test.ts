@@ -7,6 +7,7 @@ import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { inspectRepository, runInspect } from "../../../src/inspect/index.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import type { AgemonPlugin } from "../../../src/plugins/types.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -224,6 +225,48 @@ describe("inspectRepository", () => {
     );
     expect(stateForPath(await inspectRepository(context), "AGENTS.md")).toBe(
       "managed-drifted",
+    );
+  });
+
+  it("classifies a fingerprint-matching file as drifted when agemon's template moved on", async () => {
+    const context = await createInspectContext();
+    const managedContents = "# Managed rules\n\nAgemon owns this file.\n";
+    await writeFile(join(context.cwd, "AGENTS.md"), managedContents, "utf8");
+    await context.manifest.recordAction({
+      plugin: "master-prompt",
+      type: "managed-rule-file",
+      target: "AGENTS.md",
+      preExisting: false,
+      resourceId: "rule-file:AGENTS.md",
+      ownershipMode: "delimited-block",
+      fingerprintAfter: fingerprintContent(managedContents),
+      desiredRevision: "template-rev-1",
+    });
+
+    const revisionPlugin = (revision: string): AgemonPlugin => ({
+      id: "master-prompt",
+      desiredRevision: () => revision,
+      async detect() {
+        return { present: true, preExisting: false };
+      },
+      async install() {},
+      async verify() {
+        return { ok: true };
+      },
+      async uninstall() {},
+    });
+
+    const currentResource = (
+      await inspectRepository(context, [revisionPlugin("template-rev-1")])
+    ).resources.find((resource) => resource.path === "AGENTS.md");
+    expect(currentResource?.state).toBe("managed-current");
+
+    const driftedResource = (
+      await inspectRepository(context, [revisionPlugin("template-rev-2")])
+    ).resources.find((resource) => resource.path === "AGENTS.md");
+    expect(driftedResource?.state).toBe("managed-drifted");
+    expect(driftedResource?.detail).toBe(
+      "agemon template updated — re-run to refresh",
     );
   });
 });

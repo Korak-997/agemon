@@ -45,18 +45,46 @@ const V1_MANIFEST = {
   ],
 };
 
-async function writeV1Manifest(cwd: string): Promise<string> {
+async function writeManifest(cwd: string, manifest: unknown): Promise<string> {
   const manifestPath = join(cwd, ".agemon", "state.json");
   await mkdir(join(cwd, ".agemon"), { recursive: true });
   await writeFile(
     manifestPath,
-    `${JSON.stringify(V1_MANIFEST, null, 2)}\n`,
+    `${JSON.stringify(manifest, null, 2)}\n`,
     "utf8",
   );
   return manifestPath;
 }
 
-describe("StateManifest ledger v2", () => {
+async function writeV1Manifest(cwd: string): Promise<string> {
+  return writeManifest(cwd, V1_MANIFEST);
+}
+
+const V2_MANIFEST = {
+  version: 2,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-02T00:00:00.000Z",
+  os: "linux",
+  actions: [
+    {
+      id: "1111",
+      plugin: "master-prompt",
+      type: "managed-rule-file",
+      target: "AGENTS.md",
+      preExisting: true,
+      createdAt: "2026-08-02T00:00:00.000Z",
+      planId: null,
+      resourceId: "rule-file:AGENTS.md",
+      ownershipMode: "delimited-block",
+      agemonVersion: null,
+      fingerprintBefore: null,
+      fingerprintAfter: "after-hash",
+      backup: null,
+    },
+  ],
+};
+
+describe("StateManifest ledger v3", () => {
   it("migrates a v1 manifest, keeps the actions, and writes a pre-migration backup", async () => {
     const cwd = await createSandbox();
     const manifestPath = await writeV1Manifest(cwd);
@@ -64,7 +92,7 @@ describe("StateManifest ledger v2", () => {
     const manifest = await StateManifest.load(cwd);
 
     const persisted = JSON.parse(await readFile(manifestPath, "utf8"));
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
     expect(persisted.actions).toHaveLength(2);
     expect(persisted.actions[0]).toMatchObject({
       id: "1111",
@@ -75,6 +103,8 @@ describe("StateManifest ledger v2", () => {
       ownershipMode: "created",
       fingerprintBefore: null,
       fingerprintAfter: null,
+      desiredRevision: null,
+      validation: null,
       backup: null,
     });
     expect(persisted.actions[1].ownershipMode).toBe("recorded-key");
@@ -90,7 +120,35 @@ describe("StateManifest ledger v2", () => {
     ]);
   });
 
-  it("does not re-migrate a manifest that is already v2", async () => {
+  it("migrates a v2 manifest to v3, keeping stored fields and backing it up once", async () => {
+    const cwd = await createSandbox();
+    const manifestPath = await writeManifest(cwd, V2_MANIFEST);
+
+    await StateManifest.load(cwd);
+
+    const persisted = JSON.parse(await readFile(manifestPath, "utf8"));
+    expect(persisted.version).toBe(3);
+    expect(persisted.actions[0]).toMatchObject({
+      resourceId: "rule-file:AGENTS.md",
+      ownershipMode: "delimited-block",
+      fingerprintAfter: "after-hash",
+      desiredRevision: null,
+      validation: null,
+    });
+
+    const backup = JSON.parse(
+      await readFile(join(cwd, ".agemon", "state.v1.bak"), "utf8"),
+    );
+    expect(backup).toEqual(V2_MANIFEST);
+
+    await rm(join(cwd, ".agemon", "state.v1.bak"), { force: true });
+    await StateManifest.load(cwd);
+    await expect(
+      readFile(join(cwd, ".agemon", "state.v1.bak"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not re-migrate a manifest that is already v3", async () => {
     const cwd = await createSandbox();
     await writeV1Manifest(cwd);
     await StateManifest.load(cwd);
@@ -103,7 +161,7 @@ describe("StateManifest ledger v2", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("records and persists the v2 provenance fields", async () => {
+  it("records and persists the provenance fields", async () => {
     const cwd = await createSandbox();
     const manifest = await StateManifest.load(cwd);
 
@@ -130,7 +188,7 @@ describe("StateManifest ledger v2", () => {
     });
   });
 
-  it("refreshes a recorded resource's fingerprint in place and persists it", async () => {
+  it("patches a recorded resource entry in place and persists it", async () => {
     const cwd = await createSandbox();
     const manifest = await StateManifest.load(cwd);
 
@@ -143,23 +201,45 @@ describe("StateManifest ledger v2", () => {
       ownershipMode: "delimited-block",
       fingerprintBefore: null,
       fingerprintAfter: "first-hash",
+      desiredRevision: "rev-1",
     });
 
-    const updated = await manifest.refreshResourceFingerprints(
-      "rule-file:AGENTS.md",
-      { fingerprintAfter: "second-hash" },
-    );
+    const updated = await manifest.updateResourceEntry("rule-file:AGENTS.md", {
+      fingerprintAfter: "second-hash",
+      desiredRevision: "rev-2",
+      validation: { ok: true },
+    });
     expect(updated?.fingerprintAfter).toBe("second-hash");
     expect(updated?.fingerprintBefore).toBeNull();
+    expect(updated?.desiredRevision).toBe("rev-2");
+    expect(updated?.validation).toEqual({ ok: true });
 
     const reloaded = await StateManifest.load(cwd);
     expect(reloaded.getActions()[0].fingerprintAfter).toBe("second-hash");
+    expect(reloaded.getActions()[0].validation).toEqual({ ok: true });
 
     expect(
-      await manifest.refreshResourceFingerprints("rule-file:missing", {
+      await manifest.updateResourceEntry("rule-file:missing", {
         fingerprintAfter: "x",
       }),
     ).toBeUndefined();
+  });
+
+  it("stamps recordAction entries with the recording agemon version", async () => {
+    const cwd = await createSandbox();
+    const manifest = await StateManifest.load(cwd);
+    manifest.setRecordingAgemonVersion("4.5.6");
+
+    await manifest.recordAction({
+      plugin: "daemon",
+      type: "registered-service",
+      target: "agemon-crg-daemon.service",
+      preExisting: false,
+    });
+
+    expect((await StateManifest.load(cwd)).getActions()[0].agemonVersion).toBe(
+      "4.5.6",
+    );
   });
 
   it("refuses an unrecognised schema version", async () => {

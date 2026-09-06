@@ -165,6 +165,12 @@ async function runCapabilityWork(
         `Verification failed for '${plugin.id}' after apply.`,
     );
   }
+
+  for (const operation of operations) {
+    await ctx.manifest.updateResourceEntry(operation.resourceId, {
+      validation: { ok: true },
+    });
+  }
 }
 
 export async function applyPlan(
@@ -179,6 +185,8 @@ export async function applyPlan(
     input.plan,
     input.approved,
   );
+
+  ctx.manifest.setRecordingAgemonVersion(input.plan.agemonVersion);
 
   await enforceWorkspaceIsolation(ctx, input);
   await writePlan(ctx.cwd, input.plan);
