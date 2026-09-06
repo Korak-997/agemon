@@ -2,6 +2,11 @@ import { detectPlatform, REQUIRED_BINARIES } from "../platform/detect.js";
 import type { ServiceManager } from "../platform/service-manager/index.js";
 import { createServiceManager } from "../platform/service-manager/index.js";
 import type { StepSpinner } from "../ui/spinner.js";
+import {
+  type ApprovedOperationSet,
+  type ConsentGate,
+  resolveConsent,
+} from "./consent.js";
 import { createConfirmer } from "./prompt.js";
 import { StateManifest } from "./state-manifest.js";
 import {
@@ -33,19 +38,9 @@ export interface Context {
   ) => Promise<SubprocessResult>;
   manifest: StateManifest;
   serviceManager: ServiceManager;
-  /**
-   * Asks "are you sure" mid-run. Resolves to `true` immediately when `--yes`
-   * is set, `false` immediately when there's no TTY to prompt on, and
-   * otherwise shows a real y/N prompt. See core/prompt.ts.
-   */
+
   confirm: (message: string) => Promise<boolean>;
-  /**
-   * Raw `--skill-groups` CLI value, or undefined when the flag was omitted.
-   * Parsed and resolved by the skills plugin itself (see
-   * plugins/skills/group-selection.ts) — kept as a raw string here so
-   * Context stays a plain passthrough of CLI input, not plugin-specific
-   * state.
-   */
+  consent: (gates: ConsentGate[]) => Promise<ApprovedOperationSet>;
   skillGroupsOption?: string;
 }
 
@@ -89,5 +84,6 @@ export async function createContext(
       user: process.env.USER,
     }),
     confirm: createConfirmer({ yes: input.yes }),
+    consent: (gates) => resolveConsent({ gates, yes: input.yes, log: console }),
   };
 }

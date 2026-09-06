@@ -42,6 +42,11 @@ async function createTestContext(): Promise<Context> {
     dryRun: true,
     yes: false,
     confirm: async () => false,
+    consent: async () => ({
+      approved: [],
+      skipped: [],
+      workspaceIsolationApproved: null,
+    }),
     log: console,
     ui: { start() {}, succeed() {}, fail() {}, info() {} },
     run: async () => ({ code: 0, stdout: "", stderr: "" }),

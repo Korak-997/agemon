@@ -66,6 +66,11 @@ async function createTestContext(skillGroupsOption?: string): Promise<Context> {
     dryRun: false,
     yes: true,
     confirm: async () => false,
+    consent: async () => ({
+      approved: [],
+      skipped: [],
+      workspaceIsolationApproved: null,
+    }),
     log: console,
     ui: createNoOpUi(),
     run: runSubprocess,

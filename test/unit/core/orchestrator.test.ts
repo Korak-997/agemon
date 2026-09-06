@@ -83,6 +83,11 @@ async function createTestContext(overrides: {
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
     confirm: overrides.confirm,
+    consent: async () => ({
+      approved: [],
+      skipped: [],
+      workspaceIsolationApproved: null,
+    }),
   };
 }
 

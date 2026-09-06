@@ -24,6 +24,7 @@ export type ProposedOperationAction =
   | "replace"
   | "install-package"
   | "register-service"
+  | "conflict"
   | "skip";
 
 export interface ProposedOperation {
