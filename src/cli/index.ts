@@ -328,7 +328,7 @@ export async function runCli(argv: string[]): Promise<number> {
       return error.exitCode;
     }
     console.error(
-      theme.error(error instanceof Error ? error.message : String(error)),
+      theme.danger(error instanceof Error ? error.message : String(error)),
     );
     return 1;
   }

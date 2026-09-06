@@ -31,7 +31,7 @@ export function createStepSpinner(): StepSpinner {
       if (isInteractive() && current) {
         current.succeed(text);
       } else {
-        console.log(theme.success(`✔ ${text}`));
+        console.log(theme.ok(`✔ ${text}`));
       }
     },
     fail(label) {
@@ -39,14 +39,14 @@ export function createStepSpinner(): StepSpinner {
       if (isInteractive() && current) {
         current.fail(text);
       } else {
-        console.log(theme.error(`✘ ${text}`));
+        console.log(theme.danger(`✘ ${text}`));
       }
     },
     info(label) {
       if (isInteractive() && current) {
         current.info(label);
       } else {
-        console.log(theme.info(label));
+        console.log(theme.accent(label));
       }
     },
   };
