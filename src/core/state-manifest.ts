@@ -287,6 +287,19 @@ export class StateManifest {
     await this.persist();
   }
 
+  async removeActionsAddedSince(
+    knownActionIds: ReadonlySet<string>,
+  ): Promise<void> {
+    const nextActions = this.state.actions.filter((action) =>
+      knownActionIds.has(action.id),
+    );
+    if (nextActions.length === this.state.actions.length) {
+      return;
+    }
+    this.state.actions = nextActions;
+    await this.persist();
+  }
+
   async pruneIfEmpty(): Promise<void> {
     if (this.state.actions.length > 0) {
       return;
@@ -294,11 +307,7 @@ export class StateManifest {
 
     const manifestDir = dirname(this.manifestPath);
     await rm(this.manifestPath, { force: true });
-    try {
-      await rm(manifestDir, { recursive: false });
-    } catch {
-      return;
-    }
+    await rm(manifestDir, { recursive: true, force: true });
   }
 
   private async persistPreMigrationBackup(rawContents: string): Promise<void> {

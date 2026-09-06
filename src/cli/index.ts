@@ -6,10 +6,10 @@ import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
 import {
   buildPlan,
-  installPlugins,
+  reconcile,
   uninstallPlugins,
 } from "../core/orchestrator.js";
-import { renderPlan, writePlan } from "../core/plan-store.js";
+import { readPlan, renderPlan, writePlan } from "../core/plan-store.js";
 import { checkForUpdate } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
@@ -45,6 +45,8 @@ interface CliOptions {
   skipDaemon?: boolean;
   skillGroups?: string;
   json?: boolean;
+  allowUnignoredState?: boolean;
+  plan?: string;
 }
 
 const SILENT_SPINNER: StepSpinner = {
@@ -110,7 +112,43 @@ async function runInstall(options: CliOptions): Promise<void> {
     skillGroups: options.skillGroups,
   });
 
-  await installPlugins(context, plugins, { only: options.only });
+  await reconcile(context, plugins, {
+    only: options.only,
+    agemonVersion: VERSION,
+    allowUnignoredState: Boolean(options.allowUnignoredState),
+  });
+}
+
+async function runApply(options: CliOptions): Promise<void> {
+  const didUpdate = await checkForUpdate({
+    currentVersion: VERSION,
+    dryRun: false,
+  });
+  if (didUpdate) {
+    return;
+  }
+
+  const spinner = createStepSpinner();
+  const plugins = getRegisteredPlugins().filter(
+    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+  );
+  const context = await createContext({
+    dryRun: false,
+    yes: Boolean(options.yes),
+    ui: spinner,
+    skillGroups: options.skillGroups,
+  });
+
+  const plan = options.plan
+    ? await readPlan(context.cwd, options.plan)
+    : undefined;
+
+  await reconcile(context, plugins, {
+    only: options.only,
+    agemonVersion: VERSION,
+    allowUnignoredState: Boolean(options.allowUnignoredState),
+    plan,
+  });
 }
 
 async function runNuke(options: CliOptions): Promise<void> {
@@ -143,6 +181,10 @@ function createProgram(): Command {
     .option("--dry-run", "narrate actions without making changes")
     .option("--yes", "skip confirmation prompts")
     .option("--skip-daemon", "skip daemon registration")
+    .option(
+      "--allow-unignored-state",
+      "let apply write .agemon/ state even when it cannot be git-ignored (discouraged)",
+    )
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
     .option(
       "--skill-groups <groups>",
@@ -181,6 +223,21 @@ function createProgram(): Command {
     )
     .action((_options: CliOptions, command: Command) =>
       runPlanCommand({ ...command.parent?.opts(), ...command.opts() }),
+    );
+
+  program
+    .command("apply")
+    .description("Run a confirmed plan transactionally")
+    .option("--plan <id>", "apply a specific persisted plan id")
+    .option("--yes", "skip confirmation prompts")
+    .option("--skip-daemon", "skip daemon registration")
+    .option(
+      "--allow-unignored-state",
+      "write .agemon/ state even when it cannot be git-ignored (discouraged)",
+    )
+    .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .action((_options: CliOptions, command: Command) =>
+      runApply({ ...command.parent?.opts(), ...command.opts() }),
     );
 
   program

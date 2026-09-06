@@ -45,6 +45,7 @@ export interface AgemonPlugin {
   riskClass?: RiskClass;
   detect(ctx: Context): Promise<PluginPresence>;
   plan?(ctx: Context): Promise<ProposedOperation[]>;
+  apply?(ctx: Context, operations: ProposedOperation[]): Promise<void>;
   install(ctx: Context): Promise<void>;
   verify(ctx: Context): Promise<PluginVerificationResult>;
   uninstall(ctx: Context): Promise<void>;

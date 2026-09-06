@@ -1,16 +1,18 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type {
+  ApprovedOperationSet,
+  ConsentGate,
+} from "../../../src/core/consent.js";
 import type { Context } from "../../../src/core/context.js";
-import { installPlugins } from "../../../src/core/orchestrator.js";
+import { reconcile } from "../../../src/core/orchestrator.js";
+import type { Plan } from "../../../src/core/plan-store.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
-import type {
-  AgemonPlugin,
-  PluginPresence,
-  PluginVerificationResult,
-} from "../../../src/plugins/types.js";
+import { describeOperation } from "../../../src/plugins/proposed-operation.js";
+import type { AgemonPlugin } from "../../../src/plugins/types.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -34,96 +36,87 @@ function createNoOpServiceManager(): ServiceManager {
   };
 }
 
-interface RecordedUiCall {
-  type: "start" | "succeed" | "fail" | "info";
-  label?: string;
+function approveEveryGate(gates: ConsentGate[]): Promise<ApprovedOperationSet> {
+  const approved = gates.flatMap((gate) =>
+    gate.id === "resolve-conflict" ? [] : gate.operations,
+  );
+  return Promise.resolve({
+    approved,
+    skipped: [],
+    workspaceIsolationApproved: true,
+  });
 }
 
-function createRecordingUi(): { ui: Context["ui"]; calls: RecordedUiCall[] } {
-  const calls: RecordedUiCall[] = [];
-  return {
-    calls,
-    ui: {
-      start(label) {
-        calls.push({ type: "start", label });
-      },
-      succeed(label) {
-        calls.push({ type: "succeed", label });
-      },
-      fail(label) {
-        calls.push({ type: "fail", label });
-      },
-      info(label) {
-        calls.push({ type: "info", label });
-      },
-    },
-  };
-}
-
-async function createTestContext(overrides: {
-  ui: Context["ui"];
-  dryRun?: boolean;
-  yes?: boolean;
-  confirm: (message: string) => Promise<boolean>;
-}): Promise<Context> {
+async function createTestContext(
+  consent: Context["consent"],
+): Promise<Context> {
   const sandboxDirectory = await mkdtemp(
     join(tmpdir(), "agemon-orchestrator-test-"),
   );
   createdTempDirectories.push(sandboxDirectory);
+  await writeFile(join(sandboxDirectory, ".gitignore"), "/.agemon/\n", "utf8");
 
   return {
     cwd: sandboxDirectory,
     os: "ubuntu",
     binaries: [],
-    dryRun: overrides.dryRun ?? false,
-    yes: overrides.yes ?? false,
+    dryRun: false,
+    yes: true,
     log: console,
-    ui: overrides.ui,
+    ui: { start() {}, succeed() {}, fail() {}, info() {} },
     run: async () => ({ code: 0, stdout: "", stderr: "" }),
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
-    confirm: overrides.confirm,
-    consent: async () => ({
-      approved: [],
-      skipped: [],
-      workspaceIsolationApproved: null,
-    }),
+    confirm: async () => false,
+    consent,
   };
 }
 
-interface FakePluginOptions {
+interface FakeCapabilityOptions {
   id: string;
-  presence: PluginPresence;
-  /**
-   * Results returned by successive `verify()` calls. Once exhausted, the
-   * last entry keeps being returned (mirrors "still broken after a fix
-   * attempt" as well as "stayed healthy" scenarios without extra bookkeeping
-   * in each test).
-   */
-  verifyResults: PluginVerificationResult[];
+  targetPath: string;
 }
 
-function createFakePlugin(options: FakePluginOptions): {
+function createFakeCapability(options: FakeCapabilityOptions): {
   plugin: AgemonPlugin;
+  planCallCount: () => number;
   installCallCount: () => number;
 } {
+  let planCalls = 0;
   let installCalls = 0;
-  const verifyResults = [...options.verifyResults];
-
   return {
+    planCallCount: () => planCalls,
     installCallCount: () => installCalls,
     plugin: {
       id: options.id,
+      riskClass: "writes-config",
       async detect() {
-        return options.presence;
+        return { present: false, preExisting: false };
       },
-      async install() {
+      async plan() {
+        planCalls += 1;
+        return [
+          describeOperation({
+            capabilityId: options.id,
+            resourceId: `file:${options.targetPath}`,
+            targetPath: options.targetPath,
+            action: "create",
+            riskClass: "writes-config",
+            requiresConsent: true,
+            preview: { kind: "note", text: `create ${options.targetPath}` },
+          }),
+        ];
+      },
+      async install(ctx) {
         installCalls += 1;
+        await writeFile(
+          join(ctx.cwd, options.targetPath),
+          `written by ${options.id}\n`,
+          "utf8",
+        );
       },
       async verify() {
-        return verifyResults.length > 1
-          ? (verifyResults.shift() as PluginVerificationResult)
-          : verifyResults[0];
+        return { ok: true };
       },
       async uninstall() {
         return;
@@ -132,180 +125,99 @@ function createFakePlugin(options: FakePluginOptions): {
   };
 }
 
-describe("installPlugins", () => {
-  it("runs a fresh install when a plugin is not detected", async () => {
-    const { ui, calls } = createRecordingUi();
-    const context = await createTestContext({
-      ui,
-      confirm: async () => {
-        throw new Error("should not prompt during a fresh install");
-      },
-    });
-    const { plugin, installCallCount } = createFakePlugin({
-      id: "fresh",
-      presence: { present: false, preExisting: false },
-      verifyResults: [{ ok: true, detail: "all good" }],
+const RECONCILE_OPTIONS = {
+  agemonVersion: "9.9.9",
+  allowUnignoredState: false,
+} as const;
+
+describe("reconcile", () => {
+  it("applies approved operations and persists the plan under .agemon/plans", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const { plugin, installCallCount } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
     });
 
-    await installPlugins(context, [plugin], {});
+    await reconcile(context, [plugin], RECONCILE_OPTIONS);
 
     expect(installCallCount()).toBe(1);
-    expect(
-      calls.some(
-        (call) =>
-          call.type === "succeed" &&
-          call.label === "Installed fresh (all good)",
-      ),
-    ).toBe(true);
+    await expect(
+      readFile(join(context.cwd, "alpha.txt"), "utf8"),
+    ).resolves.toBe("written by alpha\n");
+    const planFiles = await readdir(join(context.cwd, ".agemon/plans"));
+    expect(planFiles.filter((name) => name.endsWith(".json"))).toHaveLength(1);
   });
 
-  it("appends .agemon to an existing .gitignore after installation", async () => {
-    const { ui } = createRecordingUi();
-    const context = await createTestContext({
-      ui,
-      confirm: async () => false,
-    });
-    await writeFile(join(context.cwd, ".gitignore"), "dist\n", "utf8");
-    const { plugin } = createFakePlugin({
-      id: "fresh",
-      presence: { present: false, preExisting: false },
-      verifyResults: [{ ok: true }],
+  it("makes no changes when consent declines every operation", async () => {
+    const context = await createTestContext(async () => ({
+      approved: [],
+      skipped: [],
+      workspaceIsolationApproved: false,
+    }));
+    const { plugin, installCallCount } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
     });
 
-    await installPlugins(context, [plugin], {});
+    await reconcile(context, [plugin], RECONCILE_OPTIONS);
 
+    expect(installCallCount()).toBe(0);
     await expect(
-      readFile(join(context.cwd, ".gitignore"), "utf8"),
-    ).resolves.toBe("dist\n.agemon\n");
-  });
-
-  it("does not create or modify .gitignore when it is absent or dry-running", async () => {
-    const { ui } = createRecordingUi();
-    const context = await createTestContext({
-      ui,
-      dryRun: true,
-      confirm: async () => false,
-    });
-    const { plugin } = createFakePlugin({
-      id: "fresh",
-      presence: { present: false, preExisting: false },
-      verifyResults: [{ ok: true }],
-    });
-
-    await installPlugins(context, [plugin], {});
-
-    await expect(
-      readFile(join(context.cwd, ".gitignore"), "utf8"),
+      readFile(join(context.cwd, "alpha.txt"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("does not duplicate an existing .agemon entry", async () => {
-    const { ui } = createRecordingUi();
-    const context = await createTestContext({
-      ui,
-      confirm: async () => false,
+  it("only runs the capabilities named by --only", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const alpha = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
     });
-    const gitignorePath = join(context.cwd, ".gitignore");
-    await writeFile(gitignorePath, "dist\n.agemon\n", "utf8");
-    const { plugin } = createFakePlugin({
-      id: "fresh",
-      presence: { present: false, preExisting: false },
-      verifyResults: [{ ok: true }],
+    const beta = createFakeCapability({ id: "beta", targetPath: "beta.txt" });
+
+    await reconcile(context, [alpha.plugin, beta.plugin], {
+      ...RECONCILE_OPTIONS,
+      only: "alpha",
     });
 
-    await installPlugins(context, [plugin], {});
-
-    await expect(readFile(gitignorePath, "utf8")).resolves.toBe(
-      "dist\n.agemon\n",
-    );
+    expect(alpha.installCallCount()).toBe(1);
+    expect(beta.installCallCount()).toBe(0);
   });
 
-  it("skips a healthy, already-present plugin without reinstalling or prompting", async () => {
-    const { ui, calls } = createRecordingUi();
-    const context = await createTestContext({
-      ui,
-      confirm: async () => {
-        throw new Error("should not prompt when already healthy");
-      },
-    });
-    const { plugin, installCallCount } = createFakePlugin({
-      id: "healthy",
-      presence: { present: true, preExisting: false },
-      verifyResults: [{ ok: true, detail: "status command passed" }],
+  it("uses a supplied plan instead of rebuilding one", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const { plugin, planCallCount, installCallCount } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
     });
 
-    await installPlugins(context, [plugin], {});
-
-    expect(installCallCount()).toBe(0);
-    expect(
-      calls.some(
-        (call) =>
-          call.type === "succeed" &&
-          call.label === "Already installed healthy (status command passed)",
-      ),
-    ).toBe(true);
-  });
-
-  it("fixes an unhealthy present plugin once the user confirms", async () => {
-    const { ui } = createRecordingUi();
-    const context = await createTestContext({
-      ui,
-      confirm: async () => true,
-    });
-    const { plugin, installCallCount } = createFakePlugin({
-      id: "broken",
-      presence: { present: true, preExisting: false },
-      verifyResults: [
-        { ok: false, detail: "unit is not active" },
-        { ok: true, detail: "unit active" },
+    const suppliedPlan: Plan = {
+      id: "supplied-plan",
+      agemonVersion: "9.9.9",
+      desiredStateHash: "hash",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      operations: [
+        describeOperation({
+          capabilityId: "alpha",
+          resourceId: "file:alpha.txt",
+          targetPath: "alpha.txt",
+          action: "create",
+          riskClass: "writes-config",
+          requiresConsent: true,
+          preview: { kind: "note", text: "create alpha.txt" },
+        }),
       ],
+    };
+
+    await reconcile(context, [plugin], {
+      ...RECONCILE_OPTIONS,
+      plan: suppliedPlan,
     });
 
-    await installPlugins(context, [plugin], {});
-
+    expect(planCallCount()).toBe(0);
     expect(installCallCount()).toBe(1);
-  });
-
-  it("leaves an unhealthy plugin alone when the user declines to fix it", async () => {
-    const { ui, calls } = createRecordingUi();
-    const context = await createTestContext({
-      ui,
-      confirm: async () => false,
-    });
-    const { plugin, installCallCount } = createFakePlugin({
-      id: "broken",
-      presence: { present: true, preExisting: false },
-      verifyResults: [{ ok: false, detail: "unit is not active" }],
-    });
-
-    await installPlugins(context, [plugin], {});
-
-    expect(installCallCount()).toBe(0);
-    expect(
-      calls.some(
-        (call) =>
-          call.type === "fail" && call.label?.includes("Left broken as-is"),
-      ),
-    ).toBe(true);
-  });
-
-  it("throws when a confirmed fix attempt is still unhealthy afterward", async () => {
-    const { ui } = createRecordingUi();
-    const context = await createTestContext({
-      ui,
-      confirm: async () => true,
-    });
-    const { plugin } = createFakePlugin({
-      id: "still-broken",
-      presence: { present: true, preExisting: false },
-      verifyResults: [
-        { ok: false, detail: "unit is not active" },
-        { ok: false, detail: "still not active" },
-      ],
-    });
-
-    await expect(installPlugins(context, [plugin], {})).rejects.toThrow(
-      "still not active",
-    );
+    await expect(
+      readFile(join(context.cwd, ".agemon/plans/supplied-plan.json"), "utf8"),
+    ).resolves.toContain("supplied-plan");
   });
 });

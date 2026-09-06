@@ -175,6 +175,17 @@ describe("nuke roundtrip", () => {
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
+  it("creates .gitignore with /.agemon/ when the repo has none and the user accepts", async () => {
+    const { beforeSnapshot, afterSnapshot } =
+      await runRoundtripFixture("no-gitignore");
+
+    expect(beforeSnapshot.has("repo/.gitignore")).toBe(false);
+    expect(afterSnapshot.has("repo/.gitignore")).toBe(true);
+    expect(afterSnapshot.get("repo/README.md")).toBe(
+      beforeSnapshot.get("repo/README.md"),
+    );
+  });
+
   it("fails install on unsupported non-Ubuntu platform", async () => {
     const { installExitCode, beforeSnapshot, afterSnapshot } =
       await runInstallFixture("non-ubuntu", "debian");

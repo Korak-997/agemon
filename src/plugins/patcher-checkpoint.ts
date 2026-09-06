@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fingerprintContent } from "../core/fingerprint.js";
 import {
   removeManagedMarkdownBlockFile,
   upsertManagedMarkdownBlockFile,
@@ -34,7 +35,10 @@ export const patcherCheckpointPlugin: AgemonPlugin = {
       preExisting: false,
     };
   },
-  async plan() {
+  async plan(ctx) {
+    const existingContents = existsSync(getTargetPath(ctx.cwd))
+      ? readFileSync(getTargetPath(ctx.cwd), "utf8")
+      : null;
     return [
       describeOperation({
         capabilityId: PLUGIN_ID,
@@ -43,6 +47,10 @@ export const patcherCheckpointPlugin: AgemonPlugin = {
         action: "merge-block",
         riskClass: "writes-config",
         requiresConsent: true,
+        expectedFingerprint:
+          existingContents === null
+            ? null
+            : fingerprintContent(existingContents),
         preview: {
           kind: "note",
           text: `upsert the agemon:${BLOCK_ID} block in ${TARGET_FILE}`,
