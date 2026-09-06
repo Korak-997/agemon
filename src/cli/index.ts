@@ -6,17 +6,14 @@ import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
 import { installPlugins, uninstallPlugins } from "../core/orchestrator.js";
 import { checkForUpdate } from "../core/update-check.js";
+import { runInspect } from "../inspect/index.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
 import { renderBanner } from "../ui/banner.js";
-import { createStepSpinner } from "../ui/spinner.js";
+import { createStepSpinner, type StepSpinner } from "../ui/spinner.js";
 import { theme } from "../ui/theme.js";
 
 const PACKAGE_JSON_SEARCH_DEPTH = 5;
 
-// This file's own directory differs between dev (src/cli/index.ts, run via
-// tsx) and the built/installed layout (dist/index.js, one level closer to
-// the package root) — walk up until the nearest package.json is found
-// rather than hardcoding a relative path that would only match one of them.
 function resolvePackageVersion(): string {
   let currentDir = dirname(fileURLToPath(import.meta.url));
   for (let depth = 0; depth < PACKAGE_JSON_SEARCH_DEPTH; depth += 1) {
@@ -42,6 +39,24 @@ interface CliOptions {
   only?: string;
   skipDaemon?: boolean;
   skillGroups?: string;
+  json?: boolean;
+}
+
+const SILENT_SPINNER: StepSpinner = {
+  start() {},
+  succeed() {},
+  fail() {},
+  info() {},
+};
+
+async function runInspectCommand(options: CliOptions): Promise<void> {
+  const context = await createContext({
+    dryRun: false,
+    yes: Boolean(options.yes),
+    ui: SILENT_SPINNER,
+  });
+
+  await runInspect(context, { json: Boolean(options.json) });
 }
 
 async function runInstall(options: CliOptions): Promise<void> {
@@ -112,6 +127,16 @@ function createProgram(): Command {
       }
     })
     .action((options: CliOptions) => runInstall(options));
+
+  program
+    .command("inspect")
+    .description(
+      "Read-only inventory + eight-state classification + duplication report",
+    )
+    .option("--json", "emit the redacted JSON report instead of a table")
+    .action((_options: CliOptions, command: Command) =>
+      runInspectCommand({ ...command.parent?.opts(), ...command.opts() }),
+    );
 
   program
     .command("nuke")
