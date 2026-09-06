@@ -1,10 +1,15 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
-import { installPlugins, uninstallPlugins } from "../core/orchestrator.js";
+import {
+  buildPlan,
+  installPlugins,
+  uninstallPlugins,
+} from "../core/orchestrator.js";
+import { renderPlan, writePlan } from "../core/plan-store.js";
 import { checkForUpdate } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
@@ -59,12 +64,38 @@ async function runInspectCommand(options: CliOptions): Promise<void> {
   await runInspect(context, { json: Boolean(options.json) });
 }
 
+async function runPlanCommand(options: CliOptions): Promise<void> {
+  const context = await createContext({
+    dryRun: true,
+    yes: Boolean(options.yes),
+    ui: SILENT_SPINNER,
+    skillGroups: options.skillGroups,
+  });
+  const plugins = getRegisteredPlugins().filter(
+    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+  );
+
+  const plan = await buildPlan(context, plugins, {
+    only: options.only,
+    agemonVersion: VERSION,
+  });
+  const planPath = await writePlan(context.cwd, plan);
+
+  context.log.log(renderPlan(plan));
+  context.log.log(`\nPlan written to ${relative(context.cwd, planPath)}`);
+}
+
 async function runInstall(options: CliOptions): Promise<void> {
   const didUpdate = await checkForUpdate({
     currentVersion: VERSION,
     dryRun: Boolean(options.dryRun),
   });
   if (didUpdate) {
+    return;
+  }
+
+  if (options.dryRun) {
+    await runPlanCommand(options);
     return;
   }
 
@@ -136,6 +167,20 @@ function createProgram(): Command {
     .option("--json", "emit the redacted JSON report instead of a table")
     .action((_options: CliOptions, command: Command) =>
       runInspectCommand({ ...command.parent?.opts(), ...command.opts() }),
+    );
+
+  program
+    .command("plan")
+    .description(
+      "Deterministic, fingerprinted proposed-operation set written to .agemon/plans/",
+    )
+    .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .option(
+      "--skill-groups <groups>",
+      "comma-separated skill group ids to install, or 'all'/'none'",
+    )
+    .action((_options: CliOptions, command: Command) =>
+      runPlanCommand({ ...command.parent?.opts(), ...command.opts() }),
     );
 
   program

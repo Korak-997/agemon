@@ -1,9 +1,19 @@
-import type { AgemonPlugin } from "../plugins/types.js";
+import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
 import type { Context } from "./context.js";
 import { ensureAgemonGitignored } from "./gitignore.js";
+import {
+  computePlanId,
+  type Plan,
+  resolveDesiredStateHash,
+} from "./plan-store.js";
 
 export interface OrchestratorOptions {
   only?: string;
+}
+
+export interface BuildPlanOptions {
+  only?: string;
+  agemonVersion: string;
 }
 
 function parseOnlyPluginIds(only?: string): string[] {
@@ -87,12 +97,6 @@ async function installFresh(ctx: Context, plugin: AgemonPlugin): Promise<void> {
   ctx.ui.succeed(buildVerificationMessage(plugin.id, verification.detail));
 }
 
-/**
- * A plugin whose `detect` reports it present isn't necessarily healthy — its
- * own `verify` is the real source of truth, and is what surfaces "what's
- * currently there" to the user. Only an unhealthy result is worth
- * interrupting the run for; a healthy one just gets reported and skipped.
- */
 async function reconcileExisting(
   ctx: Context,
   plugin: AgemonPlugin,
@@ -130,6 +134,38 @@ async function reconcileExisting(
   ctx.ui.succeed(
     `Fixed ${plugin.id} (${reverification.detail ?? "now healthy"})`,
   );
+}
+
+export async function buildPlan(
+  ctx: Context,
+  allPlugins: AgemonPlugin[],
+  options: BuildPlanOptions,
+): Promise<Plan> {
+  const onlyIds = parseOnlyPluginIds(options.only);
+  const plugins = resolvePluginOrder(allPlugins, onlyIds);
+
+  const operations: ProposedOperation[] = [];
+  for (const plugin of plugins) {
+    const pluginOperations = (await plugin.plan?.(ctx)) ?? [];
+    operations.push(...pluginOperations);
+  }
+
+  const desiredStateHash = resolveDesiredStateHash({
+    capabilityIds: plugins.map((plugin) => plugin.id),
+    skillGroups: ctx.skillGroupsOption ?? null,
+  });
+
+  return {
+    id: computePlanId({
+      agemonVersion: options.agemonVersion,
+      desiredStateHash,
+      operations,
+    }),
+    agemonVersion: options.agemonVersion,
+    desiredStateHash,
+    createdAt: new Date().toISOString(),
+    operations,
+  };
 }
 
 export async function installPlugins(

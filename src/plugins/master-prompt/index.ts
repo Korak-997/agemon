@@ -7,6 +7,7 @@ import {
 } from "../../core/backups.js";
 import type { Context } from "../../core/context.js";
 import { fingerprintContent } from "../../core/fingerprint.js";
+import { renderUnifiedDiff } from "../../core/text-diff.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -179,10 +180,11 @@ async function planMasterPrompt(ctx: Context): Promise<ProposedOperation[]> {
             : fingerprintContent(existingContents),
         preview: {
           kind: "diff",
-          text:
-            existingContents === null
-              ? `create ${definition.target}`
-              : `replace ${definition.target} with agemon's canonical rule set`,
+          text: renderUnifiedDiff(
+            existingContents ?? "",
+            definition.contents,
+            definition.target,
+          ),
         },
       }),
     );
