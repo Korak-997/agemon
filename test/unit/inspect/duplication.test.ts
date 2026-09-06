@@ -55,4 +55,59 @@ describe("detectDuplication", () => {
 
     expect(report.overlaps).toEqual([]);
   });
+
+  it("does not flag two agemon pointer files against each other", () => {
+    const pointer = (tool: string, name: string) =>
+      [
+        "<!-- AI agent rules pointer -->",
+        "# AI Agent Rules",
+        "",
+        "The canonical rules for this repo live in AGENTS.md — read that file in full before",
+        `making any changes here. This file exists only because ${tool} looks for \`${name}\` specifically; it intentionally does not restate the rules.`,
+        "",
+      ].join("\n");
+
+    for (const scope of ["all", "involving-canonical"] as const) {
+      const report = detectDuplication(
+        [
+          { path: "CLAUDE.md", contents: pointer("Claude Code", "CLAUDE.md") },
+          { path: "GEMINI.md", contents: pointer("Gemini CLI", "GEMINI.md") },
+          { path: ".cursorrules", contents: pointer("Cursor", ".cursorrules") },
+        ],
+        { report: scope },
+      );
+      expect(report.overlaps).toEqual([]);
+    }
+  });
+
+  it("keeps a canonical-vs-rule-file overlap and annotates the roles", () => {
+    const report = detectDuplication([
+      { path: "AGENTS.md", contents: CANONICAL_RULES },
+      {
+        path: "CLAUDE.md",
+        contents: `${CANONICAL_RULES}\n\nExtra Claude note.\n`,
+      },
+    ]);
+
+    expect(report.overlaps).toHaveLength(1);
+    const [overlap] = report.overlaps;
+    expect(overlap.leftRole).toBe("canonical");
+    expect(overlap.rightRole).toBe("unknown");
+    expect(overlap.bothRuleBearing).toBe(true);
+  });
+
+  it("hides a rule-file-vs-rule-file overlap from the default report but not from 'all'", () => {
+    const files = [
+      { path: "GEMINI.md", contents: `${CANONICAL_RULES}\n\nGemini note.\n` },
+      {
+        path: ".cursorrules",
+        contents: `${CANONICAL_RULES}\n\nCursor note.\n`,
+      },
+    ];
+
+    expect(detectDuplication(files).overlaps).toEqual([]);
+    expect(detectDuplication(files, { report: "all" }).overlaps).toHaveLength(
+      1,
+    );
+  });
 });

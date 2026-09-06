@@ -1,10 +1,18 @@
 const MIN_SIGNIFICANT_LINE_LENGTH = 12;
 const OVERLAP_SIMILARITY_THRESHOLD = 0.5;
+const POINTER_MAX_NORMALIZED_LENGTH = 800;
+const CANONICAL_RULE_FILE = "AGENTS.md";
+
+export type RuleFileRole = "canonical" | "pointer" | "unknown";
+export type DuplicationReportScope = "all" | "involving-canonical";
 
 export interface OverlapFinding {
   left: string;
   right: string;
+  leftRole: RuleFileRole;
+  rightRole: RuleFileRole;
   similarity: number;
+  bothRuleBearing: boolean;
 }
 
 export interface DuplicationReport {
@@ -14,6 +22,10 @@ export interface DuplicationReport {
 export interface RuleFileContents {
   path: string;
   contents: string | null;
+}
+
+export interface DetectDuplicationOptions {
+  report?: DuplicationReportScope;
 }
 
 function normalizeToSignificantLines(contents: string): Set<string> {
@@ -30,6 +42,35 @@ function normalizeToSignificantLines(contents: string): Set<string> {
     )
     .filter((line) => line.length >= MIN_SIGNIFICANT_LINE_LENGTH);
   return new Set(significantLines);
+}
+
+function classifyRole(path: string, contents: string): RuleFileRole {
+  if (path === CANONICAL_RULE_FILE) {
+    return "canonical";
+  }
+  const normalizedLength = contents.replace(/\s+/g, " ").trim().length;
+  const referencesCanonical = /AGENTS\.md/i.test(contents);
+  if (
+    normalizedLength <= POINTER_MAX_NORMALIZED_LENGTH &&
+    referencesCanonical
+  ) {
+    return "pointer";
+  }
+  return "unknown";
+}
+
+function overlapIsReportable(
+  leftRole: RuleFileRole,
+  rightRole: RuleFileRole,
+  scope: DuplicationReportScope,
+): boolean {
+  if (leftRole === "pointer" && rightRole === "pointer") {
+    return false;
+  }
+  if (scope === "involving-canonical") {
+    return leftRole === "canonical" || rightRole === "canonical";
+  }
+  return true;
 }
 
 function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
@@ -50,7 +91,10 @@ function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
 
 export function detectDuplication(
   ruleFiles: RuleFileContents[],
+  options: DetectDuplicationOptions = {},
 ): DuplicationReport {
+  const scope = options.report ?? "involving-canonical";
+
   const normalizedFiles = ruleFiles
     .filter(
       (file): file is { path: string; contents: string } =>
@@ -58,6 +102,7 @@ export function detectDuplication(
     )
     .map((file) => ({
       path: file.path,
+      role: classifyRole(file.path, file.contents),
       lines: normalizeToSignificantLines(file.contents),
     }));
 
@@ -68,19 +113,32 @@ export function detectDuplication(
       rightIndex < normalizedFiles.length;
       rightIndex += 1
     ) {
-      const similarity = jaccardSimilarity(
-        normalizedFiles[leftIndex].lines,
-        normalizedFiles[rightIndex].lines,
-      );
+      const left = normalizedFiles[leftIndex];
+      const right = normalizedFiles[rightIndex];
+      if (!overlapIsReportable(left.role, right.role, scope)) {
+        continue;
+      }
+
+      const similarity = jaccardSimilarity(left.lines, right.lines);
       if (similarity >= OVERLAP_SIMILARITY_THRESHOLD) {
         overlaps.push({
-          left: normalizedFiles[leftIndex].path,
-          right: normalizedFiles[rightIndex].path,
+          left: left.path,
+          right: right.path,
+          leftRole: left.role,
+          rightRole: right.role,
           similarity: Math.round(similarity * 100) / 100,
+          bothRuleBearing: left.role !== "pointer" && right.role !== "pointer",
         });
       }
     }
   }
 
   return { overlaps };
+}
+
+export function describeOverlap(overlap: OverlapFinding): string {
+  const reason = overlap.bothRuleBearing
+    ? "both carry rule content"
+    : `similarity ${overlap.similarity}`;
+  return `${overlap.left} ~ ${overlap.right} (${reason})`;
 }

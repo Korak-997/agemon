@@ -203,4 +203,62 @@ describe("status", () => {
     });
     expect(report.healthy).toBe(false);
   });
+
+  it("does not report agemon's own pointer files as duplication", async () => {
+    const context = await createStatusContext();
+    const canonical = "# AI Agent Rules\n\nagemon owns this rule set.\n";
+    await writeFile(join(context.cwd, "AGENTS.md"), canonical, "utf8");
+    await recordManagedRuleFile(context, "AGENTS.md", canonical);
+
+    const pointer = (tool: string, name: string) =>
+      [
+        "# AI Agent Rules",
+        "",
+        "The canonical rules for this repo live in AGENTS.md — read that file in full before",
+        `making any changes here. This file exists only because ${tool} looks for \`${name}\`.`,
+        "",
+      ].join("\n");
+    await writeFile(
+      join(context.cwd, "CLAUDE.md"),
+      pointer("Claude Code", "CLAUDE.md"),
+      "utf8",
+    );
+    await writeFile(
+      join(context.cwd, "GEMINI.md"),
+      pointer("Gemini CLI", "GEMINI.md"),
+      "utf8",
+    );
+
+    const report = await buildStatusReport(context, []);
+    expect(report.duplication).toEqual([]);
+    expect(report.healthy).toBe(true);
+    expect(await verifyManagedState(context)).toEqual([]);
+  });
+
+  it("still flags a rule-bearing file that duplicates AGENTS.md", async () => {
+    const context = await createStatusContext();
+    const canonical = [
+      "# AI Agent Rules",
+      "",
+      "Always discover existing tools before writing new code.",
+      "Keep every change surgical and scoped to the request at hand.",
+      "Preserve user-authored content outside agemon-managed files.",
+      "Record out-of-scope findings in improvements.md instead of fixing them.",
+    ].join("\n");
+    await writeFile(join(context.cwd, "AGENTS.md"), canonical, "utf8");
+    await writeFile(
+      join(context.cwd, "CLAUDE.md"),
+      `${canonical}\n\nExtra Claude-only note.\n`,
+      "utf8",
+    );
+
+    const report = await buildStatusReport(context, []);
+    expect(report.duplication).toHaveLength(1);
+    expect(report.duplication[0].leftRole).toBe("canonical");
+    expect(report.duplication[0].bothRuleBearing).toBe(true);
+    expect(report.healthy).toBe(false);
+    expect(await verifyManagedState(context)).toEqual([
+      "duplicate guidance across managed files: AGENTS.md ~ CLAUDE.md",
+    ]);
+  });
 });

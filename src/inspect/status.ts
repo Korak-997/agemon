@@ -9,7 +9,11 @@ import { renderTable } from "../ui/table.js";
 import { collectCapabilityStates } from "./capabilities.js";
 import { TEMPLATE_DRIFT_DETAIL, USER_DRIFT_DETAIL } from "./classify.js";
 import { discoverRepository } from "./discover.js";
-import { detectDuplication, type OverlapFinding } from "./duplication.js";
+import {
+  describeOverlap,
+  detectDuplication,
+  type OverlapFinding,
+} from "./duplication.js";
 
 const RULE_FILE_RESOURCE_PREFIX = "rule-file:";
 
@@ -153,9 +157,7 @@ export async function verifyManagedState(
       path: file.path,
       contents: file.contents,
     })),
-  ).overlaps.filter(
-    (overlap) => overlap.left === "AGENTS.md" || overlap.right === "AGENTS.md",
-  );
+  ).overlaps;
   for (const overlap of overlaps) {
     problems.push(
       `duplicate guidance across managed files: ${overlap.left} ~ ${overlap.right}`,
@@ -176,9 +178,6 @@ export async function buildStatusReport(
   plugins: AgemonPlugin[],
 ): Promise<StatusReport> {
   const managedResources = await checkManagedResources(ctx, plugins);
-  const managedPaths = new Set(
-    managedResources.map((resource) => resource.target),
-  );
 
   const discovery = await discoverRepository(ctx);
   const duplication = detectDuplication(
@@ -186,10 +185,7 @@ export async function buildStatusReport(
       path: file.path,
       contents: file.contents,
     })),
-  ).overlaps.filter(
-    (overlap) =>
-      !(managedPaths.has(overlap.left) && managedPaths.has(overlap.right)),
-  );
+  ).overlaps;
 
   const capabilities = await buildCapabilityStatusRows(ctx, plugins);
 
@@ -300,12 +296,10 @@ export function renderStatusReport(report: StatusReport): string {
 
   sections.push("Duplication");
   if (report.duplication.length === 0) {
-    sections.push("  no unmanaged duplicate instruction content detected");
+    sections.push("  no overlapping instruction content detected");
   } else {
     for (const overlap of report.duplication) {
-      sections.push(
-        `  ${overlap.left} ~ ${overlap.right} (similarity ${overlap.similarity})`,
-      );
+      sections.push(`  ${describeOverlap(overlap)}`);
     }
   }
   sections.push("");

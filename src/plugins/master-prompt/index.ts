@@ -557,9 +557,7 @@ async function verifyMasterPrompt(
     managedRuleFiles.push({ path: pointer.target, contents });
   }
 
-  const duplicateGuidance = detectDuplication(managedRuleFiles).overlaps.filter(
-    (overlap) => overlap.left === AGENTS_FILE || overlap.right === AGENTS_FILE,
-  );
+  const duplicateGuidance = detectDuplication(managedRuleFiles).overlaps;
   if (duplicateGuidance.length > 0) {
     problems.push(
       `duplicate guidance across managed files: ${duplicateGuidance

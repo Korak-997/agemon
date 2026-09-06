@@ -6,7 +6,11 @@ import { renderTable } from "../ui/table.js";
 import { collectCapabilityStates } from "./capabilities.js";
 import { type ClassifiedResource, classifyResources } from "./classify.js";
 import { discoverRepository } from "./discover.js";
-import { type DuplicationReport, detectDuplication } from "./duplication.js";
+import {
+  type DuplicationReport,
+  describeOverlap,
+  detectDuplication,
+} from "./duplication.js";
 import { redactJsonValue } from "./redact.js";
 
 export type StructuredConfigStatus =
@@ -186,9 +190,7 @@ function renderInspectReport(report: InspectReport): string {
     sections.push("  no overlapping instruction content detected");
   } else {
     for (const overlap of report.duplication.overlaps) {
-      sections.push(
-        `  ${overlap.left} ~ ${overlap.right} (similarity ${overlap.similarity})`,
-      );
+      sections.push(`  ${describeOverlap(overlap)}`);
     }
   }
 
