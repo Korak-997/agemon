@@ -54,25 +54,3 @@ export async function readPlan(cwd: string, planId: string): Promise<Plan> {
   const contents = await readFile(resolvePlanPath(cwd, planId), "utf8");
   return JSON.parse(contents) as Plan;
 }
-
-export function renderPlan(plan: Plan): string {
-  const lines: string[] = [`Plan ${plan.id} (agemon ${plan.agemonVersion})`];
-
-  if (plan.operations.length === 0) {
-    lines.push("  nothing to do — desired state already reached");
-    return lines.join("\n");
-  }
-
-  lines.push(`  ${plan.operations.length} proposed operation(s):`);
-  for (const operation of plan.operations) {
-    const targetLabel = operation.targetPath || operation.resourceId;
-    lines.push("");
-    lines.push(
-      `  • ${operation.action} ${targetLabel}  [${operation.capabilityId}, risk: ${operation.riskClass}]`,
-    );
-    for (const previewLine of operation.preview.text.split("\n")) {
-      lines.push(`      ${previewLine}`);
-    }
-  }
-  return lines.join("\n");
-}

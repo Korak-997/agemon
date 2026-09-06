@@ -2,15 +2,11 @@ import type { Context } from "../core/context.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
 import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
-import { renderTable } from "../ui/table.js";
+import { renderInspectReport } from "../ui/inspect-view.js";
 import { collectCapabilityStates } from "./capabilities.js";
 import { type ClassifiedResource, classifyResources } from "./classify.js";
 import { discoverRepository } from "./discover.js";
-import {
-  type DuplicationReport,
-  describeOverlap,
-  detectDuplication,
-} from "./duplication.js";
+import { type DuplicationReport, detectDuplication } from "./duplication.js";
 import { redactJsonValue } from "./redact.js";
 
 export type StructuredConfigStatus =
@@ -35,13 +31,6 @@ export interface InspectReport {
   binaries: { name: string; present: boolean }[];
   duplication: DuplicationReport;
 }
-
-const CAPABILITY_STATE_LABELS: Record<CapabilityStateRow["state"], string> = {
-  "present-managed": "present (managed)",
-  "present-adopted": "present (adopted)",
-  absent: "absent",
-  unknown: "unknown",
-};
 
 export async function inspectRepository(
   ctx: Context,
@@ -115,86 +104,6 @@ export async function inspectRepository(
     })),
     duplication,
   };
-}
-
-function renderInspectReport(report: InspectReport): string {
-  const sections: string[] = [];
-
-  sections.push("Workspace isolation");
-  sections.push(`  .agemon/ gitignore status: ${report.isolation.status}`);
-  if (report.isolation.trackedAgemonPaths.length > 0) {
-    sections.push(
-      `  tracked .agemon/ paths: ${report.isolation.trackedAgemonPaths.join(", ")}`,
-    );
-  }
-  sections.push("");
-
-  sections.push("Resources");
-  sections.push(
-    renderTable([
-      ["RESOURCE", "STATE", "DETAIL"],
-      ...report.resources.map((resource) => [
-        resource.path,
-        resource.state,
-        resource.detail ?? "",
-      ]),
-    ]),
-  );
-  sections.push("");
-
-  sections.push("Capabilities");
-  if (report.capabilities.length === 0) {
-    sections.push("  no capabilities report state in this repo");
-  } else {
-    sections.push(
-      renderTable([
-        ["CAPABILITY", "RESOURCE", "STATE", "DETAIL"],
-        ...report.capabilities.map((row) => [
-          row.capabilityId,
-          row.resourceId,
-          CAPABILITY_STATE_LABELS[row.state],
-          row.detail ?? "",
-        ]),
-      ]),
-    );
-  }
-  sections.push("");
-
-  sections.push("Structured config");
-  sections.push(
-    renderTable([
-      ["FILE", "STATUS", "REDACTED VALUES"],
-      ...report.structuredConfig.map((config) => [
-        config.path,
-        config.status,
-        String(config.redactedPaths.length),
-      ]),
-    ]),
-  );
-  sections.push("");
-
-  sections.push("Machine capabilities");
-  sections.push(
-    renderTable([
-      ["BINARY", "PRESENT"],
-      ...report.binaries.map((binary) => [
-        binary.name,
-        binary.present ? "yes" : "no",
-      ]),
-    ]),
-  );
-  sections.push("");
-
-  sections.push("Duplication");
-  if (report.duplication.overlaps.length === 0) {
-    sections.push("  no overlapping instruction content detected");
-  } else {
-    for (const overlap of report.duplication.overlaps) {
-      sections.push(`  ${describeOverlap(overlap)}`);
-    }
-  }
-
-  return sections.join("\n");
 }
 
 export async function runInspect(

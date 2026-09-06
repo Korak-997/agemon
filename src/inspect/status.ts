@@ -5,24 +5,13 @@ import { fingerprintContent } from "../core/fingerprint.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
 import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
-import { renderTable } from "../ui/table.js";
+import { renderStatusReport } from "../ui/status-view.js";
 import { collectCapabilityStates } from "./capabilities.js";
 import { TEMPLATE_DRIFT_DETAIL, USER_DRIFT_DETAIL } from "./classify.js";
 import { discoverRepository } from "./discover.js";
-import {
-  describeOverlap,
-  detectDuplication,
-  type OverlapFinding,
-} from "./duplication.js";
+import { detectDuplication, type OverlapFinding } from "./duplication.js";
 
 const RULE_FILE_RESOURCE_PREFIX = "rule-file:";
-
-const CAPABILITY_STATE_LABELS: Record<CapabilityStateRow["state"], string> = {
-  "present-managed": "present (managed)",
-  "present-adopted": "present (adopted)",
-  absent: "absent",
-  unknown: "unknown",
-};
 
 export type ManagedResourceHealth =
   | "managed-current"
@@ -244,77 +233,6 @@ async function buildCapabilityStatusRows(
     result.push({ ...row, health: await resolveHealth(row.capabilityId) });
   }
   return result;
-}
-
-export function renderStatusReport(report: StatusReport): string {
-  const sections: string[] = [];
-
-  sections.push(
-    report.healthy
-      ? "Environment healthy — every managed resource matches agemon's ledger."
-      : "Environment needs attention — see the flagged rows below.",
-  );
-  sections.push("");
-
-  sections.push("Managed resources");
-  if (report.managedResources.length === 0) {
-    sections.push("  none recorded in the ledger yet");
-  } else {
-    sections.push(
-      renderTable([
-        ["RESOURCE", "OWNERSHIP", "HEALTH", "DETAIL"],
-        ...report.managedResources.map((resource) => [
-          resource.target,
-          resource.ownershipMode ?? "",
-          resource.health,
-          resource.detail ?? "",
-        ]),
-      ]),
-    );
-  }
-  sections.push("");
-
-  sections.push("Capabilities");
-  if (report.capabilities.length === 0) {
-    sections.push("  no capabilities report state in this repo");
-  } else {
-    sections.push(
-      renderTable([
-        ["CAPABILITY", "STATE", "HEALTH", "DETAIL"],
-        ...report.capabilities.map((row) => [
-          row.capabilityId,
-          CAPABILITY_STATE_LABELS[row.state],
-          row.health === null ? "" : row.health.ok ? "ok" : "unhealthy",
-          row.health !== null && !row.health.ok
-            ? row.health.detail
-            : (row.detail ?? ""),
-        ]),
-      ]),
-    );
-  }
-  sections.push("");
-
-  sections.push("Duplication");
-  if (report.duplication.length === 0) {
-    sections.push("  no overlapping instruction content detected");
-  } else {
-    for (const overlap of report.duplication) {
-      sections.push(`  ${describeOverlap(overlap)}`);
-    }
-  }
-  sections.push("");
-
-  sections.push("Workspace isolation");
-  if (report.trackedAgemonPaths.length === 0) {
-    sections.push("  .agemon/ is not tracked by git");
-  } else {
-    sections.push(
-      `  ${report.trackedAgemonPaths.length} .agemon/ path(s) are tracked by git`,
-    );
-    sections.push("  fix: git rm -r --cached .agemon");
-  }
-
-  return sections.join("\n");
 }
 
 export async function runStatus(

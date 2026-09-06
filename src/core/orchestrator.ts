@@ -4,7 +4,9 @@ import { discoverRepository } from "../inspect/discover.js";
 import { verifyManagedState } from "../inspect/status.js";
 import { CORE_CAPABILITY_IDS } from "../plugins/index.js";
 import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
-import { applyPlan } from "./apply.js";
+import { renderPlan } from "../ui/plan-view.js";
+import { renderRunSummary } from "../ui/summary.js";
+import { ApplyRollbackError, applyPlan } from "./apply.js";
 import { resolveConfigPath, writeConfig } from "./config.js";
 import type { ConflictResolution } from "./consent.js";
 import { buildConsentGates } from "./consent.js";
@@ -12,7 +14,6 @@ import type { Context } from "./context.js";
 import {
   computePlanId,
   type Plan,
-  renderPlan,
   resolveDesiredStateHash,
   writePlan,
 } from "./plan-store.js";
@@ -263,20 +264,33 @@ export async function reconcile(
   });
 
   if (approval.approved.length === 0) {
-    ctx.ui.info(
-      "Nothing applied — every proposed operation was declined or skipped.",
+    ctx.log.log(
+      renderRunSummary({
+        kind: "declined",
+        skipped: approval.skipped.map((skip) => ({
+          label: skip.operation.targetPath || skip.operation.resourceId,
+          reason: skip.reason,
+        })),
+      }),
     );
-    reportSkippedOperations(ctx, approval.skipped);
     return;
   }
 
-  const result = await applyPlan(ctx, allPlugins, {
-    plan,
-    approved: approval.approved,
-    workspaceIsolationApproved: approval.workspaceIsolationApproved,
-    isolationStatus: isolation.status,
-    allowUnignoredState: options.allowUnignoredState,
-  });
+  let result: Awaited<ReturnType<typeof applyPlan>>;
+  try {
+    result = await applyPlan(ctx, allPlugins, {
+      plan,
+      approved: approval.approved,
+      workspaceIsolationApproved: approval.workspaceIsolationApproved,
+      isolationStatus: isolation.status,
+      allowUnignoredState: options.allowUnignoredState,
+    });
+  } catch (error) {
+    if (error instanceof ApplyRollbackError) {
+      ctx.log.log(renderRunSummary({ kind: "failure", ...error.rollback }));
+    }
+    throw error;
+  }
 
   reportSkippedOperations(ctx, approval.skipped);
 
@@ -289,10 +303,13 @@ export async function reconcile(
     appliedCapabilityIds,
   );
   if (sweepProblems.length > 0) {
-    ctx.ui.fail(
-      `Applied ${result.applied.length} operation(s), but post-apply verification found problems:`,
+    ctx.log.log(
+      renderRunSummary({
+        kind: "partial",
+        appliedCount: result.applied.length,
+        problems: sweepProblems,
+      }),
     );
-    reportSweepProblems(ctx, sweepProblems);
     return;
   }
 
@@ -300,9 +317,27 @@ export async function reconcile(
     await persistDesiredStateConfig(ctx, plugins, approval.conflictResolutions);
   }
 
-  ctx.ui.succeed(
-    `Applied ${result.applied.length} operation(s); environment verified.`,
+  ctx.log.log(
+    renderRunSummary({
+      kind: "success",
+      applied: result.applied,
+      nextSteps: buildNextSteps(options, isolation.trackedAgemonPaths),
+    }),
   );
+}
+
+function buildNextSteps(
+  options: ReconcileOptions,
+  trackedAgemonPaths: string[],
+): string[] {
+  const steps: string[] = [];
+  if (options.persistConfig) {
+    steps.push("commit agemon.toml so teammates and CI reconcile the same way");
+  }
+  if (trackedAgemonPaths.length > 0) {
+    steps.push("git rm -r --cached .agemon to stop tracking regenerated state");
+  }
+  return steps;
 }
 
 export async function uninstallPlugins(

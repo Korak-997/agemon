@@ -28,6 +28,23 @@ export interface ApplyPlanResult {
   applied: ProposedOperation[];
 }
 
+export interface RollbackDetail {
+  message: string;
+  restored: string[];
+  reverted: string[];
+  manualCleanup: string[];
+}
+
+export class ApplyRollbackError extends Error {
+  readonly rollback: RollbackDetail;
+
+  constructor(rollback: RollbackDetail) {
+    super(rollback.message);
+    this.name = "ApplyRollbackError";
+    this.rollback = rollback;
+  }
+}
+
 interface FileRollbackSnapshot {
   targetPath: string;
   previousContents: string | null;
@@ -148,7 +165,7 @@ async function revertCommittedCapabilities(
   pluginById: Map<string, AgemonPlugin>,
   appliedCapabilityOrder: string[],
   ledgerActionIdsBeforeRun: ReadonlySet<string>,
-): Promise<string[]> {
+): Promise<{ reverted: string[]; manualCleanup: string[] }> {
   const newEntriesByCapability = new Map<string, LedgerEntry[]>();
   for (const entry of ctx.manifest.getActions()) {
     if (ledgerActionIdsBeforeRun.has(entry.id)) {
@@ -163,6 +180,7 @@ async function revertCommittedCapabilities(
   }
 
   const manualCleanup: string[] = [];
+  const reverted: string[] = [];
   for (const capabilityId of [...appliedCapabilityOrder].reverse()) {
     const plugin = pluginById.get(capabilityId);
     const newEntries = newEntriesByCapability.get(capabilityId) ?? [];
@@ -171,12 +189,13 @@ async function revertCommittedCapabilities(
     }
     try {
       await plugin.revert(ctx, newEntries);
+      reverted.push(capabilityId);
     } catch (revertError) {
       manualCleanup.push(`${capabilityId}: ${errorMessage(revertError)}`);
     }
   }
 
-  return manualCleanup;
+  return { reverted, manualCleanup };
 }
 
 function fileTargetingOperations(
@@ -369,7 +388,7 @@ export async function applyPlan(
     }
   } catch (error) {
     await restoreRollbackSnapshots(ctx, rollbackSnapshots);
-    const manualCleanup = await revertCommittedCapabilities(
+    const { reverted, manualCleanup } = await revertCommittedCapabilities(
       ctx,
       pluginById,
       appliedCapabilityOrder,
@@ -382,7 +401,16 @@ export async function applyPlan(
     for (const detail of manualCleanup) {
       ctx.ui.fail(`manual cleanup needed: ${detail}`);
     }
-    throw error;
+    throw new ApplyRollbackError({
+      message: errorMessage(error),
+      restored: rollbackSnapshots.map((snapshot) =>
+        snapshot.previousContents === null
+          ? `removed ${snapshot.targetPath}`
+          : `restored ${snapshot.targetPath}`,
+      ),
+      reverted,
+      manualCleanup,
+    });
   }
 
   return { applied };

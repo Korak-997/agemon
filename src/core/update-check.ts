@@ -113,7 +113,6 @@ export interface UpdateCheckInput {
   dryRun: boolean;
 }
 
-
 export async function checkForUpdate(
   input: UpdateCheckInput,
 ): Promise<boolean> {

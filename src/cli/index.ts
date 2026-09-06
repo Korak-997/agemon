@@ -10,15 +10,17 @@ import {
   reconcile,
   uninstallPlugins,
 } from "../core/orchestrator.js";
-import { readPlan, renderPlan, writePlan } from "../core/plan-store.js";
+import { readPlan, writePlan } from "../core/plan-store.js";
 import { checkForUpdate } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { runStatus } from "../inspect/status.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
 import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
+import { box } from "../ui/box.js";
+import { renderPlan } from "../ui/plan-view.js";
 import { createStepSpinner, type StepSpinner } from "../ui/spinner.js";
-import { theme } from "../ui/theme.js";
+import { symbol } from "../ui/symbols.js";
 
 const PACKAGE_JSON_SEARCH_DEPTH = 5;
 
@@ -50,6 +52,7 @@ interface CliOptions {
   json?: boolean;
   allowUnignoredState?: boolean;
   plan?: string;
+  quiet?: boolean;
 }
 
 const SILENT_SPINNER: StepSpinner = {
@@ -58,6 +61,30 @@ const SILENT_SPINNER: StepSpinner = {
   fail() {},
   info() {},
 };
+
+function selectSpinner(options: CliOptions): StepSpinner {
+  return options.quiet ? SILENT_SPINNER : createStepSpinner();
+}
+
+const ERROR_HINTS: { match: RegExp; hint: string }[] = [
+  {
+    match: /is stale/,
+    hint: "run 'agemon plan' to refresh, then 'agemon apply'.",
+  },
+  {
+    match: /not git-ignored|isolation/i,
+    hint: "add /.agemon/ to .gitignore, or re-run interactively or with --yes.",
+  },
+];
+
+function renderCliError(message: string): string {
+  const hint = ERROR_HINTS.find((entry) => entry.match.test(message))?.hint;
+  const lines = [
+    `${symbol("fail")} ${message}`,
+    ...(hint ? [`${symbol("arrow")} ${hint}`] : []),
+  ];
+  return box({ body: lines.join("\n"), tone: "danger" });
+}
 
 function selectPlugins(options: CliOptions): AgemonPlugin[] {
   return getRegisteredPlugins().filter(
@@ -145,7 +172,7 @@ async function runInstall(options: CliOptions): Promise<void> {
     return;
   }
 
-  const spinner = createStepSpinner();
+  const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
   const { config, only, skillGroups } = await resolveDesiredStateDefaults(
     options,
@@ -176,7 +203,7 @@ async function runApply(options: CliOptions): Promise<void> {
     return;
   }
 
-  const spinner = createStepSpinner();
+  const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
   const { config, only, skillGroups } = await resolveDesiredStateDefaults(
     options,
@@ -212,7 +239,7 @@ async function runNuke(options: CliOptions): Promise<void> {
     return;
   }
 
-  const spinner = createStepSpinner();
+  const spinner = selectSpinner(options);
   const plugins = getRegisteredPlugins();
   const context = await createContext({
     dryRun: Boolean(options.dryRun),
@@ -328,7 +355,7 @@ export async function runCli(argv: string[]): Promise<number> {
       return error.exitCode;
     }
     console.error(
-      theme.danger(error instanceof Error ? error.message : String(error)),
+      renderCliError(error instanceof Error ? error.message : String(error)),
     );
     return 1;
   }

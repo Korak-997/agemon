@@ -3,6 +3,11 @@ import type {
   ProposedOperation,
   ProposedOperationAction,
 } from "../plugins/types.js";
+import {
+  conflictLegend,
+  gateLegend,
+  renderGateIntro,
+} from "../ui/consent-view.js";
 import type { Plan } from "./plan-store.js";
 import {
   type ConflictReply,
@@ -11,6 +16,7 @@ import {
   promptConflict,
   promptGate,
 } from "./prompt.js";
+import { styleUnifiedDiff } from "./text-diff.js";
 
 export type ConsentGateId =
   | "workspace-isolation"
@@ -201,13 +207,28 @@ export async function resolveConsent(
   const conflictResolutions: ConflictResolution[] = [];
   let workspaceIsolationApproved: boolean | null = null;
 
+  const totalGates = input.gates.length;
+  let gateIndex = 0;
   for (const gate of input.gates) {
+    gateIndex += 1;
+    const gateIntro =
+      interactive && !(input.yes && gate.satisfiableWithYes)
+        ? renderGateIntro({
+            index: gateIndex,
+            total: totalGates,
+            gateId: gate.id,
+            summary: gate.summary,
+            operations: gate.operations,
+          })
+        : undefined;
+
     if (gate.id === "workspace-isolation") {
       workspaceIsolationApproved = await askGate(gate, {
         yes: input.yes,
         interactive,
         prompts,
         log: input.log,
+        intro: gateIntro,
       });
       if (!workspaceIsolationApproved) {
         input.log.log(
@@ -218,6 +239,9 @@ export async function resolveConsent(
     }
 
     if (gate.id === "resolve-conflict") {
+      if (gateIntro) {
+        input.log.log(gateIntro);
+      }
       for (const operation of gate.operations) {
         const recordedDecision =
           input.conflictDecisions?.[operation.resourceId];
@@ -247,6 +271,7 @@ export async function resolveConsent(
       interactive,
       prompts,
       log: input.log,
+      intro: gateIntro,
     });
     if (gateApproved) {
       approved.push(...gate.operations);
@@ -276,6 +301,7 @@ interface GateDecisionContext {
   interactive: boolean;
   prompts: GatePrompts;
   log: Pick<Console, "log">;
+  intro?: string;
 }
 
 async function askGate(
@@ -292,12 +318,17 @@ async function askGate(
     return false;
   }
 
-  const reply = await ctx.prompts.gate(gate.summary);
-  if (reply === "show-diff") {
-    printOperationPreviews(gate.operations, ctx.log);
-    return askGate(gate, ctx);
+  if (ctx.intro) {
+    ctx.log.log(ctx.intro);
   }
-  return reply === "approve";
+  for (;;) {
+    ctx.log.log(gateLegend());
+    const reply = await ctx.prompts.gate(gate.summary);
+    if (reply !== "show-diff") {
+      return reply === "approve";
+    }
+    printOperationPreviews(gate.operations, ctx.log);
+  }
 }
 
 interface ConflictOutcome {
@@ -317,6 +348,7 @@ async function resolveConflict(
     };
   }
 
+  ctx.log.log(conflictLegend());
   const reply = await ctx.prompts.conflict(
     `Conflict at ${operation.targetPath || operation.resourceId}: keep yours, show agemon's, or skip?`,
   );
@@ -338,6 +370,10 @@ function printOperationPreviews(
 ): void {
   for (const operation of operations) {
     log.log(`--- ${operation.targetPath || operation.resourceId}`);
-    log.log(operation.preview.text);
+    log.log(
+      operation.preview.kind === "diff"
+        ? styleUnifiedDiff(operation.preview.text, { color: true, context: 3 })
+        : operation.preview.text,
+    );
   }
 }

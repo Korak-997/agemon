@@ -6,7 +6,6 @@ import {
   computePlanId,
   type Plan,
   readPlan,
-  renderPlan,
   resolvePlanPath,
   writePlan,
 } from "../../../src/core/plan-store.js";
@@ -86,33 +85,5 @@ describe("writePlan / readPlan", () => {
     expect(planPath).toBe(resolvePlanPath(cwd, plan.id));
     expect(planPath.endsWith(".agemon/plans/0123456789abcdef.json")).toBe(true);
     await expect(readPlan(cwd, plan.id)).resolves.toEqual(plan);
-  });
-});
-
-describe("renderPlan", () => {
-  it("reports an empty plan as nothing to do", () => {
-    const rendered = renderPlan({
-      id: "abc",
-      agemonVersion: "9.9.9",
-      desiredStateHash: "x",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      operations: [],
-    });
-
-    expect(rendered).toContain("nothing to do");
-  });
-
-  it("lists each operation with its capability and risk class", () => {
-    const rendered = renderPlan({
-      id: "abc",
-      agemonVersion: "9.9.9",
-      desiredStateHash: "x",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      operations: [sampleOperation()],
-    });
-
-    expect(rendered).toContain("create AGENTS.md");
-    expect(rendered).toContain("master-prompt");
-    expect(rendered).toContain("risk: writes-config");
   });
 });
