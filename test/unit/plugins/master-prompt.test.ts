@@ -124,4 +124,27 @@ describe("master-prompt plugin", () => {
       .filter((action) => action.plugin === "master-prompt");
     expect(actionsAfterUninstall).toEqual([]);
   });
+
+  it("keeps the pristine backup when a managed file is edited and agemon re-runs", async () => {
+    const context = await createTestContext();
+    const originalAgents = "# Original hand-written rules\n\nKeep me.\n";
+    await writeFile(join(context.cwd, "AGENTS.md"), originalAgents, "utf8");
+
+    await masterPromptPlugin.install(context);
+
+    const backupPath = join(
+      context.cwd,
+      ".agemon/backups/rule-file_AGENTS.md.bak",
+    );
+    expect(await readFile(backupPath, "utf8")).toBe(originalAgents);
+
+    await writeFile(
+      join(context.cwd, "AGENTS.md"),
+      "user tweaked the managed file\n",
+      "utf8",
+    );
+    await masterPromptPlugin.install(context);
+
+    expect(await readFile(backupPath, "utf8")).toBe(originalAgents);
+  });
 });

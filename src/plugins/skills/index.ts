@@ -2,10 +2,12 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "../../core/context.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 import {
   SKILL_GROUPS,
@@ -39,11 +41,6 @@ function flattenSkills(groups: SkillGroup[]): SkillBundleEntry[] {
   return groups.flatMap((group) => group.skills);
 }
 
-/**
- * Which groups this repo has already engaged with, derived from the
- * manifest rather than re-asked — a group counts as "recorded" once any one
- * of its skills has a managed or preexisting record.
- */
 function getRecordedGroups(ctx: Context): SkillGroup[] {
   const recordedSkillNames = new Set(
     getPluginActions(ctx).map((action) => action.target),
@@ -164,6 +161,23 @@ async function detectSkills(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function planSkills(_ctx: Context): Promise<ProposedOperation[]> {
+  return [
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: "skill-groups:configured",
+      targetPath: "",
+      action: "install-package",
+      riskClass: "executes",
+      requiresConsent: true,
+      preview: {
+        kind: "note",
+        text: "add the configured skill groups via 'npx skills add'",
+      },
+    }),
+  ];
 }
 
 async function installSkills(ctx: Context): Promise<void> {
@@ -324,7 +338,9 @@ async function uninstallSkills(ctx: Context): Promise<void> {
 
 export const skillsPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  riskClass: "executes",
   detect: detectSkills,
+  plan: planSkills,
   install: installSkills,
   verify: verifySkills,
   uninstall: uninstallSkills,

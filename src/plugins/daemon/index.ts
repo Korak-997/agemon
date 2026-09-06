@@ -1,9 +1,11 @@
 import { basename } from "node:path";
 import type { Context } from "../../core/context.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 
 const PLUGIN_ID = "daemon";
@@ -25,12 +27,6 @@ function slugifyForUnitName(raw: string): string {
   return (normalized || "repo").slice(0, UNIT_NAME_MAX_SLUG_LENGTH);
 }
 
-/**
- * The unit is named after the repo (or plain directory, outside a git repo)
- * agemon is running in — a single fixed unit name would collide across
- * every project on the machine, with the daemon registered last silently
- * overwriting and restarting every other project's unit file.
- */
 async function resolveUnitName(ctx: Context): Promise<string> {
   const gitToplevel = await ctx.run("git", ["rev-parse", "--show-toplevel"], {
     timeoutMs: GIT_TOPLEVEL_TIMEOUT_MS,
@@ -59,13 +55,6 @@ function getHardeningDirectives(profile: HardeningProfile): string[] {
   ];
 }
 
-/**
- * `systemd --user` runs services with its own manager environment, not the
- * interactive shell's — it does not inherit PATH entries like `~/.local/bin`,
- * where pipx/uv install `code-review-graph`. Baking in the absolute path
- * (rather than trusting ExecStart's own PATH lookup) keeps the unit working
- * regardless of what systemd's manager environment does or doesn't include.
- */
 async function resolveCrgExecutablePath(ctx: Context): Promise<string> {
   const which = await ctx.run("which", [CRG_COMMAND], {
     timeoutMs: WHICH_TIMEOUT_MS,
@@ -155,6 +144,24 @@ async function detectDaemon(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function planDaemon(ctx: Context): Promise<ProposedOperation[]> {
+  const unitName = await resolveUnitName(ctx);
+  return [
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: `service-unit:${unitName}`,
+      targetPath: unitName,
+      action: "register-service",
+      riskClass: "executes",
+      requiresConsent: true,
+      preview: {
+        kind: "note",
+        text: `register systemd --user unit ${unitName} to keep the code graph fresh`,
+      },
+    }),
+  ];
 }
 
 async function installDaemon(ctx: Context): Promise<void> {
@@ -253,7 +260,9 @@ async function uninstallDaemon(ctx: Context): Promise<void> {
 export const daemonPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   dependsOn: ["crg"],
+  riskClass: "executes",
   detect: detectDaemon,
+  plan: planDaemon,
   install: installDaemon,
   verify: verifyDaemon,
   uninstall: uninstallDaemon,

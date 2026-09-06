@@ -4,6 +4,7 @@ import {
   removeManagedMarkdownBlockFile,
   upsertManagedMarkdownBlockFile,
 } from "../patchers/markdown-block.js";
+import { describeOperation } from "./proposed-operation.js";
 import type { AgemonPlugin } from "./types.js";
 
 const PLUGIN_ID = "patcher-checkpoint";
@@ -26,11 +27,28 @@ function hasManagedBlock(cwd: string): boolean {
 
 export const patcherCheckpointPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  riskClass: "writes-config",
   async detect(ctx) {
     return {
       present: hasManagedBlock(ctx.cwd),
       preExisting: false,
     };
+  },
+  async plan() {
+    return [
+      describeOperation({
+        capabilityId: PLUGIN_ID,
+        resourceId: `markdown-block:${TARGET_FILE}#${BLOCK_ID}`,
+        targetPath: TARGET_FILE,
+        action: "merge-block",
+        riskClass: "writes-config",
+        requiresConsent: true,
+        preview: {
+          kind: "note",
+          text: `upsert the agemon:${BLOCK_ID} block in ${TARGET_FILE}`,
+        },
+      }),
+    ];
   },
   async install(ctx) {
     if (ctx.dryRun) {

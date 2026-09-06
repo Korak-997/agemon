@@ -1,8 +1,10 @@
 import type { Context } from "../../core/context.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 import { CLI_TOOL_BUNDLE, type CliToolBundleEntry } from "./catalog.js";
 
@@ -89,6 +91,23 @@ async function detectCliTools(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function planCliTools(_ctx: Context): Promise<ProposedOperation[]> {
+  return CLI_TOOL_BUNDLE.map((entry) =>
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: `package:${entry.id}`,
+      targetPath: entry.packageName,
+      action: "install-package",
+      riskClass: "executes",
+      requiresConsent: true,
+      preview: {
+        kind: "note",
+        text: `npm install --global ${entry.packageName}`,
+      },
+    }),
+  );
 }
 
 async function installCliTools(ctx: Context): Promise<void> {
@@ -210,7 +229,9 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
 
 export const cliToolPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  riskClass: "executes",
   detect: detectCliTools,
+  plan: planCliTools,
   install: installCliTools,
   verify: verifyCliTools,
   uninstall: uninstallCliTools,

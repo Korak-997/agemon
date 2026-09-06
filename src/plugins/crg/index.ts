@@ -1,8 +1,10 @@
 import type { Context } from "../../core/context.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 
 const PLUGIN_ID = "crg";
@@ -65,6 +67,23 @@ async function detectCrgPresence(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function planCrg(_ctx: Context): Promise<ProposedOperation[]> {
+  return [
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: `package:${PACKAGE_NAME}`,
+      targetPath: PACKAGE_NAME,
+      action: "install-package",
+      riskClass: "executes",
+      requiresConsent: true,
+      preview: {
+        kind: "note",
+        text: `pipx install ${PACKAGE_NAME}; build the code graph for this repository`,
+      },
+    }),
+  ];
 }
 
 async function installCrg(ctx: Context): Promise<void> {
@@ -151,7 +170,9 @@ async function uninstallCrg(ctx: Context): Promise<void> {
 
 export const crgPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  riskClass: "executes",
   detect: detectCrgPresence,
+  plan: planCrg,
   install: installCrg,
   verify: verifyCrg,
   uninstall: uninstallCrg,

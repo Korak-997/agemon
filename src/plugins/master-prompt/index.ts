@@ -1,17 +1,23 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import {
+  resolveImmutableBackupPath,
+  writeImmutableBackup,
+} from "../../core/backups.js";
 import type { Context } from "../../core/context.js";
+import { fingerprintContent } from "../../core/fingerprint.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 
 const PLUGIN_ID = "master-prompt";
 const ACTION_TYPE_MANAGED_RULE_FILE = "managed-rule-file";
 const ACTION_TYPE_PREEXISTING_RULE_FILE = "preexisting-rule-file";
-const BACKUP_DIRECTORY = ".agemon/backups/master-prompt";
 
 interface RuleFileDefinition {
   target: string;
@@ -100,16 +106,8 @@ function getManagedActions(ctx: Context) {
   );
 }
 
-function encodeTargetAsBackupFileName(target: string): string {
-  return target.replace(/[^a-zA-Z0-9._-]/gu, "_");
-}
-
-function buildBackupPath(cwd: string, target: string): string {
-  return join(
-    cwd,
-    BACKUP_DIRECTORY,
-    `${encodeTargetAsBackupFileName(target)}.bak`,
-  );
+function ruleFileResourceId(target: string): string {
+  return `rule-file:${target}`;
 }
 
 async function readFileIfExists(filePath: string): Promise<string | null> {
@@ -159,14 +157,37 @@ async function detectMasterPrompt(ctx: Context): Promise<PluginPresence> {
   return { present: true, preExisting: !allManaged };
 }
 
-async function backupOriginalFileIfNeeded(
-  cwd: string,
-  target: string,
-  existingContents: string,
-): Promise<void> {
-  const backupPath = buildBackupPath(cwd, target);
-  await mkdir(dirname(backupPath), { recursive: true });
-  await writeFile(backupPath, existingContents, "utf8");
+async function planMasterPrompt(ctx: Context): Promise<ProposedOperation[]> {
+  const operations: ProposedOperation[] = [];
+  for (const definition of getRuleFileDefinitions()) {
+    const targetPath = join(ctx.cwd, definition.target);
+    const existingContents = await readFileIfExists(targetPath);
+    if (existingContents === definition.contents) {
+      continue;
+    }
+    operations.push(
+      describeOperation({
+        capabilityId: PLUGIN_ID,
+        resourceId: ruleFileResourceId(definition.target),
+        targetPath: definition.target,
+        action: existingContents === null ? "create" : "replace",
+        riskClass: "writes-config",
+        requiresConsent: true,
+        expectedFingerprint:
+          existingContents === null
+            ? null
+            : fingerprintContent(existingContents),
+        preview: {
+          kind: "diff",
+          text:
+            existingContents === null
+              ? `create ${definition.target}`
+              : `replace ${definition.target} with agemon's canonical rule set`,
+        },
+      }),
+    );
+  }
+  return operations;
 }
 
 async function installMasterPrompt(ctx: Context): Promise<void> {
@@ -188,18 +209,23 @@ async function installMasterPrompt(ctx: Context): Promise<void> {
           type: ACTION_TYPE_PREEXISTING_RULE_FILE,
           target: definition.target,
           preExisting: true,
+          resourceId: ruleFileResourceId(definition.target),
+          ownershipMode: "recorded-key",
+          fingerprintBefore: fingerprintContent(existingContents),
+          fingerprintAfter: fingerprintContent(existingContents),
         });
       }
       continue;
     }
 
-    if (existingContents !== null) {
-      await backupOriginalFileIfNeeded(
-        ctx.cwd,
-        definition.target,
-        existingContents,
-      );
-    }
+    const backup =
+      existingContents !== null
+        ? await writeImmutableBackup(
+            ctx.cwd,
+            ruleFileResourceId(definition.target),
+            existingContents,
+          )
+        : null;
 
     await mkdir(dirname(targetPath), { recursive: true });
     await writeFile(targetPath, definition.contents, "utf8");
@@ -210,6 +236,14 @@ async function installMasterPrompt(ctx: Context): Promise<void> {
         type: ACTION_TYPE_MANAGED_RULE_FILE,
         target: definition.target,
         preExisting: existingContents !== null,
+        resourceId: ruleFileResourceId(definition.target),
+        ownershipMode: "created",
+        fingerprintBefore:
+          existingContents === null
+            ? null
+            : fingerprintContent(existingContents),
+        fingerprintAfter: fingerprintContent(definition.contents),
+        backup,
       });
     }
   }
@@ -265,7 +299,9 @@ async function uninstallMasterPrompt(ctx: Context): Promise<void> {
 
   for (const action of managedActions) {
     const targetPath = join(ctx.cwd, action.target);
-    const backupPath = buildBackupPath(ctx.cwd, action.target);
+    const backupPath =
+      action.backup?.path ??
+      resolveImmutableBackupPath(ctx.cwd, ruleFileResourceId(action.target));
 
     if (action.preExisting) {
       if (!existsSync(backupPath)) {
@@ -287,7 +323,9 @@ async function uninstallMasterPrompt(ctx: Context): Promise<void> {
 
 export const masterPromptPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  riskClass: "writes-config",
   detect: detectMasterPrompt,
+  plan: planMasterPrompt,
   install: installMasterPrompt,
   verify: verifyMasterPrompt,
   uninstall: uninstallMasterPrompt,

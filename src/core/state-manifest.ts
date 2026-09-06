@@ -3,8 +3,57 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const MANIFEST_RELATIVE_PATH = ".agemon/state.json";
+const PRE_MIGRATION_BACKUP_FILE_NAME = "state.v1.bak";
+const LEDGER_VERSION = 2;
 
-export interface ManifestAction {
+export type OwnershipMode = "created" | "recorded-key" | "delimited-block";
+
+export interface LedgerBackupRef {
+  path: string;
+  checksum: string;
+}
+
+export interface LedgerEntry {
+  id: string;
+  plugin: string;
+  type: string;
+  target: string;
+  preExisting: boolean;
+  createdAt: string;
+  planId: string | null;
+  resourceId: string | null;
+  ownershipMode: OwnershipMode | null;
+  agemonVersion: string | null;
+  fingerprintBefore: string | null;
+  fingerprintAfter: string | null;
+  backup: LedgerBackupRef | null;
+}
+
+export type ManifestAction = LedgerEntry;
+
+export interface StateManifestData {
+  version: typeof LEDGER_VERSION;
+  createdAt: string;
+  updatedAt: string;
+  os: "linux";
+  actions: LedgerEntry[];
+}
+
+export interface RecordManifestActionInput {
+  plugin: string;
+  type: string;
+  target: string;
+  preExisting: boolean;
+  planId?: string;
+  resourceId?: string;
+  ownershipMode?: OwnershipMode;
+  agemonVersion?: string;
+  fingerprintBefore?: string | null;
+  fingerprintAfter?: string | null;
+  backup?: LedgerBackupRef | null;
+}
+
+interface LegacyManifestAction {
   id: string;
   plugin: string;
   type: string;
@@ -13,24 +62,9 @@ export interface ManifestAction {
   createdAt: string;
 }
 
-export interface StateManifestData {
-  version: 1;
-  createdAt: string;
-  updatedAt: string;
-  os: "linux";
-  actions: ManifestAction[];
-}
-
-export interface RecordManifestActionInput {
-  plugin: string;
-  type: string;
-  target: string;
-  preExisting: boolean;
-}
-
 function createDefaultState(now: string): StateManifestData {
   return {
-    version: 1,
+    version: LEDGER_VERSION,
     createdAt: now,
     updatedAt: now,
     os: "linux",
@@ -38,12 +72,22 @@ function createDefaultState(now: string): StateManifestData {
   };
 }
 
-function isManifestAction(value: unknown): value is ManifestAction {
+function inferOwnershipMode(type: string): OwnershipMode {
+  if (type.includes("block")) {
+    return "delimited-block";
+  }
+  if (type.startsWith("preexisting-")) {
+    return "recorded-key";
+  }
+  return "created";
+}
+
+function isLegacyManifestAction(value: unknown): value is LegacyManifestAction {
   if (!value || typeof value !== "object") {
     return false;
   }
 
-  const typed = value as Partial<ManifestAction>;
+  const typed = value as Partial<LegacyManifestAction>;
   return (
     typeof typed.id === "string" &&
     typeof typed.plugin === "string" &&
@@ -54,19 +98,113 @@ function isManifestAction(value: unknown): value is ManifestAction {
   );
 }
 
-function isStateManifestData(value: unknown): value is StateManifestData {
+function isLedgerEntry(value: unknown): value is LedgerEntry {
+  return isLegacyManifestAction(value);
+}
+
+function normalizeLedgerEntry(value: LedgerEntry): LedgerEntry {
+  return {
+    id: value.id,
+    plugin: value.plugin,
+    type: value.type,
+    target: value.target,
+    preExisting: value.preExisting,
+    createdAt: value.createdAt,
+    planId: value.planId ?? null,
+    resourceId: value.resourceId ?? null,
+    ownershipMode: value.ownershipMode ?? null,
+    agemonVersion: value.agemonVersion ?? null,
+    fingerprintBefore: value.fingerprintBefore ?? null,
+    fingerprintAfter: value.fingerprintAfter ?? null,
+    backup: value.backup ?? null,
+  };
+}
+
+function migrateLegacyActionToLedgerEntry(
+  action: LegacyManifestAction,
+): LedgerEntry {
+  return {
+    id: action.id,
+    plugin: action.plugin,
+    type: action.type,
+    target: action.target,
+    preExisting: action.preExisting,
+    createdAt: action.createdAt,
+    planId: null,
+    resourceId: null,
+    ownershipMode: inferOwnershipMode(action.type),
+    agemonVersion: null,
+    fingerprintBefore: null,
+    fingerprintAfter: null,
+    backup: null,
+  };
+}
+
+function hasManifestEnvelope(value: unknown): value is {
+  version: unknown;
+  createdAt: string;
+  updatedAt: string;
+  os: "linux";
+  actions: unknown[];
+} {
   if (!value || typeof value !== "object") {
     return false;
   }
-
-  const typed = value as Partial<StateManifestData>;
+  const typed = value as Record<string, unknown>;
   return (
-    typed.version === 1 &&
     typed.os === "linux" &&
     typeof typed.createdAt === "string" &&
     typeof typed.updatedAt === "string" &&
-    Array.isArray(typed.actions) &&
-    typed.actions.every((action) => isManifestAction(action))
+    Array.isArray(typed.actions)
+  );
+}
+
+interface LoadedManifest {
+  state: StateManifestData;
+  migratedFromVersion: number | null;
+}
+
+function interpretManifestContents(parsed: unknown): LoadedManifest {
+  if (!hasManifestEnvelope(parsed)) {
+    throw new Error("State manifest has an invalid schema");
+  }
+
+  if (parsed.version === LEDGER_VERSION) {
+    if (!parsed.actions.every((entry) => isLedgerEntry(entry))) {
+      throw new Error("State manifest has an invalid schema");
+    }
+    return {
+      state: {
+        version: LEDGER_VERSION,
+        createdAt: parsed.createdAt,
+        updatedAt: parsed.updatedAt,
+        os: "linux",
+        actions: (parsed.actions as LedgerEntry[]).map(normalizeLedgerEntry),
+      },
+      migratedFromVersion: null,
+    };
+  }
+
+  if (parsed.version === 1) {
+    if (!parsed.actions.every((entry) => isLegacyManifestAction(entry))) {
+      throw new Error("State manifest has an invalid schema");
+    }
+    return {
+      state: {
+        version: LEDGER_VERSION,
+        createdAt: parsed.createdAt,
+        updatedAt: parsed.updatedAt,
+        os: "linux",
+        actions: (parsed.actions as LegacyManifestAction[]).map(
+          migrateLegacyActionToLedgerEntry,
+        ),
+      },
+      migratedFromVersion: 1,
+    };
+  }
+
+  throw new Error(
+    `Unrecognised state manifest version: ${String(parsed.version)}`,
   );
 }
 
@@ -80,13 +218,9 @@ export class StateManifest {
     const manifestPath = join(cwd, MANIFEST_RELATIVE_PATH);
     const now = new Date().toISOString();
 
+    let rawContents: string;
     try {
-      const contents = await readFile(manifestPath, "utf8");
-      const parsed = JSON.parse(contents) as unknown;
-      if (!isStateManifestData(parsed)) {
-        throw new Error("State manifest has an invalid schema");
-      }
-      return new StateManifest(manifestPath, parsed);
+      rawContents = await readFile(manifestPath, "utf8");
     } catch (error) {
       const errno = error as NodeJS.ErrnoException;
       if (errno.code === "ENOENT") {
@@ -96,9 +230,20 @@ export class StateManifest {
         `Unable to load manifest at ${manifestPath}: ${String(error)}`,
       );
     }
+
+    const parsed = JSON.parse(rawContents) as unknown;
+    const { state, migratedFromVersion } = interpretManifestContents(parsed);
+    const manifest = new StateManifest(manifestPath, state);
+
+    if (migratedFromVersion !== null) {
+      await manifest.persistPreMigrationBackup(rawContents);
+      await manifest.persist();
+    }
+
+    return manifest;
   }
 
-  getActions(): ManifestAction[] {
+  getActions(): LedgerEntry[] {
     return [...this.state.actions];
   }
 
@@ -110,16 +255,21 @@ export class StateManifest {
     return this.state.actions.some((action) => action.plugin === plugin);
   }
 
-  async recordAction(
-    input: RecordManifestActionInput,
-  ): Promise<ManifestAction> {
-    const action: ManifestAction = {
+  async recordAction(input: RecordManifestActionInput): Promise<LedgerEntry> {
+    const action: LedgerEntry = {
       id: randomUUID(),
       plugin: input.plugin,
       type: input.type,
       target: input.target,
       preExisting: input.preExisting,
       createdAt: new Date().toISOString(),
+      planId: input.planId ?? null,
+      resourceId: input.resourceId ?? null,
+      ownershipMode: input.ownershipMode ?? null,
+      agemonVersion: input.agemonVersion ?? null,
+      fingerprintBefore: input.fingerprintBefore ?? null,
+      fingerprintAfter: input.fingerprintAfter ?? null,
+      backup: input.backup ?? null,
     };
     this.state.actions.push(action);
     await this.persist();
@@ -149,6 +299,13 @@ export class StateManifest {
     } catch {
       return;
     }
+  }
+
+  private async persistPreMigrationBackup(rawContents: string): Promise<void> {
+    const manifestDir = dirname(this.manifestPath);
+    const backupPath = join(manifestDir, PRE_MIGRATION_BACKUP_FILE_NAME);
+    await mkdir(manifestDir, { recursive: true });
+    await writeFile(backupPath, rawContents, "utf8");
   }
 
   private async persist(): Promise<void> {
