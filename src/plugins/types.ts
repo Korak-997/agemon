@@ -1,4 +1,5 @@
 import type { Context } from "../core/context.js";
+import type { LedgerEntry } from "../core/state-manifest.js";
 
 export interface PluginPresence {
   present: boolean;
@@ -39,6 +40,14 @@ export interface ProposedOperation {
   preview: { kind: "diff" | "note"; text: string };
 }
 
+export type StagedFileKind = "markdown" | "json" | "yaml" | "text";
+
+export interface StagedFile {
+  targetPath: string;
+  contents: string;
+  kind: StagedFileKind;
+}
+
 export interface AgemonPlugin {
   id: string;
   dependsOn?: string[];
@@ -46,8 +55,17 @@ export interface AgemonPlugin {
   detect(ctx: Context): Promise<PluginPresence>;
   desiredRevision?(ctx: Context, resourceId: string): string | null;
   plan?(ctx: Context): Promise<ProposedOperation[]>;
-  apply?(ctx: Context, operations: ProposedOperation[]): Promise<void>;
+  materialize?(
+    ctx: Context,
+    operations: ProposedOperation[],
+  ): Promise<StagedFile[]>;
+  apply?(
+    ctx: Context,
+    operations: ProposedOperation[],
+    staged?: StagedFile[],
+  ): Promise<void>;
   install(ctx: Context): Promise<void>;
   verify(ctx: Context): Promise<PluginVerificationResult>;
+  revert?(ctx: Context, entries: LedgerEntry[]): Promise<void>;
   uninstall(ctx: Context): Promise<void>;
 }

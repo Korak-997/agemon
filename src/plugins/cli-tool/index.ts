@@ -1,4 +1,5 @@
 import type { Context } from "../../core/context.js";
+import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -188,8 +189,11 @@ async function verifyCliTools(ctx: Context): Promise<PluginVerificationResult> {
   };
 }
 
-async function uninstallCliTools(ctx: Context): Promise<void> {
-  const managedActions = getPluginActions(ctx).filter(
+async function revertCliTools(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
+  const managedActions = entries.filter(
     (action) =>
       action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
       action.preExisting === false,
@@ -230,7 +234,10 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
       );
     }
   }
+}
 
+async function uninstallCliTools(ctx: Context): Promise<void> {
+  await revertCliTools(ctx, getPluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
@@ -241,5 +248,6 @@ export const cliToolPlugin: AgemonPlugin = {
   plan: planCliTools,
   install: installCliTools,
   verify: verifyCliTools,
+  revert: revertCliTools,
   uninstall: uninstallCliTools,
 };

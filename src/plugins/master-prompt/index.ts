@@ -17,6 +17,7 @@ import type {
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
+  StagedFile,
 } from "../types.js";
 
 const PLUGIN_ID = "master-prompt";
@@ -177,12 +178,6 @@ function hasActionForTarget(ctx: Context, target: string): boolean {
   return ledgerActionForTarget(ctx, target) !== undefined;
 }
 
-function managedRuleFileActions(ctx: Context): LedgerEntry[] {
-  return pluginActions(ctx).filter(
-    (action) => action.type === ACTION_TYPE_MANAGED_RULE_FILE,
-  );
-}
-
 function looksLikePointer(contents: string): boolean {
   if (!/AGENTS\.md/i.test(contents)) {
     return false;
@@ -261,15 +256,47 @@ async function classifyRuleFiles(ctx: Context): Promise<ClassifiedRuleFile[]> {
   return classified;
 }
 
-function proposedContentsFor(entry: ClassifiedRuleFile): string {
-  if (entry.kind === "agents") {
+function renderRuleFileContents(
+  target: string,
+  contentsBefore: string | null,
+): string {
+  if (target === AGENTS_FILE) {
     return upsertManagedMarkdownBlock(
-      entry.currentContents ?? "",
+      contentsBefore ?? "",
       AGENT_RULES_BLOCK_ID,
       buildAgentRulesBlockBody(),
     ).nextContent;
   }
-  return pointerContentsFor(entry.target);
+  return pointerContentsFor(target);
+}
+
+function proposedContentsFor(entry: ClassifiedRuleFile): string {
+  return renderRuleFileContents(entry.target, entry.currentContents);
+}
+
+function operationWritesRuleFile(operation: ProposedOperation): boolean {
+  return operation.action !== "conflict" && operation.action !== "adopt";
+}
+
+async function materializeMasterPrompt(
+  ctx: Context,
+  operations: ProposedOperation[],
+): Promise<StagedFile[]> {
+  const staged: StagedFile[] = [];
+  for (const operation of operations) {
+    if (!operationWritesRuleFile(operation)) {
+      continue;
+    }
+    const contentsBefore = await readFileIfExists(
+      join(ctx.cwd, operation.targetPath),
+    );
+    staged.push({
+      targetPath: operation.targetPath,
+      contents: renderRuleFileContents(operation.targetPath, contentsBefore),
+      kind: "markdown",
+    });
+  }
+  return staged;
 }
 
 function operationForClassifiedFile(
@@ -395,6 +422,7 @@ async function recordManagedRuleFile(
 async function applyRuleFileOperation(
   ctx: Context,
   operation: ProposedOperation,
+  stagedContents: string | undefined,
 ): Promise<void> {
   const targetPath = join(ctx.cwd, operation.targetPath);
   const contentsBefore = await readFileIfExists(targetPath);
@@ -420,13 +448,8 @@ async function applyRuleFileOperation(
   }
 
   const contentsAfter =
-    operation.targetPath === AGENTS_FILE
-      ? upsertManagedMarkdownBlock(
-          contentsBefore ?? "",
-          AGENT_RULES_BLOCK_ID,
-          buildAgentRulesBlockBody(),
-        ).nextContent
-      : pointerContentsFor(operation.targetPath);
+    stagedContents ??
+    renderRuleFileContents(operation.targetPath, contentsBefore);
 
   const backup =
     contentsBefore !== null
@@ -453,12 +476,20 @@ async function applyRuleFileOperation(
 async function applyMasterPrompt(
   ctx: Context,
   operations: ProposedOperation[],
+  staged?: StagedFile[],
 ): Promise<void> {
+  const stagedContentsByPath = new Map(
+    (staged ?? []).map((file) => [file.targetPath, file.contents] as const),
+  );
   for (const operation of operations) {
     if (operation.action === "conflict") {
       continue;
     }
-    await applyRuleFileOperation(ctx, operation);
+    await applyRuleFileOperation(
+      ctx,
+      operation,
+      stagedContentsByPath.get(operation.targetPath),
+    );
   }
 }
 
@@ -547,8 +578,13 @@ async function verifyMasterPrompt(
   };
 }
 
-async function uninstallMasterPrompt(ctx: Context): Promise<void> {
-  const managedActions = managedRuleFileActions(ctx);
+async function revertMasterPrompt(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
+  const managedActions = entries.filter(
+    (entry) => entry.type === ACTION_TYPE_MANAGED_RULE_FILE,
+  );
 
   if (ctx.dryRun) {
     if (managedActions.length === 0) {
@@ -585,7 +621,10 @@ async function uninstallMasterPrompt(ctx: Context): Promise<void> {
 
     await rm(targetPath, { force: true });
   }
+}
 
+async function uninstallMasterPrompt(ctx: Context): Promise<void> {
+  await revertMasterPrompt(ctx, pluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
@@ -595,8 +634,10 @@ export const masterPromptPlugin: AgemonPlugin = {
   detect: detectMasterPrompt,
   desiredRevision: masterPromptDesiredRevision,
   plan: planMasterPrompt,
+  materialize: materializeMasterPrompt,
   apply: applyMasterPrompt,
   install: installMasterPrompt,
   verify: verifyMasterPrompt,
+  revert: revertMasterPrompt,
   uninstall: uninstallMasterPrompt,
 };

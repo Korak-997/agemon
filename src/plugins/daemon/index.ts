@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import type { Context } from "../../core/context.js";
+import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -112,14 +113,6 @@ function hasPreexistingServiceRecord(ctx: Context): boolean {
     (action) =>
       action.type === ACTION_TYPE_PREEXISTING_SERVICE &&
       action.preExisting === true,
-  );
-}
-
-function enabledLingerByAgemon(ctx: Context): boolean {
-  return getPluginActions(ctx).some(
-    (action) =>
-      action.type === ACTION_TYPE_ENABLED_LINGER &&
-      action.preExisting === false,
   );
 }
 
@@ -236,14 +229,34 @@ async function verifyDaemon(ctx: Context): Promise<PluginVerificationResult> {
   return { ok: true, detail: `${unitName} active` };
 }
 
-async function uninstallDaemon(ctx: Context): Promise<void> {
+function entriesHaveManagedServiceRegistration(
+  entries: LedgerEntry[],
+): boolean {
+  return entries.some(
+    (entry) =>
+      entry.type === ACTION_TYPE_REGISTERED_SERVICE &&
+      entry.preExisting === false,
+  );
+}
+
+function entriesEnabledLingerByAgemon(entries: LedgerEntry[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry.type === ACTION_TYPE_ENABLED_LINGER && entry.preExisting === false,
+  );
+}
+
+async function revertDaemon(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
   const unitName = await resolveUnitName(ctx);
-  const managedService = hasManagedServiceRegistration(ctx);
+  const managedService = entriesHaveManagedServiceRegistration(entries);
 
   if (ctx.dryRun) {
     if (managedService) {
       ctx.ui.info(`Would unregister user service ${unitName}`);
-      if (enabledLingerByAgemon(ctx)) {
+      if (entriesEnabledLingerByAgemon(entries)) {
         ctx.ui.info("Would disable user linger because agemon enabled it");
       }
     } else {
@@ -255,10 +268,13 @@ async function uninstallDaemon(ctx: Context): Promise<void> {
   if (managedService) {
     await ctx.serviceManager.unregisterAutostart({
       unitName,
-      disableLinger: enabledLingerByAgemon(ctx),
+      disableLinger: entriesEnabledLingerByAgemon(entries),
     });
   }
+}
 
+async function uninstallDaemon(ctx: Context): Promise<void> {
+  await revertDaemon(ctx, getPluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
@@ -270,5 +286,6 @@ export const daemonPlugin: AgemonPlugin = {
   plan: planDaemon,
   install: installDaemon,
   verify: verifyDaemon,
+  revert: revertDaemon,
   uninstall: uninstallDaemon,
 };

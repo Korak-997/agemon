@@ -1,12 +1,17 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { IsolationStatus } from "../inspect/discover.js";
-import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
+import type {
+  AgemonPlugin,
+  ProposedOperation,
+  StagedFile,
+} from "../plugins/types.js";
 import { writeImmutableBackup } from "./backups.js";
 import type { Context } from "./context.js";
 import { fingerprintContent } from "./fingerprint.js";
 import { writeAgemonGitignoreEntry } from "./gitignore.js";
 import { type Plan, writePlan } from "./plan-store.js";
+import type { LedgerEntry } from "./state-manifest.js";
 
 const FILE_TARGETING_ACTIONS: ReadonlySet<ProposedOperation["action"]> =
   new Set(["create", "replace", "merge-block", "merge-key", "adopt"]);
@@ -34,6 +39,144 @@ async function readFileIfExists(filePath: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function encodeStagedFileName(targetPath: string): string {
+  return encodeURIComponent(targetPath);
+}
+
+function validateManagedMarkerBalance(staged: StagedFile): string | null {
+  const markerPattern = /<!-- agemon:(start|end):([A-Za-z0-9_-]+) -->/gu;
+  const startCounts = new Map<string, number>();
+  const endCounts = new Map<string, number>();
+  const seenStart = new Set<string>();
+
+  for (
+    let match = markerPattern.exec(staged.contents);
+    match !== null;
+    match = markerPattern.exec(staged.contents)
+  ) {
+    const [, kind, blockId] = match;
+    if (kind === "start") {
+      startCounts.set(blockId, (startCounts.get(blockId) ?? 0) + 1);
+      seenStart.add(blockId);
+    } else {
+      if (!seenStart.has(blockId)) {
+        return `${staged.targetPath}: agemon end marker for '${blockId}' precedes its start marker`;
+      }
+      endCounts.set(blockId, (endCounts.get(blockId) ?? 0) + 1);
+    }
+  }
+
+  for (const [blockId, starts] of startCounts) {
+    const ends = endCounts.get(blockId) ?? 0;
+    if (starts !== 1 || ends !== 1) {
+      return `${staged.targetPath}: agemon block '${blockId}' markers unbalanced (${starts} start, ${ends} end)`;
+    }
+  }
+
+  return null;
+}
+
+function validateStagedFile(staged: StagedFile): string | null {
+  if (staged.kind === "json") {
+    try {
+      JSON.parse(staged.contents);
+    } catch (error) {
+      return `${staged.targetPath}: invalid JSON — ${errorMessage(error)}`;
+    }
+    return null;
+  }
+  if (staged.kind === "markdown") {
+    return validateManagedMarkerBalance(staged);
+  }
+  return null;
+}
+
+async function stageApprovedFiles(
+  ctx: Context,
+  pluginById: Map<string, AgemonPlugin>,
+  planId: string,
+  approvedByCapability: Map<string, ProposedOperation[]>,
+): Promise<Map<string, StagedFile[]>> {
+  const stagedByCapability = new Map<string, StagedFile[]>();
+  const stagedRoot = join(ctx.cwd, ".agemon", "plans", planId, "staged");
+  let stagedRootCreated = false;
+
+  for (const [capabilityId, operations] of approvedByCapability) {
+    const plugin = pluginById.get(capabilityId);
+    if (!plugin?.materialize) {
+      continue;
+    }
+
+    const stagedFiles = await plugin.materialize(ctx, operations);
+    if (stagedFiles.length === 0) {
+      continue;
+    }
+
+    if (!stagedRootCreated) {
+      await mkdir(stagedRoot, { recursive: true });
+      stagedRootCreated = true;
+    }
+
+    for (const staged of stagedFiles) {
+      await writeFile(
+        join(stagedRoot, encodeStagedFileName(staged.targetPath)),
+        staged.contents,
+        "utf8",
+      );
+      const problem = validateStagedFile(staged);
+      if (problem !== null) {
+        throw new Error(
+          `Refusing to apply plan ${planId}: staged file failed validation — ${problem}`,
+        );
+      }
+    }
+
+    stagedByCapability.set(capabilityId, stagedFiles);
+  }
+
+  return stagedByCapability;
+}
+
+async function revertCommittedCapabilities(
+  ctx: Context,
+  pluginById: Map<string, AgemonPlugin>,
+  appliedCapabilityOrder: string[],
+  ledgerActionIdsBeforeRun: ReadonlySet<string>,
+): Promise<string[]> {
+  const newEntriesByCapability = new Map<string, LedgerEntry[]>();
+  for (const entry of ctx.manifest.getActions()) {
+    if (ledgerActionIdsBeforeRun.has(entry.id)) {
+      continue;
+    }
+    const bucket = newEntriesByCapability.get(entry.plugin);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      newEntriesByCapability.set(entry.plugin, [entry]);
+    }
+  }
+
+  const manualCleanup: string[] = [];
+  for (const capabilityId of [...appliedCapabilityOrder].reverse()) {
+    const plugin = pluginById.get(capabilityId);
+    const newEntries = newEntriesByCapability.get(capabilityId) ?? [];
+    if (!plugin?.revert || newEntries.length === 0) {
+      continue;
+    }
+    try {
+      await plugin.revert(ctx, newEntries);
+    } catch (revertError) {
+      manualCleanup.push(`${capabilityId}: ${errorMessage(revertError)}`);
+    }
+  }
+
+  return manualCleanup;
 }
 
 function fileTargetingOperations(
@@ -146,9 +289,10 @@ async function runCapabilityWork(
   ctx: Context,
   plugin: AgemonPlugin,
   operations: ProposedOperation[],
+  staged: StagedFile[] | undefined,
 ): Promise<void> {
   if (plugin.apply) {
-    await plugin.apply(ctx, operations);
+    await plugin.apply(ctx, operations, staged);
   } else {
     const presence = await plugin.detect(ctx);
     if (presence.present) {
@@ -192,12 +336,20 @@ export async function applyPlan(
   await writePlan(ctx.cwd, input.plan);
   await assertPlanIsFresh(ctx, input.plan.id, input.approved);
 
+  const stagedByCapability = await stageApprovedFiles(
+    ctx,
+    pluginById,
+    input.plan.id,
+    approvedByCapability,
+  );
+
   const rollbackSnapshots = await captureRollbackSnapshots(ctx, input.approved);
   const ledgerActionIdsBeforeRun = new Set(
     ctx.manifest.getActions().map((action) => action.id),
   );
 
   const applied: ProposedOperation[] = [];
+  const appliedCapabilityOrder: string[] = [];
   try {
     for (const [capabilityId, operations] of approvedByCapability) {
       const plugin = pluginById.get(capabilityId);
@@ -206,17 +358,30 @@ export async function applyPlan(
           `Plan references capability '${capabilityId}', which is not registered.`,
         );
       }
-      await runCapabilityWork(ctx, plugin, operations);
+      await runCapabilityWork(
+        ctx,
+        plugin,
+        operations,
+        stagedByCapability.get(capabilityId),
+      );
+      appliedCapabilityOrder.push(capabilityId);
       applied.push(...operations);
     }
   } catch (error) {
     await restoreRollbackSnapshots(ctx, rollbackSnapshots);
+    const manualCleanup = await revertCommittedCapabilities(
+      ctx,
+      pluginById,
+      appliedCapabilityOrder,
+      ledgerActionIdsBeforeRun,
+    );
     await ctx.manifest.removeActionsAddedSince(ledgerActionIdsBeforeRun);
     ctx.ui.fail(
-      `apply rolled back — repo left as it started (${
-        error instanceof Error ? error.message : String(error)
-      })`,
+      `apply rolled back — repo left as it started (${errorMessage(error)})`,
     );
+    for (const detail of manualCleanup) {
+      ctx.ui.fail(`manual cleanup needed: ${detail}`);
+    }
     throw error;
   }
 

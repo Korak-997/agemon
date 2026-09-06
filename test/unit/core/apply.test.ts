@@ -271,6 +271,237 @@ describe("applyPlan transaction protocol", () => {
     expect(ctx.manifest.getActions()).toEqual([]);
   });
 
+  it("stages generated files under the plan directory and applies from the staged copy", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation({ action: "create", targetPath: "AGENTS.md" });
+    const stagedContents =
+      "<!-- agemon:start:agent-rules -->\nbody\n<!-- agemon:end:agent-rules -->\n";
+
+    const plugin: AgemonPlugin = {
+      ...createFilePlugin({ id: "cap", onInstall: async () => {} }),
+      async materialize() {
+        return [
+          {
+            targetPath: "AGENTS.md",
+            contents: stagedContents,
+            kind: "markdown",
+          },
+        ];
+      },
+      async apply(applyCtx, _operations, staged) {
+        await writeFile(
+          join(applyCtx.cwd, "AGENTS.md"),
+          staged?.[0]?.contents ?? "RE-RENDERED",
+          "utf8",
+        );
+      },
+    };
+
+    await applyPlan(ctx, [plugin], {
+      plan: planWith([op]),
+      approved: [op],
+      workspaceIsolationApproved: null,
+      isolationStatus: "ignored",
+      allowUnignoredState: false,
+    });
+
+    await expect(
+      readFile(
+        join(ctx.cwd, ".agemon/plans/plan-under-test/staged/AGENTS.md"),
+        "utf8",
+      ),
+    ).resolves.toBe(stagedContents);
+    await expect(readFile(join(ctx.cwd, "AGENTS.md"), "utf8")).resolves.toBe(
+      stagedContents,
+    );
+  });
+
+  it("aborts before any snapshot or write when a staged file is structurally invalid", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation({ action: "create", targetPath: "config.json" });
+
+    let installRan = false;
+    const plugin: AgemonPlugin = {
+      ...createFilePlugin({
+        id: "cap",
+        onInstall: async () => {
+          installRan = true;
+        },
+      }),
+      async materialize() {
+        return [
+          { targetPath: "config.json", contents: "{ not json", kind: "json" },
+        ];
+      },
+    };
+
+    await expect(
+      applyPlan(ctx, [plugin], {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(/config\.json/);
+
+    expect(installRan).toBe(false);
+    await expect(
+      readFile(join(ctx.cwd, "config.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(join(ctx.cwd, ".agemon/backups"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("calls a committed capability's revert when a later capability fails", async () => {
+    const ctx = await createSandboxContext();
+    const runCalls: { command: string; args: string[] }[] = [];
+    ctx.run = async (command, args) => {
+      runCalls.push({ command, args });
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    const installerOp = operation({
+      id: "installer:pkg:install-package",
+      capabilityId: "installer",
+      resourceId: "pkg",
+      targetPath: "pkg",
+      action: "install-package",
+    });
+    const breakerOp = operation({
+      id: "breaker:res:create",
+      capabilityId: "breaker",
+      resourceId: "res",
+      targetPath: "res.txt",
+    });
+
+    let reverted: string[] = [];
+    const installer: AgemonPlugin = {
+      id: "installer",
+      async detect() {
+        return { present: false, preExisting: false };
+      },
+      async plan() {
+        return [];
+      },
+      async apply(applyCtx) {
+        await applyCtx.run("pipx", ["install", "code-review-graph"]);
+        await applyCtx.manifest.recordAction({
+          plugin: "installer",
+          type: "installed-binary",
+          target: "code-review-graph (pipx)",
+          preExisting: false,
+        });
+      },
+      async install() {},
+      async verify() {
+        return { ok: true };
+      },
+      async revert(revertCtx, entries) {
+        reverted = entries.map((entry) => entry.type);
+        if (entries.some((entry) => entry.type === "installed-binary")) {
+          await revertCtx.run("pipx", ["uninstall", "code-review-graph"]);
+        }
+      },
+      async uninstall() {},
+    };
+    const breaker: AgemonPlugin = {
+      ...createFilePlugin({ id: "breaker", onInstall: async () => {} }),
+      async install() {
+        throw new Error("breaker exploded");
+      },
+    };
+
+    await expect(
+      applyPlan(ctx, [installer, breaker], {
+        plan: planWith([installerOp, breakerOp]),
+        approved: [installerOp, breakerOp],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(/exploded/);
+
+    expect(reverted).toEqual(["installed-binary"]);
+    expect(runCalls).toContainEqual({
+      command: "pipx",
+      args: ["uninstall", "code-review-graph"],
+    });
+    expect(ctx.manifest.getActions()).toEqual([]);
+  });
+
+  it("reports manual cleanup when a capability's revert itself fails", async () => {
+    const ctx = await createSandboxContext();
+    const failures: string[] = [];
+    ctx.ui = { ...ctx.ui, fail: (message: string) => failures.push(message) };
+
+    const installerOp = operation({
+      id: "installer:pkg:install-package",
+      capabilityId: "installer",
+      resourceId: "pkg",
+      targetPath: "pkg",
+      action: "install-package",
+    });
+    const breakerOp = operation({
+      id: "breaker:res:create",
+      capabilityId: "breaker",
+      resourceId: "res",
+      targetPath: "res.txt",
+    });
+
+    const installer: AgemonPlugin = {
+      id: "installer",
+      async detect() {
+        return { present: false, preExisting: false };
+      },
+      async plan() {
+        return [];
+      },
+      async apply(applyCtx) {
+        await applyCtx.manifest.recordAction({
+          plugin: "installer",
+          type: "installed-binary",
+          target: "pkg",
+          preExisting: false,
+        });
+      },
+      async install() {},
+      async verify() {
+        return { ok: true };
+      },
+      async revert() {
+        throw new Error("pipx uninstall unavailable");
+      },
+      async uninstall() {},
+    };
+    const breaker: AgemonPlugin = {
+      ...createFilePlugin({ id: "breaker", onInstall: async () => {} }),
+      async install() {
+        throw new Error("breaker exploded");
+      },
+    };
+
+    await expect(
+      applyPlan(ctx, [installer, breaker], {
+        plan: planWith([installerOp, breakerOp]),
+        approved: [installerOp, breakerOp],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(/exploded/);
+
+    expect(
+      failures.some((message) =>
+        /manual cleanup needed: installer: pipx uninstall unavailable/.test(
+          message,
+        ),
+      ),
+    ).toBe(true);
+    expect(ctx.manifest.getActions()).toEqual([]);
+  });
+
   it("returns the applied operations on success", async () => {
     const ctx = await createSandboxContext();
     const op = operation();

@@ -1,4 +1,5 @@
 import type { Context } from "../../core/context.js";
+import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -149,8 +150,16 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
   return { ok: true, detail: "status command passed" };
 }
 
-async function uninstallCrg(ctx: Context): Promise<void> {
-  const managedInstall = hasManagedInstall(ctx);
+function entriesHaveManagedInstall(entries: LedgerEntry[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry.type === ACTION_TYPE_INSTALLED_BINARY &&
+      entry.preExisting === false,
+  );
+}
+
+async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
+  const managedInstall = entriesHaveManagedInstall(entries);
 
   if (ctx.dryRun) {
     if (managedInstall) {
@@ -161,17 +170,22 @@ async function uninstallCrg(ctx: Context): Promise<void> {
     return;
   }
 
-  if (managedInstall) {
-    const uninstallResult = await ctx.run("pipx", ["uninstall", PACKAGE_NAME], {
-      timeoutMs: UNINSTALL_TIMEOUT_MS,
-    });
-    if (uninstallResult.code !== 0) {
-      throw new Error(
-        uninstallResult.stderr || `pipx uninstall failed for ${PACKAGE_NAME}`,
-      );
-    }
+  if (!managedInstall) {
+    return;
   }
 
+  const uninstallResult = await ctx.run("pipx", ["uninstall", PACKAGE_NAME], {
+    timeoutMs: UNINSTALL_TIMEOUT_MS,
+  });
+  if (uninstallResult.code !== 0) {
+    throw new Error(
+      uninstallResult.stderr || `pipx uninstall failed for ${PACKAGE_NAME}`,
+    );
+  }
+}
+
+async function uninstallCrg(ctx: Context): Promise<void> {
+  await revertCrg(ctx, getPluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
@@ -182,5 +196,6 @@ export const crgPlugin: AgemonPlugin = {
   plan: planCrg,
   install: installCrg,
   verify: verifyCrg,
+  revert: revertCrg,
   uninstall: uninstallCrg,
 };

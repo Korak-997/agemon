@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "../../core/context.js";
+import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -295,13 +296,21 @@ async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
   };
 }
 
-async function uninstallSkills(ctx: Context): Promise<void> {
-  const managedActions = getPluginActions(ctx).filter(
+async function revertSkills(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
+  const managedActions = entries.filter(
     (action) =>
       action.type === ACTION_TYPE_INSTALLED_SKILL &&
       action.preExisting === false,
   );
-  const shouldRemoveManagedSkillsLock = hasManagedSkillsLockRecord(ctx);
+  const shouldRemoveManagedSkillsLock = entries.some(
+    (action) =>
+      action.type === ACTION_TYPE_GENERATED_SKILLS_LOCK &&
+      action.target === SKILLS_LOCK_FILE &&
+      action.preExisting === false,
+  );
 
   if (ctx.dryRun) {
     if (managedActions.length === 0) {
@@ -344,7 +353,10 @@ async function uninstallSkills(ctx: Context): Promise<void> {
   if (shouldRemoveManagedSkillsLock) {
     await rm(getSkillsLockPath(ctx.cwd), { force: true });
   }
+}
 
+async function uninstallSkills(ctx: Context): Promise<void> {
+  await revertSkills(ctx, getPluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
@@ -355,5 +367,6 @@ export const skillsPlugin: AgemonPlugin = {
   plan: planSkills,
   install: installSkills,
   verify: verifySkills,
+  revert: revertSkills,
   uninstall: uninstallSkills,
 };
