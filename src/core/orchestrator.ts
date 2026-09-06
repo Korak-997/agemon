@@ -1,9 +1,42 @@
-import type { AgemonPlugin } from "../plugins/types.js";
+import { rm } from "node:fs/promises";
+import { relative } from "node:path";
+import { discoverRepository } from "../inspect/discover.js";
+import { verifyManagedState } from "../inspect/status.js";
+import { CORE_CAPABILITY_IDS } from "../plugins/index.js";
+import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
+import { renderPlan } from "../ui/plan-view.js";
+import { renderRunSummary } from "../ui/summary.js";
+import { ApplyRollbackError, applyPlan } from "./apply.js";
+import { resolveConfigPath, writeConfig } from "./config.js";
+import type { ConflictResolution } from "./consent.js";
+import { buildConsentGates } from "./consent.js";
 import type { Context } from "./context.js";
-import { ensureAgemonGitignored } from "./gitignore.js";
+import {
+  computePlanId,
+  type Plan,
+  resolveDesiredStateHash,
+  writePlan,
+} from "./plan-store.js";
+import { isInteractiveTerminal } from "./prompt.js";
+
+type ConflictDecisionMap = Record<string, "keep-mine" | "skip">;
 
 export interface OrchestratorOptions {
   only?: string;
+}
+
+export interface ReconcileOptions {
+  only?: string;
+  agemonVersion: string;
+  allowUnignoredState: boolean;
+  plan?: Plan;
+  conflictDecisions?: ConflictDecisionMap;
+  persistConfig?: boolean;
+}
+
+export interface BuildPlanOptions {
+  only?: string;
+  agemonVersion: string;
 }
 
 function parseOnlyPluginIds(only?: string): string[] {
@@ -63,101 +96,248 @@ function resolvePluginOrder(
   return ordered;
 }
 
-function buildVerificationMessage(pluginId: string, detail?: string): string {
-  if (!detail) return `Installed ${pluginId}`;
-  return `Installed ${pluginId} (${detail})`;
-}
-
-function buildPresenceMessage(pluginId: string, detail?: string): string {
-  if (!detail) return `Already installed ${pluginId}`;
-  return `Already installed ${pluginId} (${detail})`;
-}
-
-async function installFresh(ctx: Context, plugin: AgemonPlugin): Promise<void> {
-  ctx.ui.info(`${plugin.id} not detected — running a fresh install`);
-  await plugin.install(ctx);
-  const verification = await plugin.verify(ctx);
-  if (!verification.ok) {
-    ctx.ui.fail(`Verification failed for ${plugin.id}`);
-    throw new Error(
-      verification.detail ?? `Verification failed for plugin '${plugin.id}'.`,
-    );
-  }
-
-  ctx.ui.succeed(buildVerificationMessage(plugin.id, verification.detail));
-}
-
-/**
- * A plugin whose `detect` reports it present isn't necessarily healthy — its
- * own `verify` is the real source of truth, and is what surfaces "what's
- * currently there" to the user. Only an unhealthy result is worth
- * interrupting the run for; a healthy one just gets reported and skipped.
- */
-async function reconcileExisting(
-  ctx: Context,
-  plugin: AgemonPlugin,
-): Promise<void> {
-  const verification = await plugin.verify(ctx);
-  if (verification.ok) {
-    ctx.ui.succeed(buildPresenceMessage(plugin.id, verification.detail));
-    return;
-  }
-
-  ctx.ui.info(
-    `${plugin.id} is already present but not healthy: ${
-      verification.detail ?? "no details available"
-    }`,
-  );
-
-  const shouldFix = await ctx.confirm(`Rewrite/fix ${plugin.id} now?`);
-  if (!shouldFix) {
-    ctx.ui.fail(
-      `Left ${plugin.id} as-is — re-run with --yes, or interactively, to fix it.`,
-    );
-    return;
-  }
-
-  await plugin.install(ctx);
-  const reverification = await plugin.verify(ctx);
-  if (!reverification.ok) {
-    ctx.ui.fail(`Fix failed for ${plugin.id}`);
-    throw new Error(
-      reverification.detail ??
-        `Verification failed for plugin '${plugin.id}' after a fix attempt.`,
-    );
-  }
-
-  ctx.ui.succeed(
-    `Fixed ${plugin.id} (${reverification.detail ?? "now healthy"})`,
-  );
-}
-
-export async function installPlugins(
+export async function buildPlan(
   ctx: Context,
   allPlugins: AgemonPlugin[],
-  options: OrchestratorOptions,
-): Promise<void> {
+  options: BuildPlanOptions,
+): Promise<Plan> {
   const onlyIds = parseOnlyPluginIds(options.only);
   const plugins = resolvePluginOrder(allPlugins, onlyIds);
 
+  const operations: ProposedOperation[] = [];
+  for (const plugin of plugins) {
+    const pluginOperations = (await plugin.plan?.(ctx)) ?? [];
+    operations.push(...pluginOperations);
+  }
+
+  const desiredStateHash = resolveDesiredStateHash({
+    capabilityIds: plugins.map((plugin) => plugin.id),
+    skillGroups: ctx.skillGroupsOption ?? null,
+  });
+
+  return {
+    id: computePlanId({
+      agemonVersion: options.agemonVersion,
+      desiredStateHash,
+      operations,
+    }),
+    agemonVersion: options.agemonVersion,
+    desiredStateHash,
+    createdAt: new Date().toISOString(),
+    operations,
+  };
+}
+
+function reportSkippedOperations(
+  ctx: Context,
+  skipped: { operation: ProposedOperation; reason: string }[],
+): void {
+  for (const entry of skipped) {
+    ctx.ui.info(
+      `Skipped ${entry.operation.action} ${
+        entry.operation.targetPath || entry.operation.resourceId
+      } — ${entry.reason}`,
+    );
+  }
+}
+
+function reportSweepProblems(ctx: Context, problems: string[]): void {
+  for (const problem of problems) {
+    ctx.ui.info(`  - ${problem}`);
+  }
+}
+
+async function runPostApplySweep(
+  ctx: Context,
+  plugins: AgemonPlugin[],
+  appliedCapabilityIds: ReadonlySet<string>,
+): Promise<string[]> {
+  const problems: string[] = [];
+  for (const plugin of plugins) {
+    if (!appliedCapabilityIds.has(plugin.id)) {
+      continue;
+    }
+    const verification = await plugin.verify(ctx);
+    if (!verification.ok) {
+      problems.push(
+        `${plugin.id}: ${verification.detail ?? "verification failed"}`,
+      );
+    }
+  }
+  problems.push(...(await verifyManagedState(ctx, plugins)));
+  return problems;
+}
+
+async function persistDesiredStateConfig(
+  ctx: Context,
+  plugins: AgemonPlugin[],
+  conflictResolutions: ConflictResolution[],
+): Promise<void> {
+  const conflictDecisions: ConflictDecisionMap = {};
+  for (const resolution of conflictResolutions) {
+    conflictDecisions[resolution.resourceId] = resolution.decision;
+  }
+
+  const configPath = await writeConfig(ctx.cwd, {
+    capabilities: plugins
+      .map((plugin) => plugin.id)
+      .filter((id) => CORE_CAPABILITY_IDS.includes(id)),
+    skillGroups: ctx.skillGroupsOption ?? null,
+    conflictDecisions,
+  });
+
+  ctx.ui.info(
+    `Wrote ${relative(ctx.cwd, configPath)} — commit it so teammates and CI reconcile the same way.`,
+  );
+}
+
+async function removeDesiredStateConfig(ctx: Context): Promise<void> {
+  await rm(resolveConfigPath(ctx.cwd), { force: true });
+}
+
+async function previewAndStop(ctx: Context, plan: Plan): Promise<void> {
+  const planPath = await writePlan(ctx.cwd, plan);
+  ctx.log.log(renderPlan(plan));
+  ctx.log.log(`\nPlan written to ${relative(ctx.cwd, planPath)}`);
+  if (plan.operations.length > 0) {
+    ctx.log.log(
+      `Review, then re-run interactively or with --yes, or 'agemon apply --plan ${plan.id}'.`,
+    );
+  }
+}
+
+export async function reconcile(
+  ctx: Context,
+  allPlugins: AgemonPlugin[],
+  options: ReconcileOptions,
+): Promise<void> {
+  const plugins = resolvePluginOrder(
+    allPlugins,
+    parseOnlyPluginIds(options.only),
+  );
+
   if (plugins.length === 0) {
-    ctx.ui.info("Nothing to do — no plugins selected.");
+    ctx.ui.info("Nothing to do — no capabilities selected.");
     return;
   }
 
-  for (const plugin of plugins) {
-    ctx.ui.start(`Checking ${plugin.id}`);
-    const presence = await plugin.detect(ctx);
+  const plan =
+    options.plan ??
+    (await buildPlan(ctx, allPlugins, {
+      only: options.only,
+      agemonVersion: options.agemonVersion,
+    }));
 
-    if (presence.present) {
-      await reconcileExisting(ctx, plugin);
-      continue;
-    }
-
-    await installFresh(ctx, plugin);
+  const sessionCannotConsent = !ctx.yes && !isInteractiveTerminal();
+  const isFirstRun = options.persistConfig === true;
+  if (
+    ctx.dryRun ||
+    (plan.operations.length > 0 && sessionCannotConsent && isFirstRun)
+  ) {
+    await previewAndStop(ctx, plan);
+    return;
   }
 
-  await ensureAgemonGitignored(ctx.cwd, ctx.dryRun);
+  if (plan.operations.length === 0) {
+    const driftProblems = await verifyManagedState(ctx, plugins);
+    if (driftProblems.length > 0) {
+      ctx.ui.fail("Nothing to apply, but the environment has drifted:");
+      reportSweepProblems(ctx, driftProblems);
+      return;
+    }
+    if (options.persistConfig) {
+      await persistDesiredStateConfig(ctx, plugins, []);
+    }
+    ctx.ui.succeed(
+      "Nothing to do — every managed resource already matches the desired state.",
+    );
+    return;
+  }
+
+  const { isolation } = await discoverRepository(ctx);
+  const gates = buildConsentGates({
+    plan,
+    isolationStatus: isolation.status,
+  });
+  const approval = await ctx.consent(gates, {
+    conflictDecisions: options.conflictDecisions,
+  });
+
+  if (approval.approved.length === 0) {
+    ctx.log.log(
+      renderRunSummary({
+        kind: "declined",
+        skipped: approval.skipped.map((skip) => ({
+          label: skip.operation.targetPath || skip.operation.resourceId,
+          reason: skip.reason,
+        })),
+      }),
+    );
+    return;
+  }
+
+  let result: Awaited<ReturnType<typeof applyPlan>>;
+  try {
+    result = await applyPlan(ctx, allPlugins, {
+      plan,
+      approved: approval.approved,
+      workspaceIsolationApproved: approval.workspaceIsolationApproved,
+      isolationStatus: isolation.status,
+      allowUnignoredState: options.allowUnignoredState,
+    });
+  } catch (error) {
+    if (error instanceof ApplyRollbackError) {
+      ctx.log.log(renderRunSummary({ kind: "failure", ...error.rollback }));
+    }
+    throw error;
+  }
+
+  reportSkippedOperations(ctx, approval.skipped);
+
+  const appliedCapabilityIds = new Set(
+    result.applied.map((operation) => operation.capabilityId),
+  );
+  const sweepProblems = await runPostApplySweep(
+    ctx,
+    plugins,
+    appliedCapabilityIds,
+  );
+  if (sweepProblems.length > 0) {
+    ctx.log.log(
+      renderRunSummary({
+        kind: "partial",
+        appliedCount: result.applied.length,
+        problems: sweepProblems,
+      }),
+    );
+    return;
+  }
+
+  if (options.persistConfig) {
+    await persistDesiredStateConfig(ctx, plugins, approval.conflictResolutions);
+  }
+
+  ctx.log.log(
+    renderRunSummary({
+      kind: "success",
+      applied: result.applied,
+      nextSteps: buildNextSteps(options, isolation.trackedAgemonPaths),
+    }),
+  );
+}
+
+function buildNextSteps(
+  options: ReconcileOptions,
+  trackedAgemonPaths: string[],
+): string[] {
+  const steps: string[] = [];
+  if (options.persistConfig) {
+    steps.push("commit agemon.toml so teammates and CI reconcile the same way");
+  }
+  if (trackedAgemonPaths.length > 0) {
+    steps.push("git rm -r --cached .agemon to stop tracking regenerated state");
+  }
+  return steps;
 }
 
 export async function uninstallPlugins(
@@ -177,6 +357,10 @@ export async function uninstallPlugins(
     ctx.ui.start(`Uninstalling ${plugin.id}`);
     await plugin.uninstall(ctx);
     ctx.ui.succeed(`Uninstalled ${plugin.id}`);
+  }
+
+  if (onlyIds.length === 0) {
+    await removeDesiredStateConfig(ctx);
   }
 
   await ctx.manifest.pruneIfEmpty();

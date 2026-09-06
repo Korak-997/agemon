@@ -1,5 +1,3 @@
-import { readFile, writeFile } from "node:fs/promises";
-
 function startMarker(blockId: string): string {
   return `<!-- agemon:start:${blockId} -->`;
 }
@@ -87,51 +85,17 @@ export function removeManagedMarkdownBlock(
     return { nextContent: content, changed: false };
   }
 
-  const before = content.slice(0, range.start);
-  const after = content.slice(range.end);
+  const before = content.slice(0, range.start).replace(/\n+$/u, "");
+  const after = content.slice(range.end).replace(/^\n+/u, "");
 
-  let next = `${before}${after}`;
-  next = next.replace(/\n{3,}/gu, "\n\n");
-  if (next === "\n") {
-    next = "";
+  let next: string;
+  if (before.length === 0) {
+    next = after;
+  } else if (after.length === 0) {
+    next = `${before}\n`;
+  } else {
+    next = `${before}\n\n${after}`;
   }
 
   return { nextContent: next, changed: true };
-}
-
-async function readFileOrEmpty(filePath: string): Promise<string> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-export async function upsertManagedMarkdownBlockFile(
-  filePath: string,
-  blockId: string,
-  blockBody: string,
-): Promise<boolean> {
-  const content = await readFileOrEmpty(filePath);
-  const updated = upsertManagedMarkdownBlock(content, blockId, blockBody);
-  if (!updated.changed) {
-    return false;
-  }
-
-  await writeFile(filePath, updated.nextContent, "utf8");
-  return true;
-}
-
-export async function removeManagedMarkdownBlockFile(
-  filePath: string,
-  blockId: string,
-): Promise<boolean> {
-  const content = await readFileOrEmpty(filePath);
-  const updated = removeManagedMarkdownBlock(content, blockId);
-  if (!updated.changed) {
-    return false;
-  }
-
-  await writeFile(filePath, updated.nextContent, "utf8");
-  return true;
 }

@@ -2,10 +2,14 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "../../core/context.js";
+import type { LedgerEntry } from "../../core/state-manifest.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 import {
   SKILL_GROUPS,
@@ -39,11 +43,6 @@ function flattenSkills(groups: SkillGroup[]): SkillBundleEntry[] {
   return groups.flatMap((group) => group.skills);
 }
 
-/**
- * Which groups this repo has already engaged with, derived from the
- * manifest rather than re-asked — a group counts as "recorded" once any one
- * of its skills has a managed or preexisting record.
- */
 function getRecordedGroups(ctx: Context): SkillGroup[] {
   const recordedSkillNames = new Set(
     getPluginActions(ctx).map((action) => action.target),
@@ -166,6 +165,95 @@ async function detectSkills(ctx: Context): Promise<PluginPresence> {
   return { present: true, preExisting: true };
 }
 
+async function describeSkillsState(
+  ctx: Context,
+): Promise<CapabilityStateRow[]> {
+  const recordedGroups = getRecordedGroups(ctx);
+  if (recordedGroups.length === 0) {
+    return [
+      {
+        capabilityId: PLUGIN_ID,
+        resourceId: "skill-groups:none",
+        label: "skill groups",
+        state: "absent",
+        detail: null,
+      },
+    ];
+  }
+
+  let installedSkillNames: Set<string>;
+  try {
+    installedSkillNames = await listInstalledSkillNames(ctx);
+  } catch (error) {
+    const detail =
+      error instanceof Error ? error.message : "npx skills list failed";
+    return recordedGroups.map((group) => ({
+      capabilityId: PLUGIN_ID,
+      resourceId: `skill-group:${group.id}`,
+      label: group.label,
+      state: "unknown" as const,
+      detail,
+    }));
+  }
+
+  return recordedGroups.map((group): CapabilityStateRow => {
+    const resourceId = `skill-group:${group.id}`;
+    const installedCount = group.skills.filter((skill) =>
+      installedSkillNames.has(skill.skillName),
+    ).length;
+
+    if (installedCount < group.skills.length) {
+      return {
+        capabilityId: PLUGIN_ID,
+        resourceId,
+        label: group.label,
+        state: "absent",
+        detail: `${installedCount}/${group.skills.length} skills installed`,
+      };
+    }
+
+    const allManaged = group.skills.every((skill) =>
+      hasManagedInstallRecord(ctx, skill.skillName),
+    );
+    return {
+      capabilityId: PLUGIN_ID,
+      resourceId,
+      label: group.label,
+      state: allManaged ? "present-managed" : "present-adopted",
+      detail: `${group.skills.length} skill(s)`,
+    };
+  });
+}
+
+async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
+  const recordedGroups = getRecordedGroups(ctx);
+  if (recordedGroups.length > 0) {
+    const recordedEntries = flattenSkills(recordedGroups);
+    const installedSkillNames = await listInstalledSkillNames(ctx);
+    const allRecordedSkillsPresent = recordedEntries.every((entry) =>
+      installedSkillNames.has(entry.skillName),
+    );
+    if (allRecordedSkillsPresent) {
+      return [];
+    }
+  }
+
+  return [
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: "skill-groups:configured",
+      targetPath: "",
+      action: "install-package",
+      riskClass: "executes",
+      requiresConsent: true,
+      preview: {
+        kind: "note",
+        text: "add the configured skill groups via 'npx skills add'",
+      },
+    }),
+  ];
+}
+
 async function installSkills(ctx: Context): Promise<void> {
   const groupsToInstall = await resolveGroupsForFreshInstall(
     ctx,
@@ -269,13 +357,21 @@ async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
   };
 }
 
-async function uninstallSkills(ctx: Context): Promise<void> {
-  const managedActions = getPluginActions(ctx).filter(
+async function revertSkills(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
+  const managedActions = entries.filter(
     (action) =>
       action.type === ACTION_TYPE_INSTALLED_SKILL &&
       action.preExisting === false,
   );
-  const shouldRemoveManagedSkillsLock = hasManagedSkillsLockRecord(ctx);
+  const shouldRemoveManagedSkillsLock = entries.some(
+    (action) =>
+      action.type === ACTION_TYPE_GENERATED_SKILLS_LOCK &&
+      action.target === SKILLS_LOCK_FILE &&
+      action.preExisting === false,
+  );
 
   if (ctx.dryRun) {
     if (managedActions.length === 0) {
@@ -318,14 +414,21 @@ async function uninstallSkills(ctx: Context): Promise<void> {
   if (shouldRemoveManagedSkillsLock) {
     await rm(getSkillsLockPath(ctx.cwd), { force: true });
   }
+}
 
+async function uninstallSkills(ctx: Context): Promise<void> {
+  await revertSkills(ctx, getPluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
 export const skillsPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  riskClass: "executes",
   detect: detectSkills,
+  describeState: describeSkillsState,
+  plan: planSkills,
   install: installSkills,
   verify: verifySkills,
+  revert: revertSkills,
   uninstall: uninstallSkills,
 };

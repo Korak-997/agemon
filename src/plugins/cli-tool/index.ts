@@ -1,8 +1,12 @@
 import type { Context } from "../../core/context.js";
+import type { LedgerEntry } from "../../core/state-manifest.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 import { CLI_TOOL_BUNDLE, type CliToolBundleEntry } from "./catalog.js";
 
@@ -91,6 +95,62 @@ async function detectCliTools(ctx: Context): Promise<PluginPresence> {
   return { present: true, preExisting: true };
 }
 
+async function describeCliToolsState(
+  ctx: Context,
+): Promise<CapabilityStateRow[]> {
+  return Promise.all(
+    CLI_TOOL_BUNDLE.map(async (entry): Promise<CapabilityStateRow> => {
+      const available = await isToolBinaryAvailable(ctx, entry);
+      const resourceId = `package:${entry.id}`;
+
+      if (!available) {
+        return {
+          capabilityId: PLUGIN_ID,
+          resourceId,
+          label: entry.binaryName,
+          state: "absent",
+          detail: null,
+        };
+      }
+
+      const managed = hasManagedInstallRecord(ctx, entry.id);
+      return {
+        capabilityId: PLUGIN_ID,
+        resourceId,
+        label: entry.binaryName,
+        state: managed ? "present-managed" : "present-adopted",
+        detail: managed
+          ? `installed via npm (${entry.packageName})`
+          : "pre-existing install",
+      };
+    }),
+  );
+}
+
+async function planCliTools(ctx: Context): Promise<ProposedOperation[]> {
+  const missingEntries: CliToolBundleEntry[] = [];
+  for (const entry of CLI_TOOL_BUNDLE) {
+    if (!(await isToolBinaryAvailable(ctx, entry))) {
+      missingEntries.push(entry);
+    }
+  }
+
+  return missingEntries.map((entry) =>
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: `package:${entry.id}`,
+      targetPath: entry.packageName,
+      action: "install-package",
+      riskClass: "executes",
+      requiresConsent: true,
+      preview: {
+        kind: "note",
+        text: `npm install --global ${entry.packageName}`,
+      },
+    }),
+  );
+}
+
 async function installCliTools(ctx: Context): Promise<void> {
   if (ctx.dryRun) {
     for (const entry of CLI_TOOL_BUNDLE) {
@@ -162,8 +222,11 @@ async function verifyCliTools(ctx: Context): Promise<PluginVerificationResult> {
   };
 }
 
-async function uninstallCliTools(ctx: Context): Promise<void> {
-  const managedActions = getPluginActions(ctx).filter(
+async function revertCliTools(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
+  const managedActions = entries.filter(
     (action) =>
       action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
       action.preExisting === false,
@@ -204,14 +267,21 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
       );
     }
   }
+}
 
+async function uninstallCliTools(ctx: Context): Promise<void> {
+  await revertCliTools(ctx, getPluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
 export const cliToolPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  riskClass: "executes",
   detect: detectCliTools,
+  describeState: describeCliToolsState,
+  plan: planCliTools,
   install: installCliTools,
   verify: verifyCliTools,
+  revert: revertCliTools,
   uninstall: uninstallCliTools,
 };

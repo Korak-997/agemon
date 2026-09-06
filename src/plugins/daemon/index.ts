@@ -1,9 +1,13 @@
 import { basename } from "node:path";
 import type { Context } from "../../core/context.js";
+import type { LedgerEntry } from "../../core/state-manifest.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 
 const PLUGIN_ID = "daemon";
@@ -25,12 +29,6 @@ function slugifyForUnitName(raw: string): string {
   return (normalized || "repo").slice(0, UNIT_NAME_MAX_SLUG_LENGTH);
 }
 
-/**
- * The unit is named after the repo (or plain directory, outside a git repo)
- * agemon is running in — a single fixed unit name would collide across
- * every project on the machine, with the daemon registered last silently
- * overwriting and restarting every other project's unit file.
- */
 async function resolveUnitName(ctx: Context): Promise<string> {
   const gitToplevel = await ctx.run("git", ["rev-parse", "--show-toplevel"], {
     timeoutMs: GIT_TOPLEVEL_TIMEOUT_MS,
@@ -59,13 +57,6 @@ function getHardeningDirectives(profile: HardeningProfile): string[] {
   ];
 }
 
-/**
- * `systemd --user` runs services with its own manager environment, not the
- * interactive shell's — it does not inherit PATH entries like `~/.local/bin`,
- * where pipx/uv install `code-review-graph`. Baking in the absolute path
- * (rather than trusting ExecStart's own PATH lookup) keeps the unit working
- * regardless of what systemd's manager environment does or doesn't include.
- */
 async function resolveCrgExecutablePath(ctx: Context): Promise<string> {
   const which = await ctx.run("which", [CRG_COMMAND], {
     timeoutMs: WHICH_TIMEOUT_MS,
@@ -126,14 +117,6 @@ function hasPreexistingServiceRecord(ctx: Context): boolean {
   );
 }
 
-function enabledLingerByAgemon(ctx: Context): boolean {
-  return getPluginActions(ctx).some(
-    (action) =>
-      action.type === ACTION_TYPE_ENABLED_LINGER &&
-      action.preExisting === false,
-  );
-}
-
 async function detectDaemon(ctx: Context): Promise<PluginPresence> {
   const unitName = await resolveUnitName(ctx);
   const status = await ctx.serviceManager.isActive(unitName);
@@ -155,6 +138,60 @@ async function detectDaemon(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function describeDaemonState(
+  ctx: Context,
+): Promise<CapabilityStateRow[]> {
+  const unitName = await resolveUnitName(ctx);
+  const status = await ctx.serviceManager.isActive(unitName);
+  const resourceId = `service-unit:${unitName}`;
+
+  if (!status.active) {
+    return [
+      {
+        capabilityId: PLUGIN_ID,
+        resourceId,
+        label: unitName,
+        state: "absent",
+        detail: null,
+      },
+    ];
+  }
+
+  const managed = hasManagedServiceRegistration(ctx);
+  return [
+    {
+      capabilityId: PLUGIN_ID,
+      resourceId,
+      label: unitName,
+      state: managed ? "present-managed" : "present-adopted",
+      detail: managed ? "registered by agemon" : "pre-existing unit",
+    },
+  ];
+}
+
+async function planDaemon(ctx: Context): Promise<ProposedOperation[]> {
+  const unitName = await resolveUnitName(ctx);
+  const status = await ctx.serviceManager.isActive(unitName);
+  if (status.active) {
+    return [];
+  }
+
+  return [
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: `service-unit:${unitName}`,
+      targetPath: unitName,
+      action: "register-service",
+      riskClass: "executes",
+      requiresConsent: true,
+      preview: {
+        kind: "note",
+        text: `register systemd --user unit ${unitName} to keep the code graph fresh`,
+      },
+    }),
+  ];
 }
 
 async function installDaemon(ctx: Context): Promise<void> {
@@ -224,14 +261,34 @@ async function verifyDaemon(ctx: Context): Promise<PluginVerificationResult> {
   return { ok: true, detail: `${unitName} active` };
 }
 
-async function uninstallDaemon(ctx: Context): Promise<void> {
+function entriesHaveManagedServiceRegistration(
+  entries: LedgerEntry[],
+): boolean {
+  return entries.some(
+    (entry) =>
+      entry.type === ACTION_TYPE_REGISTERED_SERVICE &&
+      entry.preExisting === false,
+  );
+}
+
+function entriesEnabledLingerByAgemon(entries: LedgerEntry[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry.type === ACTION_TYPE_ENABLED_LINGER && entry.preExisting === false,
+  );
+}
+
+async function revertDaemon(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
   const unitName = await resolveUnitName(ctx);
-  const managedService = hasManagedServiceRegistration(ctx);
+  const managedService = entriesHaveManagedServiceRegistration(entries);
 
   if (ctx.dryRun) {
     if (managedService) {
       ctx.ui.info(`Would unregister user service ${unitName}`);
-      if (enabledLingerByAgemon(ctx)) {
+      if (entriesEnabledLingerByAgemon(entries)) {
         ctx.ui.info("Would disable user linger because agemon enabled it");
       }
     } else {
@@ -243,18 +300,25 @@ async function uninstallDaemon(ctx: Context): Promise<void> {
   if (managedService) {
     await ctx.serviceManager.unregisterAutostart({
       unitName,
-      disableLinger: enabledLingerByAgemon(ctx),
+      disableLinger: entriesEnabledLingerByAgemon(entries),
     });
   }
+}
 
+async function uninstallDaemon(ctx: Context): Promise<void> {
+  await revertDaemon(ctx, getPluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
 export const daemonPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   dependsOn: ["crg"],
+  riskClass: "executes",
   detect: detectDaemon,
+  describeState: describeDaemonState,
+  plan: planDaemon,
   install: installDaemon,
   verify: verifyDaemon,
+  revert: revertDaemon,
   uninstall: uninstallDaemon,
 };

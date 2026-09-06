@@ -18,16 +18,50 @@ export async function promptYesNo(message: string): Promise<boolean> {
   }
 }
 
+export type GateReply = "approve" | "decline" | "show-diff";
+
+export async function promptGate(message: string): Promise<GateReply> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(`${message} [y/N/d] `))
+      .trim()
+      .toLowerCase();
+    if (answer === "y" || answer === "yes") {
+      return "approve";
+    }
+    if (answer === "d" || answer === "diff") {
+      return "show-diff";
+    }
+    return "decline";
+  } finally {
+    rl.close();
+  }
+}
+
+export type ConflictReply = "keep-mine" | "show-theirs" | "skip";
+
+export async function promptConflict(message: string): Promise<ConflictReply> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(`${message} [keep/show/Skip] `))
+      .trim()
+      .toLowerCase();
+    if (answer === "keep" || answer === "k") {
+      return "keep-mine";
+    }
+    if (answer === "show" || answer === "s") {
+      return "show-theirs";
+    }
+    return "skip";
+  } finally {
+    rl.close();
+  }
+}
+
 export interface CreateConfirmerInput {
   yes: boolean;
 }
 
-/**
- * Builds the single confirmation policy shared by anything that needs to ask
- * "are you sure" mid-run: `--yes` always proceeds without asking, a
- * non-interactive session always declines (there is no one to ask), and an
- * interactive session gets a real y/N prompt.
- */
 export function createConfirmer(
   input: CreateConfirmerInput,
 ): (message: string) => Promise<boolean> {

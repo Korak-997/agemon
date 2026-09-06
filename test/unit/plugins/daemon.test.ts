@@ -105,6 +105,12 @@ async function createTestContext(options: {
     dryRun: false,
     yes: true,
     confirm: async () => true,
+    consent: async () => ({
+      approved: [],
+      skipped: [],
+      workspaceIsolationApproved: null,
+      conflictResolutions: [],
+    }),
     log: console,
     ui: createNoOpUi(),
     run: createGitAwareRun(options.gitToplevel, crgExecutablePath),

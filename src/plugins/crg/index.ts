@@ -1,8 +1,12 @@
 import type { Context } from "../../core/context.js";
+import type { LedgerEntry } from "../../core/state-manifest.js";
+import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
+  ProposedOperation,
 } from "../types.js";
 
 const PLUGIN_ID = "crg";
@@ -67,6 +71,60 @@ async function detectCrgPresence(ctx: Context): Promise<PluginPresence> {
   return { present: true, preExisting: true };
 }
 
+async function describeCrgState(ctx: Context): Promise<CapabilityStateRow[]> {
+  const versionCheck = await ctx.run("code-review-graph", ["--version"], {
+    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
+  });
+  const resourceId = `package:${PACKAGE_NAME}`;
+
+  if (versionCheck.code !== 0) {
+    return [
+      {
+        capabilityId: PLUGIN_ID,
+        resourceId,
+        label: PACKAGE_NAME,
+        state: "absent",
+        detail: null,
+      },
+    ];
+  }
+
+  const managed = hasManagedInstall(ctx);
+  return [
+    {
+      capabilityId: PLUGIN_ID,
+      resourceId,
+      label: PACKAGE_NAME,
+      state: managed ? "present-managed" : "present-adopted",
+      detail: managed ? "installed via pipx" : "pre-existing install",
+    },
+  ];
+}
+
+async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
+  const versionCheck = await ctx.run("code-review-graph", ["--version"], {
+    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
+  });
+  if (versionCheck.code === 0) {
+    return [];
+  }
+
+  return [
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: `package:${PACKAGE_NAME}`,
+      targetPath: PACKAGE_NAME,
+      action: "install-package",
+      riskClass: "executes",
+      requiresConsent: true,
+      preview: {
+        kind: "note",
+        text: `pipx install ${PACKAGE_NAME}; build the code graph for this repository`,
+      },
+    }),
+  ];
+}
+
 async function installCrg(ctx: Context): Promise<void> {
   if (ctx.dryRun) {
     ctx.ui.info(`Would install ${PACKAGE_NAME} via pipx`);
@@ -123,8 +181,16 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
   return { ok: true, detail: "status command passed" };
 }
 
-async function uninstallCrg(ctx: Context): Promise<void> {
-  const managedInstall = hasManagedInstall(ctx);
+function entriesHaveManagedInstall(entries: LedgerEntry[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry.type === ACTION_TYPE_INSTALLED_BINARY &&
+      entry.preExisting === false,
+  );
+}
+
+async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
+  const managedInstall = entriesHaveManagedInstall(entries);
 
   if (ctx.dryRun) {
     if (managedInstall) {
@@ -135,24 +201,33 @@ async function uninstallCrg(ctx: Context): Promise<void> {
     return;
   }
 
-  if (managedInstall) {
-    const uninstallResult = await ctx.run("pipx", ["uninstall", PACKAGE_NAME], {
-      timeoutMs: UNINSTALL_TIMEOUT_MS,
-    });
-    if (uninstallResult.code !== 0) {
-      throw new Error(
-        uninstallResult.stderr || `pipx uninstall failed for ${PACKAGE_NAME}`,
-      );
-    }
+  if (!managedInstall) {
+    return;
   }
 
+  const uninstallResult = await ctx.run("pipx", ["uninstall", PACKAGE_NAME], {
+    timeoutMs: UNINSTALL_TIMEOUT_MS,
+  });
+  if (uninstallResult.code !== 0) {
+    throw new Error(
+      uninstallResult.stderr || `pipx uninstall failed for ${PACKAGE_NAME}`,
+    );
+  }
+}
+
+async function uninstallCrg(ctx: Context): Promise<void> {
+  await revertCrg(ctx, getPluginActions(ctx));
   await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
 export const crgPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  riskClass: "executes",
   detect: detectCrgPresence,
+  describeState: describeCrgState,
+  plan: planCrg,
   install: installCrg,
   verify: verifyCrg,
+  revert: revertCrg,
   uninstall: uninstallCrg,
 };

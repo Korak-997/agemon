@@ -2,12 +2,11 @@ import { cliToolPlugin } from "./cli-tool/index.js";
 import { crgPlugin } from "./crg/index.js";
 import { daemonPlugin } from "./daemon/index.js";
 import { masterPromptPlugin } from "./master-prompt/index.js";
-import { patcherCheckpointPlugin } from "./patcher-checkpoint.js";
 import { skillsPlugin } from "./skills/index.js";
 import { testPlugin } from "./test-plugin.js";
 import type { AgemonPlugin } from "./types.js";
 
-const corePluginOrder: AgemonPlugin[] = [
+const capabilityRegistry: AgemonPlugin[] = [
   crgPlugin,
   daemonPlugin,
   skillsPlugin,
@@ -15,8 +14,12 @@ const corePluginOrder: AgemonPlugin[] = [
   masterPromptPlugin,
 ];
 
+export const CORE_CAPABILITY_IDS: string[] = capabilityRegistry.map(
+  (plugin) => plugin.id,
+);
+
 export function getRegisteredPlugins(): AgemonPlugin[] {
   const devOnlyPlugins: AgemonPlugin[] =
-    process.env.AGEMON_DEV === "1" ? [testPlugin, patcherCheckpointPlugin] : [];
-  return [...corePluginOrder, ...devOnlyPlugins];
+    process.env.AGEMON_DEV === "1" ? [testPlugin] : [];
+  return [...capabilityRegistry, ...devOnlyPlugins];
 }

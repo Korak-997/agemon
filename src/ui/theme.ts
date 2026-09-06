@@ -9,11 +9,33 @@ function colors() {
   return pc.createColors(colorsEnabled());
 }
 
+export type Tone = "ok" | "warn" | "danger" | "accent" | "dim" | "neutral";
+
 export const theme = {
-  success: (text: string) => colors().green(text),
+  heading: (text: string) => colors().bold(text),
+  dim: (text: string) => colors().gray(text),
+  accent: (text: string) => colors().cyan(text),
+  ok: (text: string) => colors().green(text),
   warn: (text: string) => colors().yellow(text),
-  error: (text: string) => colors().red(text),
-  info: (text: string) => colors().cyan(text),
-  muted: (text: string) => colors().gray(text),
-  bold: (text: string) => colors().bold(text),
+  danger: (text: string) => colors().red(text),
+  added: (text: string) => colors().green(text),
+  removed: (text: string) => colors().red(text),
+  inverse: (text: string) => colors().inverse(text),
 };
+
+export function paintTone(tone: Tone, text: string): string {
+  switch (tone) {
+    case "ok":
+      return theme.ok(text);
+    case "warn":
+      return theme.warn(text);
+    case "danger":
+      return theme.danger(text);
+    case "accent":
+      return theme.accent(text);
+    case "dim":
+      return theme.dim(text);
+    case "neutral":
+      return text;
+  }
+}

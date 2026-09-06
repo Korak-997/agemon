@@ -1,22 +1,29 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
+import { type AgemonConfig, loadConfig } from "../core/config.js";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
-import { installPlugins, uninstallPlugins } from "../core/orchestrator.js";
+import {
+  buildPlan,
+  reconcile,
+  uninstallPlugins,
+} from "../core/orchestrator.js";
+import { readPlan, writePlan } from "../core/plan-store.js";
 import { checkForUpdate } from "../core/update-check.js";
+import { runInspect } from "../inspect/index.js";
+import { runStatus } from "../inspect/status.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
+import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
-import { createStepSpinner } from "../ui/spinner.js";
-import { theme } from "../ui/theme.js";
+import { box } from "../ui/box.js";
+import { renderPlan } from "../ui/plan-view.js";
+import { createStepSpinner, type StepSpinner } from "../ui/spinner.js";
+import { symbol } from "../ui/symbols.js";
 
 const PACKAGE_JSON_SEARCH_DEPTH = 5;
 
-// This file's own directory differs between dev (src/cli/index.ts, run via
-// tsx) and the built/installed layout (dist/index.js, one level closer to
-// the package root) — walk up until the nearest package.json is found
-// rather than hardcoding a relative path that would only match one of them.
 function resolvePackageVersion(): string {
   let currentDir = dirname(fileURLToPath(import.meta.url));
   for (let depth = 0; depth < PACKAGE_JSON_SEARCH_DEPTH; depth += 1) {
@@ -42,6 +49,118 @@ interface CliOptions {
   only?: string;
   skipDaemon?: boolean;
   skillGroups?: string;
+  json?: boolean;
+  allowUnignoredState?: boolean;
+  plan?: string;
+  quiet?: boolean;
+}
+
+const SILENT_SPINNER: StepSpinner = {
+  start() {},
+  succeed() {},
+  fail() {},
+  info() {},
+};
+
+function selectSpinner(options: CliOptions): StepSpinner {
+  return options.quiet ? SILENT_SPINNER : createStepSpinner();
+}
+
+const ERROR_HINTS: { match: RegExp; hint: string }[] = [
+  {
+    match: /is stale/,
+    hint: "run 'agemon plan' to refresh, then 'agemon apply'.",
+  },
+  {
+    match: /not git-ignored|isolation/i,
+    hint: "add /.agemon/ to .gitignore, or re-run interactively or with --yes.",
+  },
+];
+
+function renderCliError(message: string): string {
+  const hint = ERROR_HINTS.find((entry) => entry.match.test(message))?.hint;
+  const lines = [
+    `${symbol("fail")} ${message}`,
+    ...(hint ? [`${symbol("arrow")} ${hint}`] : []),
+  ];
+  return box({ body: lines.join("\n"), tone: "danger" });
+}
+
+function selectPlugins(options: CliOptions): AgemonPlugin[] {
+  return getRegisteredPlugins().filter(
+    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+  );
+}
+
+interface DesiredStateDefaults {
+  config: AgemonConfig | null;
+  only: string | undefined;
+  skillGroups: string | undefined;
+}
+
+async function resolveDesiredStateDefaults(
+  options: CliOptions,
+  availablePlugins: AgemonPlugin[],
+): Promise<DesiredStateDefaults> {
+  const config = await loadConfig(process.cwd());
+
+  let only = options.only;
+  if (!only && config) {
+    const availableIds = new Set(availablePlugins.map((plugin) => plugin.id));
+    const configuredIds = config.capabilities.filter((id) =>
+      availableIds.has(id),
+    );
+    only = configuredIds.length > 0 ? configuredIds.join(",") : undefined;
+  }
+
+  return {
+    config,
+    only,
+    skillGroups: options.skillGroups ?? config?.skillGroups ?? undefined,
+  };
+}
+
+async function runInspectCommand(options: CliOptions): Promise<void> {
+  const context = await createContext({
+    dryRun: false,
+    yes: Boolean(options.yes),
+    ui: SILENT_SPINNER,
+  });
+
+  await runInspect(context, { json: Boolean(options.json) });
+}
+
+async function runStatusCommand(options: CliOptions): Promise<void> {
+  const context = await createContext({
+    dryRun: false,
+    yes: Boolean(options.yes),
+    ui: SILENT_SPINNER,
+  });
+
+  await runStatus(context, getRegisteredPlugins());
+}
+
+async function runPlanCommand(options: CliOptions): Promise<void> {
+  const plugins = selectPlugins(options);
+  const { only, skillGroups } = await resolveDesiredStateDefaults(
+    options,
+    plugins,
+  );
+  const context = await createContext({
+    dryRun: true,
+    yes: Boolean(options.yes),
+    ui: SILENT_SPINNER,
+    skillGroups,
+  });
+
+  const plan = await buildPlan(context, plugins, {
+    only,
+    agemonVersion: VERSION,
+  });
+  const planPath = await writePlan(context.cwd, plan);
+
+  context.log.log(renderPlan(plan));
+  context.log.log(`\nPlan written to ${relative(context.cwd, planPath)}`);
 }
 
 async function runInstall(options: CliOptions): Promise<void> {
@@ -53,18 +172,62 @@ async function runInstall(options: CliOptions): Promise<void> {
     return;
   }
 
-  const spinner = createStepSpinner();
-  const plugins = getRegisteredPlugins().filter(
-    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+  const spinner = selectSpinner(options);
+  const plugins = selectPlugins(options);
+  const { config, only, skillGroups } = await resolveDesiredStateDefaults(
+    options,
+    plugins,
   );
   const context = await createContext({
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: spinner,
-    skillGroups: options.skillGroups,
+    skillGroups,
   });
 
-  await installPlugins(context, plugins, { only: options.only });
+  await reconcile(context, plugins, {
+    only,
+    agemonVersion: VERSION,
+    allowUnignoredState: Boolean(options.allowUnignoredState),
+    conflictDecisions: config?.conflictDecisions,
+    persistConfig: config === null,
+  });
+}
+
+async function runApply(options: CliOptions): Promise<void> {
+  const didUpdate = await checkForUpdate({
+    currentVersion: VERSION,
+    dryRun: false,
+  });
+  if (didUpdate) {
+    return;
+  }
+
+  const spinner = selectSpinner(options);
+  const plugins = selectPlugins(options);
+  const { config, only, skillGroups } = await resolveDesiredStateDefaults(
+    options,
+    plugins,
+  );
+  const context = await createContext({
+    dryRun: false,
+    yes: Boolean(options.yes),
+    ui: spinner,
+    skillGroups,
+  });
+
+  const plan = options.plan
+    ? await readPlan(context.cwd, options.plan)
+    : undefined;
+
+  await reconcile(context, plugins, {
+    only,
+    agemonVersion: VERSION,
+    allowUnignoredState: Boolean(options.allowUnignoredState),
+    plan,
+    conflictDecisions: config?.conflictDecisions,
+    persistConfig: config === null,
+  });
 }
 
 async function runNuke(options: CliOptions): Promise<void> {
@@ -76,7 +239,7 @@ async function runNuke(options: CliOptions): Promise<void> {
     return;
   }
 
-  const spinner = createStepSpinner();
+  const spinner = selectSpinner(options);
   const plugins = getRegisteredPlugins();
   const context = await createContext({
     dryRun: Boolean(options.dryRun),
@@ -97,6 +260,10 @@ function createProgram(): Command {
     .option("--dry-run", "narrate actions without making changes")
     .option("--yes", "skip confirmation prompts")
     .option("--skip-daemon", "skip daemon registration")
+    .option(
+      "--allow-unignored-state",
+      "let apply write .agemon/ state even when it cannot be git-ignored (discouraged)",
+    )
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
     .option(
       "--skill-groups <groups>",
@@ -112,6 +279,54 @@ function createProgram(): Command {
       }
     })
     .action((options: CliOptions) => runInstall(options));
+
+  program
+    .command("inspect")
+    .description(
+      "Read-only inventory + eight-state classification + duplication report",
+    )
+    .option("--json", "emit the redacted JSON report instead of a table")
+    .action((_options: CliOptions, command: Command) =>
+      runInspectCommand({ ...command.parent?.opts(), ...command.opts() }),
+    );
+
+  program
+    .command("status")
+    .description(
+      "Post-install health + drift summary from the provenance ledger",
+    )
+    .action((_options: CliOptions, command: Command) =>
+      runStatusCommand({ ...command.parent?.opts(), ...command.opts() }),
+    );
+
+  program
+    .command("plan")
+    .description(
+      "Deterministic, fingerprinted proposed-operation set written to .agemon/plans/",
+    )
+    .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .option(
+      "--skill-groups <groups>",
+      "comma-separated skill group ids to install, or 'all'/'none'",
+    )
+    .action((_options: CliOptions, command: Command) =>
+      runPlanCommand({ ...command.parent?.opts(), ...command.opts() }),
+    );
+
+  program
+    .command("apply")
+    .description("Run a confirmed plan transactionally")
+    .option("--plan <id>", "apply a specific persisted plan id")
+    .option("--yes", "skip confirmation prompts")
+    .option("--skip-daemon", "skip daemon registration")
+    .option(
+      "--allow-unignored-state",
+      "write .agemon/ state even when it cannot be git-ignored (discouraged)",
+    )
+    .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .action((_options: CliOptions, command: Command) =>
+      runApply({ ...command.parent?.opts(), ...command.opts() }),
+    );
 
   program
     .command("nuke")
@@ -140,7 +355,7 @@ export async function runCli(argv: string[]): Promise<number> {
       return error.exitCode;
     }
     console.error(
-      theme.error(error instanceof Error ? error.message : String(error)),
+      renderCliError(error instanceof Error ? error.message : String(error)),
     );
     return 1;
   }

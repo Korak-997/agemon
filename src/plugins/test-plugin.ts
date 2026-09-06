@@ -2,11 +2,15 @@ import type { AgemonPlugin } from "./types.js";
 
 export const testPlugin: AgemonPlugin = {
   id: "test-plugin",
+  riskClass: "inert",
   async detect(ctx) {
     return {
       present: ctx.manifest.hasActionForPlugin("test-plugin"),
       preExisting: false,
     };
+  },
+  async plan() {
+    return [];
   },
   async install(ctx) {
     if (ctx.dryRun) {

@@ -113,13 +113,6 @@ export interface UpdateCheckInput {
   dryRun: boolean;
 }
 
-/**
- * Checks for a newer agemon release and, if the user opts in, installs it
- * in place via the same installer documented in the README. Returns true
- * when an update was installed — the caller should stop and let the user
- * re-run their command against the new version rather than continue with
- * code that's already been replaced on disk.
- */
 export async function checkForUpdate(
   input: UpdateCheckInput,
 ): Promise<boolean> {
@@ -140,7 +133,7 @@ export async function checkForUpdate(
   const updateNotice = `A new version of agemon is available: ${input.currentVersion} -> ${latestVersion}.`;
 
   if (!isInteractive) {
-    console.log(theme.info(`${updateNotice} Run the installer to upgrade.`));
+    console.log(theme.accent(`${updateNotice} Run the installer to upgrade.`));
     return false;
   }
 
@@ -149,11 +142,11 @@ export async function checkForUpdate(
     return false;
   }
 
-  console.log(theme.info("Updating agemon..."));
+  console.log(theme.accent("Updating agemon..."));
   const updated = runInstaller();
   if (!updated) {
     console.error(
-      theme.error(
+      theme.danger(
         `Automatic update failed. Run it yourself: curl -fsSL ${INSTALL_SCRIPT_URL} | sh`,
       ),
     );
@@ -161,9 +154,7 @@ export async function checkForUpdate(
   }
 
   console.log(
-    theme.success(
-      `Updated to ${latestVersion}. Re-run your command to use it.`,
-    ),
+    theme.ok(`Updated to ${latestVersion}. Re-run your command to use it.`),
   );
   return true;
 }
