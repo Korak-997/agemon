@@ -1,8 +1,9 @@
 import type { Context } from "../core/context.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
-import type { AgemonPlugin } from "../plugins/types.js";
+import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
 import { renderTable } from "../ui/table.js";
+import { collectCapabilityStates } from "./capabilities.js";
 import { type ClassifiedResource, classifyResources } from "./classify.js";
 import { discoverRepository } from "./discover.js";
 import { type DuplicationReport, detectDuplication } from "./duplication.js";
@@ -25,10 +26,18 @@ export interface RedactedStructuredConfig {
 export interface InspectReport {
   isolation: { status: string; trackedAgemonPaths: string[] };
   resources: ClassifiedResource[];
+  capabilities: CapabilityStateRow[];
   structuredConfig: RedactedStructuredConfig[];
   binaries: { name: string; present: boolean }[];
   duplication: DuplicationReport;
 }
+
+const CAPABILITY_STATE_LABELS: Record<CapabilityStateRow["state"], string> = {
+  "present-managed": "present (managed)",
+  "present-adopted": "present (adopted)",
+  absent: "absent",
+  unknown: "unknown",
+};
 
 export async function inspectRepository(
   ctx: Context,
@@ -40,6 +49,7 @@ export async function inspectRepository(
     ctx.manifest.getActions(),
     (resourceId) => resolveCurrentDesiredRevision(plugins, ctx, resourceId),
   );
+  const capabilities = await collectCapabilityStates(ctx, plugins);
 
   const structuredConfig: RedactedStructuredConfig[] =
     discovery.structuredConfigs.map((resource) => {
@@ -93,6 +103,7 @@ export async function inspectRepository(
       trackedAgemonPaths: discovery.isolation.trackedAgemonPaths,
     },
     resources,
+    capabilities,
     structuredConfig,
     binaries: discovery.binaries.map((binary) => ({
       name: binary.name,
@@ -125,6 +136,24 @@ function renderInspectReport(report: InspectReport): string {
       ]),
     ]),
   );
+  sections.push("");
+
+  sections.push("Capabilities");
+  if (report.capabilities.length === 0) {
+    sections.push("  no capabilities report state in this repo");
+  } else {
+    sections.push(
+      renderTable([
+        ["CAPABILITY", "RESOURCE", "STATE", "DETAIL"],
+        ...report.capabilities.map((row) => [
+          row.capabilityId,
+          row.resourceId,
+          CAPABILITY_STATE_LABELS[row.state],
+          row.detail ?? "",
+        ]),
+      ]),
+    );
+  }
   sections.push("");
 
   sections.push("Structured config");

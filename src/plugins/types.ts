@@ -48,12 +48,27 @@ export interface StagedFile {
   kind: StagedFileKind;
 }
 
+export type CapabilityState =
+  | "present-managed"
+  | "present-adopted"
+  | "absent"
+  | "unknown";
+
+export interface CapabilityStateRow {
+  capabilityId: string;
+  resourceId: string;
+  label: string;
+  state: CapabilityState;
+  detail: string | null;
+}
+
 export interface AgemonPlugin {
   id: string;
   dependsOn?: string[];
   riskClass?: RiskClass;
   detect(ctx: Context): Promise<PluginPresence>;
   desiredRevision?(ctx: Context, resourceId: string): string | null;
+  describeState?(ctx: Context): Promise<CapabilityStateRow[]>;
   plan?(ctx: Context): Promise<ProposedOperation[]>;
   materialize?(
     ctx: Context,

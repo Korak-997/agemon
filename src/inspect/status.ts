@@ -4,14 +4,21 @@ import type { Context } from "../core/context.js";
 import { fingerprintContent } from "../core/fingerprint.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
-import type { AgemonPlugin } from "../plugins/types.js";
+import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
 import { renderTable } from "../ui/table.js";
+import { collectCapabilityStates } from "./capabilities.js";
 import { TEMPLATE_DRIFT_DETAIL, USER_DRIFT_DETAIL } from "./classify.js";
 import { discoverRepository } from "./discover.js";
 import { detectDuplication, type OverlapFinding } from "./duplication.js";
 
-const DAEMON_CAPABILITY_ID = "daemon";
 const RULE_FILE_RESOURCE_PREFIX = "rule-file:";
+
+const CAPABILITY_STATE_LABELS: Record<CapabilityStateRow["state"], string> = {
+  "present-managed": "present (managed)",
+  "present-adopted": "present (adopted)",
+  absent: "absent",
+  unknown: "unknown",
+};
 
 export type ManagedResourceHealth =
   | "managed-current"
@@ -26,15 +33,23 @@ export interface ManagedResourceStatus {
   detail: string | null;
 }
 
-export interface DaemonStatus {
+export interface CapabilityHealth {
   ok: boolean;
   detail: string;
 }
 
+export interface CapabilityStatusRow extends CapabilityStateRow {
+  /**
+   * A `verify()` verdict, present only when agemon has a ledger record for the
+   * capability (so it is something agemon is expected to keep healthy).
+   */
+  health: CapabilityHealth | null;
+}
+
 export interface StatusReport {
   managedResources: ManagedResourceStatus[];
+  capabilities: CapabilityStatusRow[];
   duplication: OverlapFinding[];
-  daemon: DaemonStatus | null;
   trackedAgemonPaths: string[];
   healthy: boolean;
 }
@@ -176,21 +191,7 @@ export async function buildStatusReport(
       !(managedPaths.has(overlap.left) && managedPaths.has(overlap.right)),
   );
 
-  const daemonRecorded = ctx.manifest
-    .getActions()
-    .some((action) => action.plugin === DAEMON_CAPABILITY_ID);
-  const daemonPlugin = plugins.find(
-    (plugin) => plugin.id === DAEMON_CAPABILITY_ID,
-  );
-  let daemon: DaemonStatus | null = null;
-  if (daemonRecorded && daemonPlugin) {
-    const verification = await daemonPlugin.verify(ctx);
-    daemon = {
-      ok: verification.ok,
-      detail:
-        verification.detail ?? (verification.ok ? "active" : "not active"),
-    };
-  }
+  const capabilities = await buildCapabilityStatusRows(ctx, plugins);
 
   const trackedAgemonPaths = discovery.isolation.trackedAgemonPaths;
   const healthy =
@@ -198,10 +199,55 @@ export async function buildStatusReport(
       (resource) => resource.health === "managed-current",
     ) &&
     duplication.length === 0 &&
-    (daemon === null || daemon.ok) &&
+    capabilities.every((row) => row.health === null || row.health.ok) &&
     trackedAgemonPaths.length === 0;
 
-  return { managedResources, duplication, daemon, trackedAgemonPaths, healthy };
+  return {
+    managedResources,
+    capabilities,
+    duplication,
+    trackedAgemonPaths,
+    healthy,
+  };
+}
+
+async function buildCapabilityStatusRows(
+  ctx: Context,
+  plugins: AgemonPlugin[],
+): Promise<CapabilityStatusRow[]> {
+  const rows = await collectCapabilityStates(ctx, plugins);
+  const recordedCapabilityIds = new Set(
+    ctx.manifest.getActions().map((action) => action.plugin),
+  );
+
+  const healthByCapability = new Map<string, CapabilityHealth | null>();
+  const resolveHealth = async (
+    capabilityId: string,
+  ): Promise<CapabilityHealth | null> => {
+    const cached = healthByCapability.get(capabilityId);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let health: CapabilityHealth | null = null;
+    const plugin = plugins.find((entry) => entry.id === capabilityId);
+    if (plugin && recordedCapabilityIds.has(capabilityId)) {
+      const verification = await plugin.verify(ctx);
+      health = {
+        ok: verification.ok,
+        detail:
+          verification.detail ?? (verification.ok ? "healthy" : "unhealthy"),
+      };
+    }
+    healthByCapability.set(capabilityId, health);
+    return health;
+  };
+
+  const result: CapabilityStatusRow[] = [];
+  for (const row of rows) {
+    result.push({ ...row, health: await resolveHealth(row.capabilityId) });
+  }
+  return result;
 }
 
 export function renderStatusReport(report: StatusReport): string {
@@ -232,12 +278,22 @@ export function renderStatusReport(report: StatusReport): string {
   }
   sections.push("");
 
-  sections.push("Daemon");
-  if (report.daemon === null) {
-    sections.push("  not managed by agemon in this repo");
+  sections.push("Capabilities");
+  if (report.capabilities.length === 0) {
+    sections.push("  no capabilities report state in this repo");
   } else {
     sections.push(
-      `  ${report.daemon.ok ? "ok" : "unhealthy"} — ${report.daemon.detail}`,
+      renderTable([
+        ["CAPABILITY", "STATE", "HEALTH", "DETAIL"],
+        ...report.capabilities.map((row) => [
+          row.capabilityId,
+          CAPABILITY_STATE_LABELS[row.state],
+          row.health === null ? "" : row.health.ok ? "ok" : "unhealthy",
+          row.health !== null && !row.health.ok
+            ? row.health.detail
+            : (row.detail ?? ""),
+        ]),
+      ]),
     );
   }
   sections.push("");

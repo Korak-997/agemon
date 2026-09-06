@@ -3,6 +3,7 @@ import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
@@ -68,6 +69,36 @@ async function detectCrgPresence(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function describeCrgState(ctx: Context): Promise<CapabilityStateRow[]> {
+  const versionCheck = await ctx.run("code-review-graph", ["--version"], {
+    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
+  });
+  const resourceId = `package:${PACKAGE_NAME}`;
+
+  if (versionCheck.code !== 0) {
+    return [
+      {
+        capabilityId: PLUGIN_ID,
+        resourceId,
+        label: PACKAGE_NAME,
+        state: "absent",
+        detail: null,
+      },
+    ];
+  }
+
+  const managed = hasManagedInstall(ctx);
+  return [
+    {
+      capabilityId: PLUGIN_ID,
+      resourceId,
+      label: PACKAGE_NAME,
+      state: managed ? "present-managed" : "present-adopted",
+      detail: managed ? "installed via pipx" : "pre-existing install",
+    },
+  ];
 }
 
 async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
@@ -193,6 +224,7 @@ export const crgPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   riskClass: "executes",
   detect: detectCrgPresence,
+  describeState: describeCrgState,
   plan: planCrg,
   install: installCrg,
   verify: verifyCrg,

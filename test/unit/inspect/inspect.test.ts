@@ -7,6 +7,8 @@ import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { inspectRepository, runInspect } from "../../../src/inspect/index.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { crgPlugin } from "../../../src/plugins/crg/index.js";
+import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
 
 const createdTempDirectories: string[] = [];
@@ -267,6 +269,121 @@ describe("inspectRepository", () => {
     expect(driftedResource?.state).toBe("managed-drifted");
     expect(driftedResource?.detail).toBe(
       "agemon template updated — re-run to refresh",
+    );
+  });
+});
+
+function stubCapabilityPlugin(
+  id: string,
+  rows: Awaited<ReturnType<NonNullable<AgemonPlugin["describeState"]>>>,
+): AgemonPlugin {
+  return {
+    id,
+    async detect() {
+      return { present: true, preExisting: false };
+    },
+    async describeState() {
+      return rows;
+    },
+    async install() {},
+    async verify() {
+      return { ok: true };
+    },
+    async uninstall() {},
+  };
+}
+
+describe("inspectRepository capabilities", () => {
+  it("aggregates describeState rows in a deterministic order", async () => {
+    const context = await createInspectContext();
+
+    const report = await inspectRepository(context, [
+      stubCapabilityPlugin("skills", [
+        {
+          capabilityId: "skills",
+          resourceId: "skill-groups:none",
+          label: "skill groups",
+          state: "absent",
+          detail: null,
+        },
+      ]),
+      stubCapabilityPlugin("crg", [
+        {
+          capabilityId: "crg",
+          resourceId: "package:code-review-graph",
+          label: "code-review-graph",
+          state: "present-adopted",
+          detail: "pre-existing install",
+        },
+      ]),
+    ]);
+
+    expect(report.capabilities.map((row) => row.capabilityId)).toEqual([
+      "crg",
+      "skills",
+    ]);
+    expect(report.capabilities[0].state).toBe("present-adopted");
+    expect(report.capabilities[1].state).toBe("absent");
+  });
+
+  it("ignores capabilities that do not implement describeState", async () => {
+    const context = await createInspectContext();
+
+    const report = await inspectRepository(context, [
+      {
+        id: "master-prompt",
+        async detect() {
+          return { present: true, preExisting: false };
+        },
+        async install() {},
+        async verify() {
+          return { ok: true };
+        },
+        async uninstall() {},
+      },
+    ]);
+
+    expect(report.capabilities).toEqual([]);
+  });
+
+  it("reports an adopted crg install and absent skills from the real capabilities", async () => {
+    const context = await createInspectContext();
+    context.run = async (command: string) =>
+      command === "code-review-graph"
+        ? { code: 0, stdout: "code-review-graph 1.2.3", stderr: "" }
+        : { code: 1, stdout: "", stderr: "not found" };
+
+    const report = await inspectRepository(context, [crgPlugin, skillsPlugin]);
+
+    const crgRow = report.capabilities.find(
+      (row) => row.capabilityId === "crg",
+    );
+    expect(crgRow?.state).toBe("present-adopted");
+    const skillsRow = report.capabilities.find(
+      (row) => row.capabilityId === "skills",
+    );
+    expect(skillsRow?.state).toBe("absent");
+  });
+
+  it("keeps the capabilities section byte-stable across repeated runs", async () => {
+    const context = await createInspectContext();
+    const plugins = [
+      stubCapabilityPlugin("crg", [
+        {
+          capabilityId: "crg",
+          resourceId: "package:code-review-graph",
+          label: "code-review-graph",
+          state: "present-managed",
+          detail: "installed via pipx",
+        },
+      ]),
+    ];
+
+    const first = await inspectRepository(context, plugins);
+    const second = await inspectRepository(context, plugins);
+
+    expect(JSON.stringify(second.capabilities)).toBe(
+      JSON.stringify(first.capabilities),
     );
   });
 });

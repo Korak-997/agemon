@@ -159,12 +159,23 @@ describe("status", () => {
     );
   });
 
-  it("surfaces daemon health only when the daemon is ledger-recorded", async () => {
+  it("attaches a capability health verdict only when the capability is ledger-recorded", async () => {
     const context = await createStatusContext();
     const unhealthyDaemon: AgemonPlugin = {
       id: "daemon",
       async detect() {
         return { present: false, preExisting: false };
+      },
+      async describeState() {
+        return [
+          {
+            capabilityId: "daemon",
+            resourceId: "service-unit:agemon-crg-daemon.service",
+            label: "agemon-crg-daemon.service",
+            state: "absent" as const,
+            detail: null,
+          },
+        ];
       },
       async install() {},
       async verify() {
@@ -173,9 +184,10 @@ describe("status", () => {
       async uninstall() {},
     };
 
-    expect(
-      (await buildStatusReport(context, [unhealthyDaemon])).daemon,
-    ).toBeNull();
+    const beforeRecord = await buildStatusReport(context, [unhealthyDaemon]);
+    expect(beforeRecord.capabilities).toHaveLength(1);
+    expect(beforeRecord.capabilities[0].health).toBeNull();
+    expect(beforeRecord.healthy).toBe(true);
 
     await context.manifest.recordAction({
       plugin: "daemon",
@@ -185,7 +197,10 @@ describe("status", () => {
     });
 
     const report = await buildStatusReport(context, [unhealthyDaemon]);
-    expect(report.daemon).toEqual({ ok: false, detail: "unit is not active" });
+    expect(report.capabilities[0].health).toEqual({
+      ok: false,
+      detail: "unit is not active",
+    });
     expect(report.healthy).toBe(false);
   });
 });

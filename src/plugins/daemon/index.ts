@@ -4,6 +4,7 @@ import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
@@ -137,6 +138,37 @@ async function detectDaemon(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function describeDaemonState(
+  ctx: Context,
+): Promise<CapabilityStateRow[]> {
+  const unitName = await resolveUnitName(ctx);
+  const status = await ctx.serviceManager.isActive(unitName);
+  const resourceId = `service-unit:${unitName}`;
+
+  if (!status.active) {
+    return [
+      {
+        capabilityId: PLUGIN_ID,
+        resourceId,
+        label: unitName,
+        state: "absent",
+        detail: null,
+      },
+    ];
+  }
+
+  const managed = hasManagedServiceRegistration(ctx);
+  return [
+    {
+      capabilityId: PLUGIN_ID,
+      resourceId,
+      label: unitName,
+      state: managed ? "present-managed" : "present-adopted",
+      detail: managed ? "registered by agemon" : "pre-existing unit",
+    },
+  ];
 }
 
 async function planDaemon(ctx: Context): Promise<ProposedOperation[]> {
@@ -283,6 +315,7 @@ export const daemonPlugin: AgemonPlugin = {
   dependsOn: ["crg"],
   riskClass: "executes",
   detect: detectDaemon,
+  describeState: describeDaemonState,
   plan: planDaemon,
   install: installDaemon,
   verify: verifyDaemon,

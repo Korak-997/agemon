@@ -6,6 +6,7 @@ import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
@@ -162,6 +163,66 @@ async function detectSkills(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function describeSkillsState(
+  ctx: Context,
+): Promise<CapabilityStateRow[]> {
+  const recordedGroups = getRecordedGroups(ctx);
+  if (recordedGroups.length === 0) {
+    return [
+      {
+        capabilityId: PLUGIN_ID,
+        resourceId: "skill-groups:none",
+        label: "skill groups",
+        state: "absent",
+        detail: null,
+      },
+    ];
+  }
+
+  let installedSkillNames: Set<string>;
+  try {
+    installedSkillNames = await listInstalledSkillNames(ctx);
+  } catch (error) {
+    const detail =
+      error instanceof Error ? error.message : "npx skills list failed";
+    return recordedGroups.map((group) => ({
+      capabilityId: PLUGIN_ID,
+      resourceId: `skill-group:${group.id}`,
+      label: group.label,
+      state: "unknown" as const,
+      detail,
+    }));
+  }
+
+  return recordedGroups.map((group): CapabilityStateRow => {
+    const resourceId = `skill-group:${group.id}`;
+    const installedCount = group.skills.filter((skill) =>
+      installedSkillNames.has(skill.skillName),
+    ).length;
+
+    if (installedCount < group.skills.length) {
+      return {
+        capabilityId: PLUGIN_ID,
+        resourceId,
+        label: group.label,
+        state: "absent",
+        detail: `${installedCount}/${group.skills.length} skills installed`,
+      };
+    }
+
+    const allManaged = group.skills.every((skill) =>
+      hasManagedInstallRecord(ctx, skill.skillName),
+    );
+    return {
+      capabilityId: PLUGIN_ID,
+      resourceId,
+      label: group.label,
+      state: allManaged ? "present-managed" : "present-adopted",
+      detail: `${group.skills.length} skill(s)`,
+    };
+  });
 }
 
 async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
@@ -364,6 +425,7 @@ export const skillsPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   riskClass: "executes",
   detect: detectSkills,
+  describeState: describeSkillsState,
   plan: planSkills,
   install: installSkills,
   verify: verifySkills,

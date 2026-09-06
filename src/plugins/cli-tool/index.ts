@@ -3,6 +3,7 @@ import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
@@ -92,6 +93,38 @@ async function detectCliTools(ctx: Context): Promise<PluginPresence> {
   }
 
   return { present: true, preExisting: true };
+}
+
+async function describeCliToolsState(
+  ctx: Context,
+): Promise<CapabilityStateRow[]> {
+  return Promise.all(
+    CLI_TOOL_BUNDLE.map(async (entry): Promise<CapabilityStateRow> => {
+      const available = await isToolBinaryAvailable(ctx, entry);
+      const resourceId = `package:${entry.id}`;
+
+      if (!available) {
+        return {
+          capabilityId: PLUGIN_ID,
+          resourceId,
+          label: entry.binaryName,
+          state: "absent",
+          detail: null,
+        };
+      }
+
+      const managed = hasManagedInstallRecord(ctx, entry.id);
+      return {
+        capabilityId: PLUGIN_ID,
+        resourceId,
+        label: entry.binaryName,
+        state: managed ? "present-managed" : "present-adopted",
+        detail: managed
+          ? `installed via npm (${entry.packageName})`
+          : "pre-existing install",
+      };
+    }),
+  );
 }
 
 async function planCliTools(ctx: Context): Promise<ProposedOperation[]> {
@@ -245,6 +278,7 @@ export const cliToolPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   riskClass: "executes",
   detect: detectCliTools,
+  describeState: describeCliToolsState,
   plan: planCliTools,
   install: installCliTools,
   verify: verifyCliTools,
