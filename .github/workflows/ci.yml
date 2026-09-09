@@ -46,6 +46,12 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Build
+        run: npm run build
+
+      - name: Smoke-test the packaged bundle
+        run: npm run smoke
+
   sandbox:
     name: sandbox checks
     runs-on: ubuntu-latest

@@ -36,6 +36,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "smoke": "sh scripts/smoke-bundle.sh",
     "prepack": "npm run build",
     "dev": "AGEMON_DEV=1 tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
