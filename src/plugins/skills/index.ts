@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "../../core/context.js";
+import { ensureGitignoreEntry } from "../../core/gitignore.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
@@ -24,6 +25,7 @@ const ACTION_TYPE_INSTALLED_SKILL = "installed-skill";
 const ACTION_TYPE_PREEXISTING_SKILL = "preexisting-skill";
 const ACTION_TYPE_GENERATED_SKILLS_LOCK = "generated-skills-lock";
 const SKILLS_LOCK_FILE = "skills-lock.json";
+const SKILLS_LOCK_GITIGNORE_ENTRY = "/skills-lock.json";
 
 const SKILLS_LIST_TIMEOUT_MS = 30_000;
 const SKILLS_ADD_TIMEOUT_MS = 180_000;
@@ -325,6 +327,7 @@ async function installSkills(ctx: Context): Promise<void> {
       target: SKILLS_LOCK_FILE,
       preExisting: false,
     });
+    await ensureGitignoreEntry(ctx.cwd, SKILLS_LOCK_GITIGNORE_ENTRY);
   }
 }
 

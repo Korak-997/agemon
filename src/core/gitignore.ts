@@ -3,19 +3,22 @@ import { join } from "node:path";
 
 const GITIGNORE_FILENAME = ".gitignore";
 const AGEMON_ENTRY = "/.agemon/";
-const AGEMON_ENTRY_NORMALIZED = ".agemon";
 
 function normalizeIgnoreLine(line: string): string {
   return line.trim().replace(/^\//, "").replace(/\/$/, "");
 }
 
-export function gitignoreListsAgemon(contents: string): boolean {
+function gitignoreListsEntry(contents: string, entry: string): boolean {
+  const normalizedEntry = normalizeIgnoreLine(entry);
   return contents
     .split(/\r?\n/)
-    .some((line) => normalizeIgnoreLine(line) === AGEMON_ENTRY_NORMALIZED);
+    .some((line) => normalizeIgnoreLine(line) === normalizedEntry);
 }
 
-export async function writeAgemonGitignoreEntry(cwd: string): Promise<void> {
+export async function ensureGitignoreEntry(
+  cwd: string,
+  entry: string,
+): Promise<void> {
   const gitignorePath = join(cwd, GITIGNORE_FILENAME);
 
   let contents: string | null;
@@ -29,11 +32,11 @@ export async function writeAgemonGitignoreEntry(cwd: string): Promise<void> {
   }
 
   if (contents === null) {
-    await writeFile(gitignorePath, `${AGEMON_ENTRY}\n`, "utf8");
+    await writeFile(gitignorePath, `${entry}\n`, "utf8");
     return;
   }
 
-  if (gitignoreListsAgemon(contents)) {
+  if (gitignoreListsEntry(contents, entry)) {
     return;
   }
 
@@ -42,7 +45,11 @@ export async function writeAgemonGitignoreEntry(cwd: string): Promise<void> {
     contents.length === 0 || contents.endsWith("\n") ? "" : newline;
   await writeFile(
     gitignorePath,
-    `${contents}${separator}${AGEMON_ENTRY}${newline}`,
+    `${contents}${separator}${entry}${newline}`,
     "utf8",
   );
+}
+
+export async function writeAgemonGitignoreEntry(cwd: string): Promise<void> {
+  await ensureGitignoreEntry(cwd, AGEMON_ENTRY);
 }

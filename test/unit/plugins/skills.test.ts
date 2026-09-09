@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -110,6 +110,52 @@ describe("skills plugin", () => {
       .getActions()
       .filter((action) => action.plugin === "skills");
     expect(actionsAfterUninstall).toEqual([]);
+  });
+
+  it("git-ignores a skills-lock.json generated during install", async () => {
+    const context = await createTestContext();
+    const skillsLockPath = join(context.cwd, "skills-lock.json");
+    const runWithoutLockSideEffect = context.run;
+    context.run = async (command, args, options) => {
+      const result = await runWithoutLockSideEffect(command, args, options);
+      if (command === "npx" && args[0] === "skills" && args[1] === "add") {
+        await writeFile(skillsLockPath, "{}\n", "utf8");
+      }
+      return result;
+    };
+
+    await skillsPlugin.install(context);
+
+    const lockRecords = context.manifest
+      .getActions()
+      .filter(
+        (action) =>
+          action.plugin === "skills" && action.type === "generated-skills-lock",
+      );
+    expect(lockRecords).toHaveLength(1);
+
+    const gitignoreLines = (
+      await readFile(join(context.cwd, ".gitignore"), "utf8")
+    ).split(/\r?\n/);
+    expect(gitignoreLines).toContain("/skills-lock.json");
+  });
+
+  it("does not touch .gitignore when a skills-lock.json already existed", async () => {
+    const context = await createTestContext();
+    await writeFile(join(context.cwd, "skills-lock.json"), "{}\n", "utf8");
+
+    await skillsPlugin.install(context);
+
+    const lockRecords = context.manifest
+      .getActions()
+      .filter(
+        (action) =>
+          action.plugin === "skills" && action.type === "generated-skills-lock",
+      );
+    expect(lockRecords).toHaveLength(0);
+    await expect(
+      readFile(join(context.cwd, ".gitignore"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("declines every optional group when confirm always says no", async () => {

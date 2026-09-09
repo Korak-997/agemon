@@ -77,7 +77,8 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 - Uses `npx skills list --json` to detect current skills.
 - Installs skill bundle entries via `npx skills add ...`.
 - Removes only managed skill entries on uninstall.
-- Tracks generated `skills-lock.json` when created by install.
+- Tracks generated `skills-lock.json` when created by install, and adds
+  `/skills-lock.json` to the repo `.gitignore` so it is never committed.
 
 Current bundle (`src/plugins/skills/catalog.ts`):
 
