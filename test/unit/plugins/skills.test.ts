@@ -64,7 +64,8 @@ async function createTestContext(skillGroupsOption?: string): Promise<Context> {
     os: "ubuntu",
     binaries: [],
     dryRun: false,
-    yes: true,
+    yes: false,
+    interactive: false,
     confirm: async () => false,
     consent: async () => ({
       approved: [],
@@ -158,7 +159,7 @@ describe("skills plugin", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("declines every optional group when confirm always says no", async () => {
+  it("installs only the default group in a non-interactive session", async () => {
     const context = await createTestContext();
 
     await skillsPlugin.install(context);
