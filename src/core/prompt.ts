@@ -1,9 +1,6 @@
 import { createInterface } from "node:readline/promises";
+import { conflictLegend, gateLegend } from "../ui/consent-view.js";
 
-/**
- * Whether we can actually show a prompt and read a response from a human —
- * false in CI, piped output, or any other non-TTY invocation.
- */
 export function isInteractiveTerminal(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
@@ -23,7 +20,7 @@ export type GateReply = "approve" | "decline" | "show-diff";
 export async function promptGate(message: string): Promise<GateReply> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const answer = (await rl.question(`${message} [y/N/d] `))
+    const answer = (await rl.question(`${gateLegend()}\n${message} [y/N/d] `))
       .trim()
       .toLowerCase();
     if (answer === "y" || answer === "yes") {
@@ -43,7 +40,9 @@ export type ConflictReply = "keep-mine" | "show-theirs" | "skip";
 export async function promptConflict(message: string): Promise<ConflictReply> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const answer = (await rl.question(`${message} [keep/show/Skip] `))
+    const answer = (
+      await rl.question(`${conflictLegend()}\n${message} [keep/show/Skip] `)
+    )
       .trim()
       .toLowerCase();
     if (answer === "keep" || answer === "k") {

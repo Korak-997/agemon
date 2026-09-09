@@ -1,5 +1,5 @@
 import type { ProposedOperation } from "../plugins/types.js";
-import { indent, rule } from "./format.js";
+import { indent } from "./format.js";
 import { symbol } from "./symbols.js";
 import { theme } from "./theme.js";
 
@@ -37,7 +37,6 @@ export function renderGateIntro(input: {
   index: number;
   total: number;
   gateId: string;
-  summary: string;
   operations: ProposedOperation[];
 }): string {
   const heading = theme.heading(
@@ -45,9 +44,10 @@ export function renderGateIntro(input: {
       input.gateId,
     )}`,
   );
-  const lines = [heading, rule(), input.summary];
-  if (input.operations.length > 0) {
-    lines.push(indent(input.operations.map(operationLine).join("\n")));
+  if (input.operations.length === 0) {
+    return heading;
   }
-  return lines.join("\n");
+  return `${heading}\n${indent(
+    input.operations.map(operationLine).join("\n"),
+  )}`;
 }

@@ -278,7 +278,6 @@ describe("consent-view", () => {
       index: 2,
       total: 3,
       gateId: "install-tooling",
-      summary: "Install 1 package (code-review-graph). Proceed?",
       operations: [
         op({
           capabilityId: "crg",
@@ -290,8 +289,8 @@ describe("consent-view", () => {
 
     expect(intro).toContain("Gate 2 / 3");
     expect(intro).toContain("Install tooling");
-    expect(intro).toContain("Install 1 package");
     expect(intro).toContain("code-review-graph");
+    expect(intro).not.toContain("─");
     expect(ANSI.test(intro)).toBe(false);
   });
 
