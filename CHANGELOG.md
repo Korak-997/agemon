@@ -1,5 +1,10 @@
 # agemon
 
+## 4.0.0
+
+- feat: add cut-release workflow for automated versioning and release process (#8)
+- fix: correct installation flow and CI setup (#7)
+
 ## 3.0.0
 
 - V3 (#5)
