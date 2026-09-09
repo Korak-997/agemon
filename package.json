@@ -59,6 +59,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
+    "@commitlint/config-conventional": "^21.2.2",
     "@types/node": "^26.2.0",
     "tsup": "^8.5.1",
     "tsx": "^4.23.12",
