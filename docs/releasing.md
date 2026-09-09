@@ -60,6 +60,24 @@ Important:
 
 ## Maintainer release workflow
 
+### Easiest path: one-click from GitHub Actions
+
+For a stable `patch`/`minor`/`major` release, run the **Cut release** workflow
+(`.github/workflows/cut-release.yml`) — nothing local required:
+
+- GitHub UI: **Actions -> Cut release -> Run workflow**, pick `patch`/`minor`/`major`.
+- CLI: `gh workflow run cut-release.yml -f bump=patch`
+
+It checks out `master`, bumps `package.json`, drafts a `## X.Y.Z` `CHANGELOG.md` entry from
+the commit subjects since the last tag, commits, tags, pushes, then chains into the
+`Release` workflow to build, verify, and publish the GitHub Release.
+
+Add a `## X.Y.Z` entry to `CHANGELOG.md` yourself beforehand if you want curated notes —
+the workflow only auto-drafts one when the entry is missing.
+
+Requires that `master` accepts pushes from `GITHUB_TOKEN` (no branch protection blocking
+Actions). Prereleases (`alpha`/`beta`) still use the manual steps below.
+
 ### Fast path: `npm run deploy`
 
 For a stable `patch`/`minor`/`major` release, `npm run deploy` automates everything below:
@@ -69,9 +87,10 @@ bumps `package.json`, checks `CHANGELOG.md` has a matching `## X.Y.Z` entry (rev
 bump if not), then commits, tags, and pushes after a final confirmation.
 
 ```bash
-npm run deploy                # prompts for patch/minor/major
-npm run deploy -- patch       # skip the prompt
-npm run deploy -- patch --yes # also skip the final confirmation
+npm run deploy                       # prompts for patch/minor/major
+npm run deploy -- patch              # skip the prompt
+npm run deploy -- patch --yes        # also skip the final confirmation
+npm run deploy -- patch --skip-checks # skip local lint/typecheck/test/build (CI still runs them)
 ```
 
 Add the `CHANGELOG.md` entry for the version you intend to release *before* running this

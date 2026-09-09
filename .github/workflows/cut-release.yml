@@ -1,0 +1,60 @@
+name: Cut release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semantic version bump
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+concurrency: cut-release
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: bump, changelog, tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.deploy.outputs.tag }}
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version, draft changelog, tag, push
+        id: deploy
+        run: |
+          set -euo pipefail
+
+          npm run deploy -- ${{ inputs.bump }} --yes --skip-checks
+          echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
