@@ -54,7 +54,6 @@
     "@clack/prompts": "^1.8.0",
     "boxen": "^8.0.1",
     "commander": "^15.0.0",
-    "ora": "^9.4.1",
     "picocolors": "^1.1.1",
     "smol-toml": "^1.8.0",
     "yaml": "^2.9.0"

@@ -6,7 +6,6 @@ import type { StepSpinner } from "../ui/spinner.js";
 import {
   type ApprovedOperationSet,
   type ConsentGate,
-  readlinePrompts,
   resolveConsent,
 } from "./consent.js";
 import { createConfirmer, isInteractiveTerminal } from "./prompt.js";
@@ -109,7 +108,7 @@ export async function createContext(
         gates,
         yes: input.yes,
         log: console,
-        prompts: interactive ? clackPrompts : readlinePrompts,
+        prompts: clackPrompts,
         conflictDecisions: options?.conflictDecisions,
       }),
   };

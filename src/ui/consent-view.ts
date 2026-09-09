@@ -12,18 +12,6 @@ const GATE_TITLES: Record<string, string> = {
   "resolve-conflict": "Resolve conflicts",
 };
 
-export function gateLegend(): string {
-  return `${theme.accent("[y]")} proceed   ${theme.accent("[n]")} skip   ${theme.accent(
-    "[d]",
-  )} show diffs`;
-}
-
-export function conflictLegend(): string {
-  return `${theme.accent("[k]")} keep yours   ${theme.accent(
-    "[s]",
-  )} show agemon's   ${theme.accent("[x]")} skip`;
-}
-
 function gateTitle(gateId: string): string {
   return GATE_TITLES[gateId] ?? gateId;
 }

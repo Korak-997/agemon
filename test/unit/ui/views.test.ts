@@ -4,11 +4,7 @@ import type { InspectReport } from "../../../src/inspect/index.js";
 import type { StatusReport } from "../../../src/inspect/status.js";
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
 import type { ProposedOperation } from "../../../src/plugins/types.js";
-import {
-  conflictLegend,
-  gateLegend,
-  renderGateIntro,
-} from "../../../src/ui/consent-view.js";
+import { renderGateIntro } from "../../../src/ui/consent-view.js";
 import { renderInspectReport } from "../../../src/ui/inspect-view.js";
 import { renderPlan } from "../../../src/ui/plan-view.js";
 import { renderStatusReport } from "../../../src/ui/status-view.js";
@@ -292,12 +288,5 @@ describe("consent-view", () => {
     expect(intro).toContain("code-review-graph");
     expect(intro).not.toContain("─");
     expect(ANSI.test(intro)).toBe(false);
-  });
-
-  it("exposes plain-text legends for gate and conflict prompts", () => {
-    expect(gateLegend()).toBe("[y] proceed   [n] skip   [d] show diffs");
-    expect(conflictLegend()).toBe(
-      "[k] keep yours   [s] show agemon's   [x] skip",
-    );
   });
 });

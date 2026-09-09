@@ -9,8 +9,6 @@ import {
   type ConflictReply,
   type GateReply,
   isInteractiveTerminal,
-  promptConflict,
-  promptGate,
 } from "./prompt.js";
 import { styleUnifiedDiff } from "./text-diff.js";
 
@@ -179,17 +177,12 @@ export interface GatePrompts {
   conflict(summary: string): Promise<ConflictReply>;
 }
 
-export const readlinePrompts: GatePrompts = {
-  gate: promptGate,
-  conflict: promptConflict,
-};
-
 export interface ResolveConsentInput {
   gates: ConsentGate[];
   yes: boolean;
   log: Pick<Console, "log">;
   interactive?: boolean;
-  prompts?: GatePrompts;
+  prompts: GatePrompts;
   conflictDecisions?: Record<string, RecordedConflictDecision>;
 }
 
@@ -197,7 +190,7 @@ export async function resolveConsent(
   input: ResolveConsentInput,
 ): Promise<ApprovedOperationSet> {
   const interactive = input.interactive ?? isInteractiveTerminal();
-  const prompts = input.prompts ?? readlinePrompts;
+  const prompts = input.prompts;
   const approved: ProposedOperation[] = [];
   const skipped: SkippedOperation[] = [];
   const conflictResolutions: ConflictResolution[] = [];
