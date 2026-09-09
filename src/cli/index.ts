@@ -19,6 +19,11 @@ import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
 import { box } from "../ui/box.js";
 import { renderPlan } from "../ui/plan-view.js";
+import {
+  createStepProgress,
+  SILENT_PROGRESS,
+  type StepProgress,
+} from "../ui/progress.js";
 import { createStepSpinner, type StepSpinner } from "../ui/spinner.js";
 import { symbol } from "../ui/symbols.js";
 
@@ -64,6 +69,10 @@ const SILENT_SPINNER: StepSpinner = {
 
 function selectSpinner(options: CliOptions): StepSpinner {
   return options.quiet ? SILENT_SPINNER : createStepSpinner();
+}
+
+function selectProgress(options: CliOptions): StepProgress {
+  return options.quiet ? SILENT_PROGRESS : createStepProgress();
 }
 
 const ERROR_HINTS: { match: RegExp; hint: string }[] = [
@@ -125,6 +134,7 @@ async function runInspectCommand(options: CliOptions): Promise<void> {
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
+    progress: SILENT_PROGRESS,
   });
 
   await runInspect(context, { json: Boolean(options.json) });
@@ -135,6 +145,7 @@ async function runStatusCommand(options: CliOptions): Promise<void> {
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
+    progress: SILENT_PROGRESS,
   });
 
   await runStatus(context, getRegisteredPlugins());
@@ -150,6 +161,7 @@ async function runPlanCommand(options: CliOptions): Promise<void> {
     dryRun: true,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
+    progress: SILENT_PROGRESS,
     skillGroups,
   });
 
@@ -182,6 +194,7 @@ async function runInstall(options: CliOptions): Promise<void> {
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: spinner,
+    progress: selectProgress(options),
     skillGroups,
   });
 
@@ -213,6 +226,7 @@ async function runApply(options: CliOptions): Promise<void> {
     dryRun: false,
     yes: Boolean(options.yes),
     ui: spinner,
+    progress: selectProgress(options),
     skillGroups,
   });
 
@@ -245,6 +259,7 @@ async function runNuke(options: CliOptions): Promise<void> {
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: spinner,
+    progress: selectProgress(options),
   });
 
   await uninstallPlugins(context, plugins, { only: options.only });

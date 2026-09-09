@@ -6,6 +6,8 @@ import type {
   ProposedOperation,
   StagedFile,
 } from "../plugins/types.js";
+import { capabilityLabel } from "../ui/labels.js";
+import { SILENT_PROGRESS } from "../ui/progress.js";
 import { writeImmutableBackup } from "./backups.js";
 import type { Context } from "./context.js";
 import { fingerprintContent } from "./fingerprint.js";
@@ -367,8 +369,11 @@ export async function applyPlan(
     ctx.manifest.getActions().map((action) => action.id),
   );
 
+  const progress = ctx.progress ?? SILENT_PROGRESS;
+  const capabilityCount = approvedByCapability.size;
   const applied: ProposedOperation[] = [];
   const appliedCapabilityOrder: string[] = [];
+  progress.start("Applying capabilities", capabilityCount);
   try {
     for (const [capabilityId, operations] of approvedByCapability) {
       const plugin = pluginById.get(capabilityId);
@@ -383,10 +388,17 @@ export async function applyPlan(
         operations,
         stagedByCapability.get(capabilityId),
       );
+      progress.advance(`Applied ${capabilityLabel(capabilityId)}`);
       appliedCapabilityOrder.push(capabilityId);
       applied.push(...operations);
     }
+    progress.stop(
+      `Applied ${capabilityCount} ${
+        capabilityCount === 1 ? "capability" : "capabilities"
+      }`,
+    );
   } catch (error) {
+    progress.stop();
     await restoreRollbackSnapshots(ctx, rollbackSnapshots);
     const { reverted, manualCleanup } = await revertCommittedCapabilities(
       ctx,

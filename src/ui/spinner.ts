@@ -1,4 +1,4 @@
-import ora, { type Ora } from "ora";
+import { spinner as clackSpinner } from "@clack/prompts";
 import { symbol } from "./symbols.js";
 import { theme } from "./theme.js";
 
@@ -25,7 +25,7 @@ function formatElapsed(startedAt: number): string {
 
 export function createStepSpinner(): StepSpinner {
   let autoStep = 0;
-  let current: Ora | undefined;
+  let active: ReturnType<typeof clackSpinner> | undefined;
   let currentLabel = "";
   let startedAt = Date.now();
   let stepActive = false;
@@ -43,35 +43,36 @@ export function createStepSpinner(): StepSpinner {
       stepActive = true;
       const line = `${prefix(options)}${label}`;
       if (isInteractive()) {
-        current = ora(line).start();
+        active = clackSpinner({ indicator: "timer" });
+        active.start(line);
       } else {
         console.log(line);
       }
     },
     succeed(label) {
       const text = label ?? currentLabel;
-      const elapsed = theme.dim(` ${formatElapsed(startedAt)}`);
       stepActive = false;
-      if (isInteractive() && current) {
-        current.succeed(`${text}${elapsed}`);
-        current = undefined;
+      if (isInteractive() && active) {
+        active.stop(theme.ok(text));
+        active = undefined;
       } else {
+        const elapsed = theme.dim(` ${formatElapsed(startedAt)}`);
         console.log(`${theme.ok(`${symbol("ok")} ${text}`)}${elapsed}`);
       }
     },
     fail(label) {
       const text = label ?? currentLabel;
       stepActive = false;
-      if (isInteractive() && current) {
-        current.fail(text);
-        current = undefined;
+      if (isInteractive() && active) {
+        active.error(text);
+        active = undefined;
       } else {
         console.log(theme.danger(`${symbol("fail")} ${text}`));
       }
     },
     info(label) {
-      if (isInteractive() && current) {
-        current.info(label);
+      if (isInteractive() && active) {
+        active.message(label);
       } else {
         console.log(theme.accent(stepActive ? `  ${label}` : label));
       }

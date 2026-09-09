@@ -1,6 +1,7 @@
 import { detectPlatform, REQUIRED_BINARIES } from "../platform/detect.js";
 import type { ServiceManager } from "../platform/service-manager/index.js";
 import { createServiceManager } from "../platform/service-manager/index.js";
+import type { StepProgress } from "../ui/progress.js";
 import type { StepSpinner } from "../ui/spinner.js";
 import {
   type ApprovedOperationSet,
@@ -31,6 +32,7 @@ export interface Context {
   yes: boolean;
   log: Pick<Console, "log" | "error">;
   ui: StepSpinner;
+  progress?: StepProgress;
   run: (
     command: string,
     args: string[],
@@ -51,6 +53,7 @@ export interface CreateContextInput {
   dryRun: boolean;
   yes: boolean;
   ui: StepSpinner;
+  progress: StepProgress;
   skillGroups?: string;
 }
 
@@ -78,6 +81,7 @@ export async function createContext(
     skillGroupsOption: input.skillGroups,
     log: console,
     ui: input.ui,
+    progress: input.progress,
     run: runSubprocess,
     manifest: await StateManifest.load(process.cwd()),
     serviceManager: createServiceManager({
