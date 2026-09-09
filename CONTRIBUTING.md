@@ -10,7 +10,13 @@ Thanks for contributing to agemon.
 npm install
 ```
 
-2. Run local quality checks:
+2. Enable the repo git hooks (one time) so commit messages are checked locally:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+3. Run local quality checks:
 
 ```bash
 npm run lint
@@ -53,6 +59,46 @@ Format changes when needed:
 ```bash
 npm run format
 ```
+
+## Commit Messages
+
+Every commit subject must follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/):
+
+```
+<type>[(scope)][!]: <description>
+```
+
+Allowed types:
+
+| Type | Meaning |
+| --- | --- |
+| `feat` | a user-facing feature (drives a minor bump) |
+| `fix` | a bug fix (drives a patch bump) |
+| `perf` | a performance improvement |
+| `refactor` | code change that neither fixes a bug nor adds a feature |
+| `docs` | documentation only |
+| `test` | adding or fixing tests |
+| `build` | build system or bundling changes |
+| `ci` | CI configuration changes |
+| `chore` | maintenance with no `src/` impact |
+| `revert` | reverts a previous commit |
+
+Breaking changes: append `!` after the type (`feat!: ...`) or add a `BREAKING CHANGE:`
+footer. Either drives a major bump.
+
+Examples:
+
+```
+feat(installer): verify tarball checksum before extraction
+fix: bundle every runtime dependency so the tarball runs standalone
+ci: smoke-test the packaged bundle
+```
+
+The `commit-msg` hook checks this locally once `core.hooksPath` is set (see Development
+Setup); the `commitlint` CI job is the enforced gate and blocks merge on failure.
+
+PRs are squash-merged, so the **PR title** becomes the commit subject on `master` and must
+itself be a valid Conventional Commit — the `pr-title` CI job enforces this.
 
 ## Commit and Release Flow
 

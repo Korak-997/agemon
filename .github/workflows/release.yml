@@ -40,6 +40,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Smoke-test the packaged bundle
+        run: npm run smoke
+
       - name: Validate tag format and package version
         run: |
           set -euo pipefail
