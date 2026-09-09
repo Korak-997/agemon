@@ -239,7 +239,7 @@ describe("renderRunSummary", () => {
 
     expect(rendered).toContain("Applied 2 operations");
     expect(rendered).toContain("environment verified");
-    expect(rendered).toContain("master-prompt");
+    expect(rendered).toContain("Instruction files");
     expect(rendered).toContain("Next steps");
     expect(rendered).toContain("commit agemon.toml");
   });

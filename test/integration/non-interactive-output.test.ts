@@ -71,11 +71,7 @@ describe("non-interactive output contract", () => {
       await captureNonInteractiveRun("clean-repo", []),
     ).toMatchInlineSnapshot(`
       "exit 0
-      Binary check: python3 present (<PATH>)
-      Binary check: pip present (<PATH>)
-      Binary check: pipx present (<PATH>)
-      Binary check: uv present (<PATH>)
-      Binary check: code-review-graph present (<PATH>)
+      5/5 tools present — python3, pip, pipx, uv, code-review-graph
       Plan <PLAN_ID>   ·   agemon <VERSION>
       ────────────────────────────────────────────────────────────────────────────────
 
@@ -182,11 +178,7 @@ describe("non-interactive output contract", () => {
       await captureNonInteractiveRun("clean-repo", ["--dry-run"]),
     ).toMatchInlineSnapshot(`
       "exit 0
-      Binary check: python3 present (<PATH>)
-      Binary check: pip present (<PATH>)
-      Binary check: pipx present (<PATH>)
-      Binary check: uv present (<PATH>)
-      Binary check: code-review-graph present (<PATH>)
+      5/5 tools present — python3, pip, pipx, uv, code-review-graph
       Plan <PLAN_ID>   ·   agemon <VERSION>
       ────────────────────────────────────────────────────────────────────────────────
 
@@ -293,19 +285,15 @@ describe("non-interactive output contract", () => {
       await captureNonInteractiveRun("clean-repo", ["--yes"]),
     ).toMatchInlineSnapshot(`
       "exit 0
-      Binary check: python3 present (<PATH>)
-      Binary check: pip present (<PATH>)
-      Binary check: pipx present (<PATH>)
-      Binary check: uv present (<PATH>)
-      Binary check: code-review-graph present (<PATH>)
+      5/5 tools present — python3, pip, pipx, uv, code-review-graph
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
       ╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
       │                                                                        │
-      │     crg              1 operation                                       │
-      │     daemon           1 operation                                       │
-      │     skills           1 operation                                       │
-      │     cli-tool         1 operation                                       │
-      │     master-prompt    5 operations                                      │
+      │     code-review-graph  1 operation                                     │
+      │     Background service 1 operation                                     │
+      │     Skills             1 operation                                     │
+      │     CLI tools          1 operation                                     │
+      │     Instruction files  5 operations                                    │
       │                                                                        │
       │   Next steps                                                           │
       │     -> commit agemon.toml so teammates and CI reconcile the same way   │
@@ -321,11 +309,11 @@ describe("non-interactive output contract", () => {
       "exit 0
       ╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
       │                                                                        │
-      │     crg              1 operation                                       │
-      │     daemon           1 operation                                       │
-      │     skills           1 operation                                       │
-      │     cli-tool         1 operation                                       │
-      │     master-prompt    5 operations                                      │
+      │     code-review-graph  1 operation                                     │
+      │     Background service 1 operation                                     │
+      │     Skills             1 operation                                     │
+      │     CLI tools          1 operation                                     │
+      │     Instruction files  5 operations                                    │
       │                                                                        │
       │   Next steps                                                           │
       │     -> commit agemon.toml so teammates and CI reconcile the same way   │

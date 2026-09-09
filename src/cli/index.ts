@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { intro, outro } from "@clack/prompts";
 import { Command, CommanderError } from "commander";
 import { type AgemonConfig, loadConfig } from "../core/config.js";
 import { createContext } from "../core/context.js";
@@ -11,6 +12,7 @@ import {
   uninstallPlugins,
 } from "../core/orchestrator.js";
 import { readPlan, writePlan } from "../core/plan-store.js";
+import { isInteractiveTerminal } from "../core/prompt.js";
 import { checkForUpdate } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { runStatus } from "../inspect/status.js";
@@ -26,6 +28,7 @@ import {
 } from "../ui/progress.js";
 import { createStepSpinner, type StepSpinner } from "../ui/spinner.js";
 import { symbol } from "../ui/symbols.js";
+import { theme } from "../ui/theme.js";
 
 const PACKAGE_JSON_SEARCH_DEPTH = 5;
 
@@ -73,6 +76,18 @@ function selectSpinner(options: CliOptions): StepSpinner {
 
 function selectProgress(options: CliOptions): StepProgress {
   return options.quiet ? SILENT_PROGRESS : createStepProgress();
+}
+
+function openInteractiveFrame(options: CliOptions): void {
+  if (!options.quiet && isInteractiveTerminal()) {
+    intro(theme.heading(`agemon ${VERSION}`));
+  }
+}
+
+function closeInteractiveFrame(options: CliOptions): void {
+  if (!options.quiet && isInteractiveTerminal()) {
+    outro(theme.ok("done"));
+  }
 }
 
 const ERROR_HINTS: { match: RegExp; hint: string }[] = [
@@ -190,6 +205,7 @@ async function runInstall(options: CliOptions): Promise<void> {
     options,
     plugins,
   );
+  openInteractiveFrame(options);
   const context = await createContext({
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
@@ -205,6 +221,7 @@ async function runInstall(options: CliOptions): Promise<void> {
     conflictDecisions: config?.conflictDecisions,
     persistConfig: config === null,
   });
+  closeInteractiveFrame(options);
 }
 
 async function runApply(options: CliOptions): Promise<void> {
@@ -222,6 +239,7 @@ async function runApply(options: CliOptions): Promise<void> {
     options,
     plugins,
   );
+  openInteractiveFrame(options);
   const context = await createContext({
     dryRun: false,
     yes: Boolean(options.yes),
@@ -242,6 +260,7 @@ async function runApply(options: CliOptions): Promise<void> {
     conflictDecisions: config?.conflictDecisions,
     persistConfig: config === null,
   });
+  closeInteractiveFrame(options);
 }
 
 async function runNuke(options: CliOptions): Promise<void> {

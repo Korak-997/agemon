@@ -1,6 +1,7 @@
 import type { ProposedOperation } from "../plugins/types.js";
 import { box } from "./box.js";
 import { indent } from "./format.js";
+import { capabilityLabel } from "./labels.js";
 import { symbol } from "./symbols.js";
 import { theme } from "./theme.js";
 
@@ -33,9 +34,14 @@ function capabilityLines(applied: ProposedOperation[]): string[] {
       (byCapability.get(operation.capabilityId) ?? 0) + 1,
     );
   }
-  return [...byCapability].map(
-    ([capabilityId, count]) =>
-      `  ${capabilityId.padEnd(16)} ${pluralize(count, "operation")}`,
+  const rows = [...byCapability].map(([capabilityId, count]) => ({
+    label: capabilityLabel(capabilityId),
+    count,
+  }));
+  const labelWidth = Math.max(...rows.map((row) => row.label.length));
+  return rows.map(
+    (row) =>
+      `  ${row.label.padEnd(labelWidth)} ${pluralize(row.count, "operation")}`,
   );
 }
 

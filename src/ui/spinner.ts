@@ -1,4 +1,4 @@
-import { spinner as clackSpinner } from "@clack/prompts";
+import { log as clackLog, spinner as clackSpinner } from "@clack/prompts";
 import { symbol } from "./symbols.js";
 import { theme } from "./theme.js";
 
@@ -71,8 +71,12 @@ export function createStepSpinner(): StepSpinner {
       }
     },
     info(label) {
-      if (isInteractive() && active) {
-        active.message(label);
+      if (isInteractive()) {
+        if (active) {
+          active.message(label);
+        } else {
+          clackLog.info(label);
+        }
       } else {
         console.log(theme.accent(stepActive ? `  ${label}` : label));
       }

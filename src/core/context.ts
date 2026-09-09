@@ -68,18 +68,26 @@ export async function createContext(
   });
   const interactive = isInteractiveTerminal();
 
-  for (const binaryName of REQUIRED_BINARIES) {
-    const binary = platform.binaries[binaryName];
-    const status = binary.present
-      ? `present (${binary.path ?? "resolved via PATH"})`
-      : "missing";
-    input.ui.info(`Binary check: ${binaryName} ${status}`);
+  const checkedBinaries = REQUIRED_BINARIES.map(
+    (name) => platform.binaries[name],
+  );
+  const presentBinaries = checkedBinaries.filter((binary) => binary.present);
+  const presentNames = presentBinaries.map((binary) => binary.name).join(", ");
+  input.ui.info(
+    presentNames
+      ? `${presentBinaries.length}/${checkedBinaries.length} tools present — ${presentNames}`
+      : `${presentBinaries.length}/${checkedBinaries.length} tools present`,
+  );
+  for (const binary of checkedBinaries) {
+    if (!binary.present) {
+      input.ui.info(`${binary.name} missing`);
+    }
   }
 
   return {
     cwd: process.cwd(),
     os: platform.os,
-    binaries: REQUIRED_BINARIES.map((name) => platform.binaries[name]),
+    binaries: checkedBinaries,
     dryRun: input.dryRun,
     yes: input.yes,
     interactive,

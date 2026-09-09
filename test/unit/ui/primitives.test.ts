@@ -40,8 +40,8 @@ describe("format primitives (NO_COLOR)", () => {
     expect(terminalWidth()).toBe(80);
   });
 
-  it("renders a section as a blank line, a heading and a rule", () => {
-    expect(section("Resources")).toBe(`\nResources\n${"─".repeat(80)}`);
+  it("renders a section as a blank line and a heading", () => {
+    expect(section("Resources")).toBe(`\nResources`);
   });
 
   it("draws a rule at the requested width", () => {
