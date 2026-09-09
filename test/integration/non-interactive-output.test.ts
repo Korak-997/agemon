@@ -73,7 +73,6 @@ describe("non-interactive output contract", () => {
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
       Plan <PLAN_ID>   ·   agemon <VERSION>
-      ────────────────────────────────────────────────────────────────────────────────
 
       crg
         v  code-review-graph        [executes]
@@ -165,8 +164,8 @@ describe("non-interactive output contract", () => {
              +The canonical rules for this repo live in AGENTS.md — read that file in full before
              +making any changes here. This file exists only because Windsurf looks for \`.windsurfrules\` specifically; it intentionally does not restate the rules.
 
-      ────────────────────────────────────────────────────────────────────────────────
-      3 install · 1 register · 5 create
+      Summary
+        3 install · 1 register · 5 create
 
       Plan written to .agemon/plans/<PLAN_ID>.json
       Review, then re-run interactively or with --yes, or 'agemon apply --plan 82bae85277df078e'."
@@ -180,7 +179,6 @@ describe("non-interactive output contract", () => {
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
       Plan <PLAN_ID>   ·   agemon <VERSION>
-      ────────────────────────────────────────────────────────────────────────────────
 
       crg
         v  code-review-graph        [executes]
@@ -272,8 +270,8 @@ describe("non-interactive output contract", () => {
              +The canonical rules for this repo live in AGENTS.md — read that file in full before
              +making any changes here. This file exists only because Windsurf looks for \`.windsurfrules\` specifically; it intentionally does not restate the rules.
 
-      ────────────────────────────────────────────────────────────────────────────────
-      3 install · 1 register · 5 create
+      Summary
+        3 install · 1 register · 5 create
 
       Plan written to .agemon/plans/<PLAN_ID>.json
       Review, then re-run interactively or with --yes, or 'agemon apply --plan 82bae85277df078e'."
@@ -328,7 +326,6 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       Plan <PLAN_ID>   ·   agemon <VERSION>
-      ────────────────────────────────────────────────────────────────────────────────
 
       crg
         v  code-review-graph        [executes]
@@ -420,8 +417,8 @@ describe("non-interactive output contract", () => {
              +The canonical rules for this repo live in AGENTS.md — read that file in full before
              +making any changes here. This file exists only because Windsurf looks for \`.windsurfrules\` specifically; it intentionally does not restate the rules.
 
-      ────────────────────────────────────────────────────────────────────────────────
-      3 install · 1 register · 5 create
+      Summary
+        3 install · 1 register · 5 create
 
       Plan written to .agemon/plans/<PLAN_ID>.json"
     `);
