@@ -4,9 +4,7 @@ import type { ConflictReply, GateReply } from "./prompt.js";
 
 const CANCELLED_EXIT_CODE = 130;
 
-function assertNotCancelled<Value extends string>(
-  value: Value | symbol,
-): Value {
+export function assertNotCancelled<Value>(value: Value | symbol): Value {
   if (isCancel(value)) {
     cancel("Cancelled — nothing applied.");
     process.exit(CANCELLED_EXIT_CODE);

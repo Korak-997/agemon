@@ -32,6 +32,7 @@ export interface Context {
   binaries: BinaryAvailability[];
   dryRun: boolean;
   yes: boolean;
+  interactive: boolean;
   log: Pick<Console, "log" | "error">;
   ui: StepSpinner;
   progress?: StepProgress;
@@ -65,6 +66,7 @@ export async function createContext(
   const platform = await detectPlatform({
     osReleasePath: process.env.AGEMON_OS_RELEASE_PATH,
   });
+  const interactive = isInteractiveTerminal();
 
   for (const binaryName of REQUIRED_BINARIES) {
     const binary = platform.binaries[binaryName];
@@ -80,6 +82,7 @@ export async function createContext(
     binaries: REQUIRED_BINARIES.map((name) => platform.binaries[name]),
     dryRun: input.dryRun,
     yes: input.yes,
+    interactive,
     skillGroupsOption: input.skillGroups,
     log: console,
     ui: input.ui,
@@ -98,7 +101,7 @@ export async function createContext(
         gates,
         yes: input.yes,
         log: console,
-        prompts: isInteractiveTerminal() ? clackPrompts : readlinePrompts,
+        prompts: interactive ? clackPrompts : readlinePrompts,
         conflictDecisions: options?.conflictDecisions,
       }),
   };

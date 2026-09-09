@@ -52,6 +52,7 @@ async function createInspectContext(): Promise<Context> {
     ],
     dryRun: false,
     yes: true,
+    interactive: false,
     confirm: async () => false,
     consent: async () => ({
       approved: [],
