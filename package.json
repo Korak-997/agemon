@@ -47,9 +47,11 @@
     "sandbox:watch": "tsx scripts/sandbox.ts watch",
     "sandbox:roundtrip": "tsx scripts/sandbox.ts roundtrip",
     "sandbox:reset": "tsx scripts/sandbox.ts reset",
+    "ui:preview": "tsx scripts/ui-preview.ts",
     "deploy": "tsx scripts/deploy.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.0",
     "boxen": "^8.0.1",
     "commander": "^15.0.0",
     "ora": "^9.4.1",
