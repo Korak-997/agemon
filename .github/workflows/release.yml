@@ -4,8 +4,14 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to build and publish (e.g. v1.2.3)
+        required: true
+        type: string
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency: ${{ github.workflow }}-${{ inputs.tag || github.ref }}
 
 permissions:
   contents: write
@@ -15,9 +21,14 @@ jobs:
     name: release
     runs-on: ubuntu-latest
 
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -47,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
 
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+|-beta\.[0-9]+)?$ ]]; then
@@ -66,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
 
           if [[ ! -f CHANGELOG.md ]]; then
             echo "Missing CHANGELOG.md. Add a '## ${VERSION}' entry before tagging."
@@ -92,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           PRERELEASE_FLAG=""
           if [[ "$TAG" == *-alpha.* || "$TAG" == *-beta.* ]]; then
             PRERELEASE_FLAG="--prerelease"

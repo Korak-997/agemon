@@ -151,6 +151,7 @@ async function main(): Promise<void> {
 async function deploy(): Promise<void> {
   const args = process.argv.slice(2);
   const skipConfirm = args.includes("--yes");
+  const skipChecks = args.includes("--skip-checks");
   const requestedBump = args.find(isBumpType);
 
   ensureOnReleaseBranch();
@@ -159,11 +160,17 @@ async function deploy(): Promise<void> {
   console.log("Syncing with origin...");
   run("git", ["pull", "--ff-only", "origin", RELEASE_BRANCH]);
 
-  console.log("\nRunning quality checks (lint, typecheck, test, build)...");
-  run("npm", ["run", "lint"]);
-  run("npm", ["run", "typecheck"]);
-  run("npm", ["test"]);
-  run("npm", ["run", "build"]);
+  if (skipChecks) {
+    console.log(
+      "\nSkipping local quality checks (--skip-checks); the Release workflow is the gate.",
+    );
+  } else {
+    console.log("\nRunning quality checks (lint, typecheck, test, build)...");
+    run("npm", ["run", "lint"]);
+    run("npm", ["run", "typecheck"]);
+    run("npm", ["test"]);
+    run("npm", ["run", "build"]);
+  }
 
   const bumpType = requestedBump ?? (await promptBumpType());
   const previousVersion = readPackageVersion();
