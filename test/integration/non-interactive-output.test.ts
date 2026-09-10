@@ -40,6 +40,7 @@ function normalize(output: string, repoDirectory: string): string {
     .replace(ansiPattern, "")
     .replace(/\bPlan [0-9a-f]{12,}\b/g, "Plan <PLAN_ID>")
     .replace(/plans\/[0-9a-f]{12,}\.json/g, "plans/<PLAN_ID>.json")
+    .replace(/--plan [0-9a-f]{12,}\b/g, "--plan <PLAN_ID>")
     .replace(/\bagemon \d+\.\d+\.\d+/g, "agemon <VERSION>")
     .replace(/ present \([^)]*\)/g, " present (<PATH>)")
     .replace(/\d{4}-\d{2}-\d{2}T[0-9:.]+Z/g, "<TIMESTAMP>")
@@ -196,7 +197,7 @@ describe("non-interactive output contract", () => {
         3 install · 1 register · 5 create
 
       Plan written to .agemon/plans/<PLAN_ID>.json
-      Review, then re-run interactively or with --yes, or 'agemon apply --plan 82bae85277df078e'."
+      Review, then re-run interactively or with --yes, or 'agemon apply --plan <PLAN_ID>'."
     `);
   });
 
@@ -302,7 +303,7 @@ describe("non-interactive output contract", () => {
         3 install · 1 register · 5 create
 
       Plan written to .agemon/plans/<PLAN_ID>.json
-      Review, then re-run interactively or with --yes, or 'agemon apply --plan 82bae85277df078e'."
+      Review, then re-run interactively or with --yes, or 'agemon apply --plan <PLAN_ID>'."
     `);
   });
 
