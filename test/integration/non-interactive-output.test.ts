@@ -50,6 +50,7 @@ async function captureNonInteractiveRun(
   const result = spawnSync(tsxBin, [cliEntry, ...argv], {
     cwd: repoDirectory,
     encoding: "utf8",
+    timeout: 30_000,
     env: {
       ...process.env,
       HOME: homeDirectory,
@@ -60,6 +61,12 @@ async function captureNonInteractiveRun(
       NO_COLOR: "1",
     },
   });
+
+  if (result.error || result.signal) {
+    throw new Error(
+      `CLI subprocess failed to complete (error: ${result.error}, signal: ${result.signal})`,
+    );
+  }
 
   const merged = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   return `exit ${result.status}\n${normalize(merged, repoDirectory)}`;
