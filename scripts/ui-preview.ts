@@ -179,7 +179,7 @@ function previewSummaries(): void {
 }
 
 async function main(): Promise<void> {
-  if (!process.stdout.isTTY) {
+  if (!process.stdout.isTTY || !process.stdin.isTTY) {
     console.log(
       "ui:preview needs a real terminal — run it directly, not piped or in CI.",
     );
