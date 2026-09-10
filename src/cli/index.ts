@@ -84,9 +84,12 @@ function openInteractiveFrame(options: CliOptions): void {
   }
 }
 
-function closeInteractiveFrame(options: CliOptions): void {
+function closeInteractiveFrame(
+  options: CliOptions,
+  tone: "success" | "failure" = "success",
+): void {
   if (!options.quiet && isInteractiveTerminal()) {
-    outro(theme.ok("done"));
+    outro(tone === "success" ? theme.ok("done") : theme.danger("failed"));
   }
 }
 
@@ -206,21 +209,26 @@ async function runInstall(options: CliOptions): Promise<void> {
     plugins,
   );
   openInteractiveFrame(options);
-  const context = await createContext({
-    dryRun: Boolean(options.dryRun),
-    yes: Boolean(options.yes),
-    ui: spinner,
-    progress: selectProgress(options),
-    skillGroups,
-  });
+  try {
+    const context = await createContext({
+      dryRun: Boolean(options.dryRun),
+      yes: Boolean(options.yes),
+      ui: spinner,
+      progress: selectProgress(options),
+      skillGroups,
+    });
 
-  await reconcile(context, plugins, {
-    only,
-    agemonVersion: VERSION,
-    allowUnignoredState: Boolean(options.allowUnignoredState),
-    conflictDecisions: config?.conflictDecisions,
-    persistConfig: config === null,
-  });
+    await reconcile(context, plugins, {
+      only,
+      agemonVersion: VERSION,
+      allowUnignoredState: Boolean(options.allowUnignoredState),
+      conflictDecisions: config?.conflictDecisions,
+      persistConfig: config === null,
+    });
+  } catch (error) {
+    closeInteractiveFrame(options, "failure");
+    throw error;
+  }
   closeInteractiveFrame(options);
 }
 
@@ -240,26 +248,31 @@ async function runApply(options: CliOptions): Promise<void> {
     plugins,
   );
   openInteractiveFrame(options);
-  const context = await createContext({
-    dryRun: false,
-    yes: Boolean(options.yes),
-    ui: spinner,
-    progress: selectProgress(options),
-    skillGroups,
-  });
+  try {
+    const context = await createContext({
+      dryRun: false,
+      yes: Boolean(options.yes),
+      ui: spinner,
+      progress: selectProgress(options),
+      skillGroups,
+    });
 
-  const plan = options.plan
-    ? await readPlan(context.cwd, options.plan)
-    : undefined;
+    const plan = options.plan
+      ? await readPlan(context.cwd, options.plan)
+      : undefined;
 
-  await reconcile(context, plugins, {
-    only,
-    agemonVersion: VERSION,
-    allowUnignoredState: Boolean(options.allowUnignoredState),
-    plan,
-    conflictDecisions: config?.conflictDecisions,
-    persistConfig: config === null,
-  });
+    await reconcile(context, plugins, {
+      only,
+      agemonVersion: VERSION,
+      allowUnignoredState: Boolean(options.allowUnignoredState),
+      plan,
+      conflictDecisions: config?.conflictDecisions,
+      persistConfig: config === null,
+    });
+  } catch (error) {
+    closeInteractiveFrame(options, "failure");
+    throw error;
+  }
   closeInteractiveFrame(options);
 }
 
