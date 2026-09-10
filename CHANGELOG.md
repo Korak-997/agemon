@@ -1,5 +1,9 @@
 # agemon
 
+## 4.2.0
+
+- fix: update output normalization to mask plan IDs in non-interactive output (#10)
+
 ## 4.1.0
 
 - feat: improve terminal design and loading (#9)
