@@ -1,3 +1,4 @@
+import stringWidth from "string-width";
 import { terminalWidth } from "./format.js";
 import { theme } from "./theme.js";
 
@@ -6,12 +7,14 @@ const COLUMN_GAP = "  ";
 const ELLIPSIS = "…";
 const MIN_COLUMN_WIDTH = 3;
 const ESCAPE_CHARACTER = String.fromCharCode(27);
-const ANSI_ESCAPE = new RegExp(`${ESCAPE_CHARACTER}\\[[0-9;]*m`, "g");
 const ANSI_ESCAPE_AT_START = new RegExp(`^${ESCAPE_CHARACTER}\\[[0-9;]*m`);
 const ANSI_RESET = `${ESCAPE_CHARACTER}[0m`;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, {
+  granularity: "grapheme",
+});
 
 function visibleWidth(value: string): number {
-  return value.replace(ANSI_ESCAPE, "").length;
+  return stringWidth(value);
 }
 
 function isNumericCell(value: string): boolean {
@@ -28,13 +31,13 @@ function truncateCell(value: string, width: number): string {
   if (visibleWidth(value) <= width) return value;
   if (width <= 1) return ELLIPSIS;
 
-  const targetVisibleLength = width - 1;
-  let visibleCount = 0;
+  const targetVisibleWidth = width - 1;
+  let renderedWidth = 0;
   let cursor = 0;
   let truncated = "";
   let sawEscapeCode = false;
 
-  while (cursor < value.length && visibleCount < targetVisibleLength) {
+  while (cursor < value.length) {
     const escapeMatch = ANSI_ESCAPE_AT_START.exec(value.slice(cursor));
     if (escapeMatch) {
       truncated += escapeMatch[0];
@@ -42,9 +45,20 @@ function truncateCell(value: string, width: number): string {
       sawEscapeCode = true;
       continue;
     }
-    truncated += value[cursor];
-    visibleCount += 1;
-    cursor += 1;
+
+    const remainder = value.slice(cursor);
+    const nextGrapheme = GRAPHEME_SEGMENTER.segment(remainder)
+      [Symbol.iterator]()
+      .next();
+    if (nextGrapheme.done) break;
+
+    const grapheme = nextGrapheme.value.segment;
+    const graphemeWidth = stringWidth(grapheme);
+    if (renderedWidth + graphemeWidth > targetVisibleWidth) break;
+
+    truncated += grapheme;
+    renderedWidth += graphemeWidth;
+    cursor += grapheme.length;
   }
 
   return sawEscapeCode

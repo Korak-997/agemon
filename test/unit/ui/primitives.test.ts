@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   renderUnifiedDiff,
   styleUnifiedDiff,
@@ -107,13 +107,39 @@ describe("renderTable (NO_COLOR)", () => {
 
     expect(dataRow).toMatch(/\s2$/);
   });
+
+  it("aligns columns whose cells contain wide CJK characters", () => {
+    const lines = renderTable([
+      ["FILE", "STATUS"],
+      ["表.md", "ok"],
+      ["b.md", "critical"],
+    ]).split("\n");
+
+    expect(lines[0]).toBe("  FILE   STATUS");
+    expect(lines[2]).toBe("  表.md  ok");
+    expect(lines[3]).toBe("  b.md   critical");
+  });
+
+  it("truncates emoji cells without emitting an unpaired surrogate", () => {
+    const dataLine = renderTable([
+      ["FILE", "STATUS"],
+      ["x", "😀".repeat(45)],
+    ]).split("\n")[2];
+
+    expect(dataLine).toContain("…");
+    expect(dataLine).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    );
+  });
 });
 
 describe("renderTable (colored output)", () => {
   const stripAnsi = (value: string) => value.replace(new RegExp(ANSI, "g"), "");
   let originalIsTTY: boolean | undefined;
+  let originalNoColor: string | undefined;
 
   beforeAll(() => {
+    originalNoColor = process.env.NO_COLOR;
     delete process.env.NO_COLOR;
     originalIsTTY = process.stdout.isTTY;
     Object.defineProperty(process.stdout, "isTTY", {
@@ -123,9 +149,20 @@ describe("renderTable (colored output)", () => {
   });
 
   afterAll(() => {
-    process.env.NO_COLOR = "1";
+    if (originalNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = originalNoColor;
+    }
     Object.defineProperty(process.stdout, "isTTY", {
       value: originalIsTTY,
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "columns", {
+      value: originalColumns,
       configurable: true,
     });
   });
@@ -164,11 +201,6 @@ describe("renderTable (colored output)", () => {
 
     expect(stripAnsi(dataLine)).toContain("…");
     expect(dataLine.endsWith(`${String.fromCharCode(27)}[0m`)).toBe(true);
-
-    Object.defineProperty(process.stdout, "columns", {
-      value: originalColumns,
-      configurable: true,
-    });
   });
 });
 
