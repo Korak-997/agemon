@@ -47,14 +47,16 @@
     "sandbox:watch": "tsx scripts/sandbox.ts watch",
     "sandbox:roundtrip": "tsx scripts/sandbox.ts roundtrip",
     "sandbox:reset": "tsx scripts/sandbox.ts reset",
+    "ui:preview": "tsx scripts/ui-preview.ts",
     "deploy": "tsx scripts/deploy.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.0",
     "boxen": "^8.0.1",
     "commander": "^15.0.0",
-    "ora": "^9.4.1",
     "picocolors": "^1.1.1",
     "smol-toml": "^1.8.0",
+    "string-width": "^8.2.2",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

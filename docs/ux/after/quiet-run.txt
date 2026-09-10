@@ -1,0 +1,12 @@
+╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
+│                                                                        │
+│     code-review-graph  1 operation                                     │
+│     Background service 1 operation                                     │
+│     Skills             1 operation                                     │
+│     CLI tools          1 operation                                     │
+│     Instruction files  5 operations                                    │
+│                                                                        │
+│   Next steps                                                           │
+│     -> commit agemon.toml so teammates and CI reconcile the same way   │
+│                                                                        │
+╰────────────────────────────────────────────────────────────────────────╯

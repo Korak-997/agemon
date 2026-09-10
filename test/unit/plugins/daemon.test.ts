@@ -104,6 +104,7 @@ async function createTestContext(options: {
     binaries: [],
     dryRun: false,
     yes: true,
+    interactive: false,
     confirm: async () => true,
     consent: async () => ({
       approved: [],

@@ -1,4 +1,6 @@
+import { multiselect } from "@clack/prompts";
 import type { Context } from "../../core/context.js";
+import { assertNotCancelled } from "../../core/prompt-clack.js";
 import { SKILL_GROUPS, type SkillGroup } from "./catalog.js";
 
 const ALL_GROUPS_KEYWORD = "all";
@@ -44,17 +46,6 @@ function resolveExplicitGroups(skillGroupsOption: string): SkillGroup[] {
   return [...combinedGroups.values()];
 }
 
-/**
- * Resolves which skill groups a fresh bootstrap should install:
- * - `--skill-groups all` / `none` / a comma-separated id list — explicit,
- *   non-interactive, works the same with or without a TTY.
- * - flag omitted, interactive session — asks once per optional group via
- *   `ctx.confirm`, on top of the always-on default groups.
- * - flag omitted, dry-run or non-interactive session (CI, no TTY) — only the
- *   default groups, matching `ctx.confirm`'s existing "decline when nobody's
- *   there to ask" policy. Pass `--skill-groups` explicitly to preview or
- *   install optional groups without a prompt.
- */
 export async function resolveGroupsForFreshInstall(
   ctx: Context,
   skillGroupsOption: string | undefined,
@@ -67,15 +58,30 @@ export async function resolveGroupsForFreshInstall(
     return defaultGroups();
   }
 
-  const selectedOptionalGroups: SkillGroup[] = [];
-  for (const group of optionalGroups()) {
-    const shouldInstall = await ctx.confirm(
-      `Install '${group.label}' skills (${group.skills.length})? — ${group.description}`,
-    );
-    if (shouldInstall) {
-      selectedOptionalGroups.push(group);
-    }
+  if (ctx.yes) {
+    return [...SKILL_GROUPS];
   }
 
-  return [...defaultGroups(), ...selectedOptionalGroups];
+  if (!ctx.interactive) {
+    return defaultGroups();
+  }
+
+  const optional = optionalGroups();
+  const selectedIds = assertNotCancelled(
+    await multiselect<string>({
+      message: "Optional skill groups to install",
+      options: optional.map((group) => ({
+        value: group.id,
+        label: `${group.label} (${group.skills.length})`,
+        hint: group.description,
+      })),
+      required: false,
+      initialValues: [],
+    }),
+  );
+
+  return [
+    ...defaultGroups(),
+    ...optional.filter((group) => selectedIds.includes(group.id)),
+  ];
 }

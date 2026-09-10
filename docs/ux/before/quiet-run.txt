@@ -1,0 +1,12 @@
+╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
+│                                                                        │
+│     crg              1 operation                                       │
+│     daemon           1 operation                                       │
+│     skills           1 operation                                       │
+│     cli-tool         1 operation                                       │
+│     master-prompt    5 operations                                      │
+│                                                                        │
+│   Next steps                                                           │
+│     -> commit agemon.toml so teammates and CI reconcile the same way   │
+│                                                                        │
+╰────────────────────────────────────────────────────────────────────────╯

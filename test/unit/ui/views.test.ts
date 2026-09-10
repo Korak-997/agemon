@@ -4,11 +4,7 @@ import type { InspectReport } from "../../../src/inspect/index.js";
 import type { StatusReport } from "../../../src/inspect/status.js";
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
 import type { ProposedOperation } from "../../../src/plugins/types.js";
-import {
-  conflictLegend,
-  gateLegend,
-  renderGateIntro,
-} from "../../../src/ui/consent-view.js";
+import { renderGateIntro } from "../../../src/ui/consent-view.js";
 import { renderInspectReport } from "../../../src/ui/inspect-view.js";
 import { renderPlan } from "../../../src/ui/plan-view.js";
 import { renderStatusReport } from "../../../src/ui/status-view.js";
@@ -239,7 +235,7 @@ describe("renderRunSummary", () => {
 
     expect(rendered).toContain("Applied 2 operations");
     expect(rendered).toContain("environment verified");
-    expect(rendered).toContain("master-prompt");
+    expect(rendered).toContain("Instruction files");
     expect(rendered).toContain("Next steps");
     expect(rendered).toContain("commit agemon.toml");
   });
@@ -278,7 +274,6 @@ describe("consent-view", () => {
       index: 2,
       total: 3,
       gateId: "install-tooling",
-      summary: "Install 1 package (code-review-graph). Proceed?",
       operations: [
         op({
           capabilityId: "crg",
@@ -290,15 +285,8 @@ describe("consent-view", () => {
 
     expect(intro).toContain("Gate 2 / 3");
     expect(intro).toContain("Install tooling");
-    expect(intro).toContain("Install 1 package");
     expect(intro).toContain("code-review-graph");
+    expect(intro).not.toContain("─");
     expect(ANSI.test(intro)).toBe(false);
-  });
-
-  it("exposes plain-text legends for gate and conflict prompts", () => {
-    expect(gateLegend()).toBe("[y] proceed   [n] skip   [d] show diffs");
-    expect(conflictLegend()).toBe(
-      "[k] keep yours   [s] show agemon's   [x] skip",
-    );
   });
 });

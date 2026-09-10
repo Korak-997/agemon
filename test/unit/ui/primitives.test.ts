@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   renderUnifiedDiff,
   styleUnifiedDiff,
@@ -40,8 +40,8 @@ describe("format primitives (NO_COLOR)", () => {
     expect(terminalWidth()).toBe(80);
   });
 
-  it("renders a section as a blank line, a heading and a rule", () => {
-    expect(section("Resources")).toBe(`\nResources\n${"─".repeat(80)}`);
+  it("renders a section as a blank line and a heading", () => {
+    expect(section("Resources")).toBe(`\nResources`);
   });
 
   it("draws a rule at the requested width", () => {
@@ -106,6 +106,101 @@ describe("renderTable (NO_COLOR)", () => {
     ]).split("\n")[2];
 
     expect(dataRow).toMatch(/\s2$/);
+  });
+
+  it("aligns columns whose cells contain wide CJK characters", () => {
+    const lines = renderTable([
+      ["FILE", "STATUS"],
+      ["表.md", "ok"],
+      ["b.md", "critical"],
+    ]).split("\n");
+
+    expect(lines[0]).toBe("  FILE   STATUS");
+    expect(lines[2]).toBe("  表.md  ok");
+    expect(lines[3]).toBe("  b.md   critical");
+  });
+
+  it("truncates emoji cells without emitting an unpaired surrogate", () => {
+    const dataLine = renderTable([
+      ["FILE", "STATUS"],
+      ["x", "😀".repeat(45)],
+    ]).split("\n")[2];
+
+    expect(dataLine).toContain("…");
+    expect(dataLine).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    );
+  });
+});
+
+describe("renderTable (colored output)", () => {
+  const stripAnsi = (value: string) => value.replace(new RegExp(ANSI, "g"), "");
+  let originalIsTTY: boolean | undefined;
+  let originalNoColor: string | undefined;
+
+  beforeAll(() => {
+    originalNoColor = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
+    originalIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      configurable: true,
+    });
+  });
+
+  afterAll(() => {
+    if (originalNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = originalNoColor;
+    }
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: originalIsTTY,
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "columns", {
+      value: originalColumns,
+      configurable: true,
+    });
+  });
+
+  it("aligns columns by visible width when cells carry ANSI-styled badges", () => {
+    const lines = renderTable([
+      ["RESOURCE", "STATE"],
+      ["a.md", badge("ok", "ok")],
+      ["b.md", "critical-issue-needs-attention"],
+    ])
+      .split("\n")
+      .map(stripAnsi);
+
+    const columnOneWidth = "RESOURCE".length;
+    const secondColumnStart = "  ".length + columnOneWidth + "  ".length;
+
+    expect(lines[2].slice(secondColumnStart).trim()).toBe("ok");
+    expect(lines[3].slice(secondColumnStart).trim()).toBe(
+      "critical-issue-needs-attention",
+    );
+  });
+
+  it("truncates ANSI-styled cells without corrupting escape codes", () => {
+    Object.defineProperty(process.stdout, "columns", {
+      value: 40,
+      configurable: true,
+    });
+
+    const dataLine = renderTable([
+      ["FILE", "STATUS"],
+      [
+        "x",
+        badge("an unusually long status label that must be truncated", "warn"),
+      ],
+    ]).split("\n")[2];
+
+    expect(stripAnsi(dataLine)).toContain("…");
+    expect(dataLine.endsWith(`${String.fromCharCode(27)}[0m`)).toBe(true);
   });
 });
 

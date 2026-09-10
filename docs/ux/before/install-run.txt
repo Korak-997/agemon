@@ -1,0 +1,18 @@
+Binary check: python3 present (<path>)
+Binary check: pip present (<path>)
+Binary check: pipx present (<path>)
+Binary check: uv present (<path>)
+Binary check: code-review-graph present (<path>)
+Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
+╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
+│                                                                        │
+│     crg              1 operation                                       │
+│     daemon           1 operation                                       │
+│     skills           1 operation                                       │
+│     cli-tool         1 operation                                       │
+│     master-prompt    5 operations                                      │
+│                                                                        │
+│   Next steps                                                           │
+│     -> commit agemon.toml so teammates and CI reconcile the same way   │
+│                                                                        │
+╰────────────────────────────────────────────────────────────────────────╯

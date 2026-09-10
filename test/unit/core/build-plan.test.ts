@@ -41,6 +41,7 @@ async function createTestContext(): Promise<Context> {
     binaries: [],
     dryRun: true,
     yes: false,
+    interactive: false,
     confirm: async () => false,
     consent: async () => ({
       approved: [],

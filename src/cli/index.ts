@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { intro, outro } from "@clack/prompts";
 import { Command, CommanderError } from "commander";
 import { type AgemonConfig, loadConfig } from "../core/config.js";
 import { createContext } from "../core/context.js";
@@ -11,6 +12,7 @@ import {
   uninstallPlugins,
 } from "../core/orchestrator.js";
 import { readPlan, writePlan } from "../core/plan-store.js";
+import { isInteractiveTerminal } from "../core/prompt.js";
 import { checkForUpdate } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { runStatus } from "../inspect/status.js";
@@ -19,8 +21,14 @@ import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
 import { box } from "../ui/box.js";
 import { renderPlan } from "../ui/plan-view.js";
+import {
+  createStepProgress,
+  SILENT_PROGRESS,
+  type StepProgress,
+} from "../ui/progress.js";
 import { createStepSpinner, type StepSpinner } from "../ui/spinner.js";
 import { symbol } from "../ui/symbols.js";
+import { theme } from "../ui/theme.js";
 
 const PACKAGE_JSON_SEARCH_DEPTH = 5;
 
@@ -64,6 +72,25 @@ const SILENT_SPINNER: StepSpinner = {
 
 function selectSpinner(options: CliOptions): StepSpinner {
   return options.quiet ? SILENT_SPINNER : createStepSpinner();
+}
+
+function selectProgress(options: CliOptions): StepProgress {
+  return options.quiet ? SILENT_PROGRESS : createStepProgress();
+}
+
+function openInteractiveFrame(options: CliOptions): void {
+  if (!options.quiet && isInteractiveTerminal()) {
+    intro(theme.heading(`agemon ${VERSION}`));
+  }
+}
+
+function closeInteractiveFrame(
+  options: CliOptions,
+  tone: "success" | "failure" = "success",
+): void {
+  if (!options.quiet && isInteractiveTerminal()) {
+    outro(tone === "success" ? theme.ok("done") : theme.danger("failed"));
+  }
 }
 
 const ERROR_HINTS: { match: RegExp; hint: string }[] = [
@@ -125,6 +152,7 @@ async function runInspectCommand(options: CliOptions): Promise<void> {
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
+    progress: SILENT_PROGRESS,
   });
 
   await runInspect(context, { json: Boolean(options.json) });
@@ -135,6 +163,7 @@ async function runStatusCommand(options: CliOptions): Promise<void> {
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
+    progress: SILENT_PROGRESS,
   });
 
   await runStatus(context, getRegisteredPlugins());
@@ -150,6 +179,7 @@ async function runPlanCommand(options: CliOptions): Promise<void> {
     dryRun: true,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
+    progress: SILENT_PROGRESS,
     skillGroups,
   });
 
@@ -178,20 +208,28 @@ async function runInstall(options: CliOptions): Promise<void> {
     options,
     plugins,
   );
-  const context = await createContext({
-    dryRun: Boolean(options.dryRun),
-    yes: Boolean(options.yes),
-    ui: spinner,
-    skillGroups,
-  });
+  openInteractiveFrame(options);
+  try {
+    const context = await createContext({
+      dryRun: Boolean(options.dryRun),
+      yes: Boolean(options.yes),
+      ui: spinner,
+      progress: selectProgress(options),
+      skillGroups,
+    });
 
-  await reconcile(context, plugins, {
-    only,
-    agemonVersion: VERSION,
-    allowUnignoredState: Boolean(options.allowUnignoredState),
-    conflictDecisions: config?.conflictDecisions,
-    persistConfig: config === null,
-  });
+    await reconcile(context, plugins, {
+      only,
+      agemonVersion: VERSION,
+      allowUnignoredState: Boolean(options.allowUnignoredState),
+      conflictDecisions: config?.conflictDecisions,
+      persistConfig: config === null,
+    });
+  } catch (error) {
+    closeInteractiveFrame(options, "failure");
+    throw error;
+  }
+  closeInteractiveFrame(options);
 }
 
 async function runApply(options: CliOptions): Promise<void> {
@@ -209,25 +247,33 @@ async function runApply(options: CliOptions): Promise<void> {
     options,
     plugins,
   );
-  const context = await createContext({
-    dryRun: false,
-    yes: Boolean(options.yes),
-    ui: spinner,
-    skillGroups,
-  });
+  openInteractiveFrame(options);
+  try {
+    const context = await createContext({
+      dryRun: false,
+      yes: Boolean(options.yes),
+      ui: spinner,
+      progress: selectProgress(options),
+      skillGroups,
+    });
 
-  const plan = options.plan
-    ? await readPlan(context.cwd, options.plan)
-    : undefined;
+    const plan = options.plan
+      ? await readPlan(context.cwd, options.plan)
+      : undefined;
 
-  await reconcile(context, plugins, {
-    only,
-    agemonVersion: VERSION,
-    allowUnignoredState: Boolean(options.allowUnignoredState),
-    plan,
-    conflictDecisions: config?.conflictDecisions,
-    persistConfig: config === null,
-  });
+    await reconcile(context, plugins, {
+      only,
+      agemonVersion: VERSION,
+      allowUnignoredState: Boolean(options.allowUnignoredState),
+      plan,
+      conflictDecisions: config?.conflictDecisions,
+      persistConfig: config === null,
+    });
+  } catch (error) {
+    closeInteractiveFrame(options, "failure");
+    throw error;
+  }
+  closeInteractiveFrame(options);
 }
 
 async function runNuke(options: CliOptions): Promise<void> {
@@ -245,6 +291,7 @@ async function runNuke(options: CliOptions): Promise<void> {
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: spinner,
+    progress: selectProgress(options),
   });
 
   await uninstallPlugins(context, plugins, { only: options.only });

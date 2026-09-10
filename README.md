@@ -52,7 +52,9 @@ Selection order:
 
 - `--skill-groups <ids>`: explicit, non-interactive. Comma-separated group ids, or the keywords
   `all` / `none`. Always includes `essentials` regardless of what you pass.
-- No flag, interactive terminal: asks once per optional group.
+- No flag, `--yes`: every group installs, the same way `--yes` answers every other prompt.
+- No flag, interactive terminal: one multiselect over the optional groups (space toggles, enter
+  confirms), on top of `essentials`.
 - No flag, non-interactive (CI, piped output, or `--dry-run`): only `essentials` installs —
   pass `--skill-groups` explicitly to get optional groups without a prompt.
 

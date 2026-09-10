@@ -353,8 +353,11 @@ export async function uninstallPlugins(
     return;
   }
 
+  const total = plugins.length;
+  let step = 0;
   for (const plugin of plugins) {
-    ctx.ui.start(`Uninstalling ${plugin.id}`);
+    step += 1;
+    ctx.ui.start(`Uninstalling ${plugin.id}`, { step, total });
     await plugin.uninstall(ctx);
     ctx.ui.succeed(`Uninstalled ${plugin.id}`);
   }

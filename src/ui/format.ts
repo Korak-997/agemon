@@ -18,7 +18,7 @@ export function rule(width: number = terminalWidth()): string {
 }
 
 export function section(title: string): string {
-  return `\n${theme.heading(title)}\n${rule()}`;
+  return `\n${theme.heading(title)}`;
 }
 
 export function indent(text: string, spaces = 2): string {

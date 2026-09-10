@@ -1,13 +1,15 @@
 import { detectPlatform, REQUIRED_BINARIES } from "../platform/detect.js";
 import type { ServiceManager } from "../platform/service-manager/index.js";
 import { createServiceManager } from "../platform/service-manager/index.js";
+import type { StepProgress } from "../ui/progress.js";
 import type { StepSpinner } from "../ui/spinner.js";
 import {
   type ApprovedOperationSet,
   type ConsentGate,
   resolveConsent,
 } from "./consent.js";
-import { createConfirmer } from "./prompt.js";
+import { createConfirmer, isInteractiveTerminal } from "./prompt.js";
+import { clackPrompts } from "./prompt-clack.js";
 import { StateManifest } from "./state-manifest.js";
 import {
   type RunSubprocessOptions,
@@ -29,8 +31,10 @@ export interface Context {
   binaries: BinaryAvailability[];
   dryRun: boolean;
   yes: boolean;
+  interactive: boolean;
   log: Pick<Console, "log" | "error">;
   ui: StepSpinner;
+  progress?: StepProgress;
   run: (
     command: string,
     args: string[],
@@ -51,6 +55,7 @@ export interface CreateContextInput {
   dryRun: boolean;
   yes: boolean;
   ui: StepSpinner;
+  progress: StepProgress;
   skillGroups?: string;
 }
 
@@ -60,24 +65,35 @@ export async function createContext(
   const platform = await detectPlatform({
     osReleasePath: process.env.AGEMON_OS_RELEASE_PATH,
   });
+  const interactive = isInteractiveTerminal();
 
-  for (const binaryName of REQUIRED_BINARIES) {
-    const binary = platform.binaries[binaryName];
-    const status = binary.present
-      ? `present (${binary.path ?? "resolved via PATH"})`
-      : "missing";
-    input.ui.info(`Binary check: ${binaryName} ${status}`);
+  const checkedBinaries = REQUIRED_BINARIES.map(
+    (name) => platform.binaries[name],
+  );
+  const presentBinaries = checkedBinaries.filter((binary) => binary.present);
+  const presentNames = presentBinaries.map((binary) => binary.name).join(", ");
+  input.ui.info(
+    presentNames
+      ? `${presentBinaries.length}/${checkedBinaries.length} tools present — ${presentNames}`
+      : `${presentBinaries.length}/${checkedBinaries.length} tools present`,
+  );
+  for (const binary of checkedBinaries) {
+    if (!binary.present) {
+      input.ui.info(`${binary.name} missing`);
+    }
   }
 
   return {
     cwd: process.cwd(),
     os: platform.os,
-    binaries: REQUIRED_BINARIES.map((name) => platform.binaries[name]),
+    binaries: checkedBinaries,
     dryRun: input.dryRun,
     yes: input.yes,
+    interactive,
     skillGroupsOption: input.skillGroups,
     log: console,
     ui: input.ui,
+    progress: input.progress,
     run: runSubprocess,
     manifest: await StateManifest.load(process.cwd()),
     serviceManager: createServiceManager({
@@ -92,6 +108,7 @@ export async function createContext(
         gates,
         yes: input.yes,
         log: console,
+        prompts: clackPrompts,
         conflictDecisions: options?.conflictDecisions,
       }),
   };

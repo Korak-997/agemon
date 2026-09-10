@@ -5,7 +5,7 @@ import type {
   ProposedOperationAction,
   RiskClass,
 } from "../plugins/types.js";
-import { type CountPart, countLine, indent, rule } from "./format.js";
+import { type CountPart, countLine, indent, section } from "./format.js";
 import { type SymbolName, symbol } from "./symbols.js";
 import { theme } from "./theme.js";
 
@@ -89,15 +89,15 @@ export function renderPlan(plan: Plan): string {
   )}`;
 
   if (plan.operations.length === 0) {
-    return `${header}\n${rule()}\n\n  nothing to do — desired state already reached`;
+    return `${header}\n\n  nothing to do — desired state already reached`;
   }
 
-  const sections: string[] = [`${header}\n${rule()}`];
+  const blocks: string[] = [header];
   for (const [capabilityId, operations] of groupByCapability(plan.operations)) {
     const body = operations.map(renderOperation).join("\n");
-    sections.push(`${theme.heading(capabilityId)}\n${body}`);
+    blocks.push(`${section(capabilityId)}\n${body}`);
   }
-  sections.push(`${rule()}\n${planFooter(plan.operations)}`);
+  blocks.push(`${section("Summary")}\n  ${planFooter(plan.operations)}`);
 
-  return sections.join("\n\n");
+  return blocks.join("\n");
 }

@@ -64,6 +64,7 @@ async function createTestContext(
     binaries: [],
     dryRun: false,
     yes: true,
+    interactive: false,
     log: console,
     ui: { start() {}, succeed() {}, fail() {}, info() {} },
     run: async () => ({ code: 0, stdout: "", stderr: "" }),

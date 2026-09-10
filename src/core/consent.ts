@@ -3,18 +3,12 @@ import type {
   ProposedOperation,
   ProposedOperationAction,
 } from "../plugins/types.js";
-import {
-  conflictLegend,
-  gateLegend,
-  renderGateIntro,
-} from "../ui/consent-view.js";
+import { renderGateIntro } from "../ui/consent-view.js";
 import type { Plan } from "./plan-store.js";
 import {
   type ConflictReply,
   type GateReply,
   isInteractiveTerminal,
-  promptConflict,
-  promptGate,
 } from "./prompt.js";
 import { styleUnifiedDiff } from "./text-diff.js";
 
@@ -183,17 +177,12 @@ export interface GatePrompts {
   conflict(summary: string): Promise<ConflictReply>;
 }
 
-const readlinePrompts: GatePrompts = {
-  gate: promptGate,
-  conflict: promptConflict,
-};
-
 export interface ResolveConsentInput {
   gates: ConsentGate[];
   yes: boolean;
   log: Pick<Console, "log">;
   interactive?: boolean;
-  prompts?: GatePrompts;
+  prompts: GatePrompts;
   conflictDecisions?: Record<string, RecordedConflictDecision>;
 }
 
@@ -201,7 +190,7 @@ export async function resolveConsent(
   input: ResolveConsentInput,
 ): Promise<ApprovedOperationSet> {
   const interactive = input.interactive ?? isInteractiveTerminal();
-  const prompts = input.prompts ?? readlinePrompts;
+  const prompts = input.prompts;
   const approved: ProposedOperation[] = [];
   const skipped: SkippedOperation[] = [];
   const conflictResolutions: ConflictResolution[] = [];
@@ -217,7 +206,6 @@ export async function resolveConsent(
             index: gateIndex,
             total: totalGates,
             gateId: gate.id,
-            summary: gate.summary,
             operations: gate.operations,
           })
         : undefined;
@@ -322,7 +310,6 @@ async function askGate(
     ctx.log.log(ctx.intro);
   }
   for (;;) {
-    ctx.log.log(gateLegend());
     const reply = await ctx.prompts.gate(gate.summary);
     if (reply !== "show-diff") {
       return reply === "approve";
@@ -348,7 +335,6 @@ async function resolveConflict(
     };
   }
 
-  ctx.log.log(conflictLegend());
   const reply = await ctx.prompts.conflict(
     `Conflict at ${operation.targetPath || operation.resourceId}: keep yours, show agemon's, or skip?`,
   );
