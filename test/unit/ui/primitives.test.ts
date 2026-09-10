@@ -109,6 +109,69 @@ describe("renderTable (NO_COLOR)", () => {
   });
 });
 
+describe("renderTable (colored output)", () => {
+  const stripAnsi = (value: string) => value.replace(new RegExp(ANSI, "g"), "");
+  let originalIsTTY: boolean | undefined;
+
+  beforeAll(() => {
+    delete process.env.NO_COLOR;
+    originalIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      configurable: true,
+    });
+  });
+
+  afterAll(() => {
+    process.env.NO_COLOR = "1";
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: originalIsTTY,
+      configurable: true,
+    });
+  });
+
+  it("aligns columns by visible width when cells carry ANSI-styled badges", () => {
+    const lines = renderTable([
+      ["RESOURCE", "STATE"],
+      ["a.md", badge("ok", "ok")],
+      ["b.md", "critical-issue-needs-attention"],
+    ])
+      .split("\n")
+      .map(stripAnsi);
+
+    const columnOneWidth = "RESOURCE".length;
+    const secondColumnStart = "  ".length + columnOneWidth + "  ".length;
+
+    expect(lines[2].slice(secondColumnStart).trim()).toBe("ok");
+    expect(lines[3].slice(secondColumnStart).trim()).toBe(
+      "critical-issue-needs-attention",
+    );
+  });
+
+  it("truncates ANSI-styled cells without corrupting escape codes", () => {
+    Object.defineProperty(process.stdout, "columns", {
+      value: 40,
+      configurable: true,
+    });
+
+    const dataLine = renderTable([
+      ["FILE", "STATUS"],
+      [
+        "x",
+        badge("an unusually long status label that must be truncated", "warn"),
+      ],
+    ]).split("\n")[2];
+
+    expect(stripAnsi(dataLine)).toContain("…");
+    expect(dataLine.endsWith(`${String.fromCharCode(27)}[0m`)).toBe(true);
+
+    Object.defineProperty(process.stdout, "columns", {
+      value: originalColumns,
+      configurable: true,
+    });
+  });
+});
+
 describe("styleUnifiedDiff", () => {
   it("returns the raw diff untouched when no options are passed", () => {
     const raw = renderUnifiedDiff("a\nb\n", "a\nc\n", "f.txt");
