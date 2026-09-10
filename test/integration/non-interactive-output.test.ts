@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { REQUIRED_BINARIES } from "../../src/platform/detect.js";
 
 const createdTempDirectories: string[] = [];
 const repoRoot = process.cwd();
@@ -15,6 +16,22 @@ afterEach(async () => {
     await rm(directoryPath, { recursive: true, force: true });
   }
 });
+async function createFakeBinariesDirectory(
+  sandboxDirectory: string,
+): Promise<string> {
+  const fakeBinariesDirectory = join(sandboxDirectory, "fake-bin");
+  await mkdir(fakeBinariesDirectory, { recursive: true });
+
+  for (const binaryName of REQUIRED_BINARIES) {
+    await writeFile(
+      join(fakeBinariesDirectory, binaryName),
+      "#!/bin/sh\nexit 0\n",
+      { mode: 0o755 },
+    );
+  }
+
+  return fakeBinariesDirectory;
+}
 
 function normalize(output: string, repoDirectory: string): string {
   const ansiPattern = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
@@ -47,6 +64,9 @@ async function captureNonInteractiveRun(
   await mkdir(join(repoDirectory, ".sandbox"), { recursive: true });
   await writeFile(fixtureOsReleasePath, "ID=ubuntu\n", "utf8");
 
+  const fakeBinariesDirectory =
+    await createFakeBinariesDirectory(sandboxDirectory);
+
   const result = spawnSync(tsxBin, [cliEntry, ...argv], {
     cwd: repoDirectory,
     encoding: "utf8",
@@ -54,6 +74,7 @@ async function captureNonInteractiveRun(
     env: {
       ...process.env,
       HOME: homeDirectory,
+      PATH: `${fakeBinariesDirectory}${delimiter}${process.env.PATH ?? ""}`,
       AGEMON_DEV: "1",
       AGEMON_FAKE_SUBPROCESS: "1",
       AGEMON_FAKE_SERVICES: "1",
