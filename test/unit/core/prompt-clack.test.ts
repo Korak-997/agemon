@@ -25,12 +25,12 @@ describe("clackPrompts.gate", () => {
     await expect(clackPrompts.gate("Proceed?")).resolves.toBe("show-diff");
   });
 
-  it("offers approve/decline/show-diff with approve preselected", async () => {
-    clack.select.mockResolvedValueOnce("approve");
+  it("offers approve/decline/show-diff with decline preselected", async () => {
+    clack.select.mockResolvedValueOnce("decline");
     await clackPrompts.gate("Write instruction files?");
     expect(clack.select).toHaveBeenCalledWith({
       message: "Write instruction files?",
-      initialValue: "approve",
+      initialValue: "decline",
       options: [
         { value: "approve", label: "Proceed" },
         { value: "decline", label: "Skip" },

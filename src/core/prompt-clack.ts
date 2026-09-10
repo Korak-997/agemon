@@ -22,7 +22,7 @@ export const clackPrompts: GatePrompts = {
           { value: "decline", label: "Skip" },
           { value: "show-diff", label: "Show diff" },
         ],
-        initialValue: "approve",
+        initialValue: "decline",
       }),
     );
   },

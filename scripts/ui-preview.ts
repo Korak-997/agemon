@@ -71,7 +71,7 @@ async function previewGate(): Promise<void> {
       { value: "decline", label: "Skip" },
       { value: "show-diff", label: "Show diff" },
     ],
-    initialValue: "approve",
+    initialValue: "decline",
   });
   bailIfCancelled(choice);
   log.info(theme.dim(`resolved: ${String(choice)}`));
