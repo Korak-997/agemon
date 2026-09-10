@@ -1,5 +1,9 @@
 # agemon
 
+## 4.1.0
+
+- feat: improve terminal design and loading (#9)
+
 ## 4.0.0
 
 - feat: add cut-release workflow for automated versioning and release process (#8)
