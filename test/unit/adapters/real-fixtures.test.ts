@@ -83,4 +83,50 @@ describe("adapter configured-level classification against real fixture directori
     });
     expect(getRunCallCount()).toBe(0);
   });
+
+  it("classifies every adapter as configured for all-agents-configured-and-installed", async () => {
+    const { context, getRunCallCount } = await loadFixtureContext(
+      "all-agents-configured-and-installed",
+    );
+    const discovery = await discoverRepository(context);
+
+    const configuredByAdapter = Object.fromEntries(
+      getRegisteredAdapters().map((adapter) => [
+        adapter.id,
+        adapter
+          .discoverProjectResources(discovery)
+          .some((resource) => resource.exists),
+      ]),
+    );
+
+    expect(configuredByAdapter).toEqual({
+      "claude-code": true,
+      "gemini-cli": true,
+      copilot: true,
+    });
+    expect(getRunCallCount()).toBe(0);
+  });
+
+  it("classifies only Claude Code as configured for agent-on-path-but-unversioned", async () => {
+    const { context, getRunCallCount } = await loadFixtureContext(
+      "agent-on-path-but-unversioned",
+    );
+    const discovery = await discoverRepository(context);
+
+    const configuredByAdapter = Object.fromEntries(
+      getRegisteredAdapters().map((adapter) => [
+        adapter.id,
+        adapter
+          .discoverProjectResources(discovery)
+          .some((resource) => resource.exists),
+      ]),
+    );
+
+    expect(configuredByAdapter).toEqual({
+      "claude-code": true,
+      "gemini-cli": false,
+      copilot: false,
+    });
+    expect(getRunCallCount()).toBe(0);
+  });
 });
