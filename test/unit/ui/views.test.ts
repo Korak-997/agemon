@@ -131,6 +131,7 @@ describe("renderStatusReport", () => {
     ],
     duplication: [],
     trackedAgemonPaths: [],
+    agentsSummary: { total: 3, configured: 1, installed: 0 },
     healthy: true,
   };
 
@@ -140,6 +141,7 @@ describe("renderStatusReport", () => {
     expect(rendered).toContain("no overlapping instruction content detected");
     expect(rendered).toContain(".agemon/ is not tracked by git");
     expect(rendered).toContain("[ current ]");
+    expect(rendered).toContain("1/3 configured, 0/3 installed");
     expect(ANSI.test(rendered)).toBe(false);
   });
 
@@ -177,6 +179,7 @@ describe("renderInspectReport", () => {
     structuredConfig: [],
     binaries: [{ name: "code-review-graph", present: false }],
     duplication: { overlaps: [] },
+    agents: [],
   };
 
   it("renders an empty repo with no capability rows and no duplication", () => {
@@ -213,6 +216,48 @@ describe("renderInspectReport", () => {
     expect(rendered).toContain("[ managed-current ]");
     expect(rendered).toContain("code-review-graph");
     expect(rendered).toContain("present · managed");
+  });
+
+  it("renders detected agents with their resolved path and version", () => {
+    const rendered = renderInspectReport({
+      ...base,
+      agents: [
+        {
+          adapterId: "claude-code",
+          displayName: "Claude Code",
+          configured: true,
+          configuredResources: [],
+          installation: {
+            level: "installed",
+            executablePath: "/usr/local/bin/claude",
+            version: "1.8.2",
+            evidence: [
+              "resolved claude at /usr/local/bin/claude",
+              "reported version 1.8.2",
+            ],
+          },
+        },
+        {
+          adapterId: "gemini-cli",
+          displayName: "Gemini CLI",
+          configured: false,
+          configuredResources: [],
+          installation: {
+            level: "configured",
+            executablePath: null,
+            version: null,
+            evidence: [],
+          },
+        },
+      ],
+    });
+    expect(rendered).toContain("Agents");
+    expect(rendered).toContain("Claude Code");
+    expect(rendered).toContain("[ configured, installed ]");
+    expect(rendered).toContain("/usr/local/bin/claude");
+    expect(rendered).toContain("v1.8.2");
+    expect(rendered).toContain("Gemini CLI");
+    expect(rendered).toContain("[ not configured ]");
   });
 });
 

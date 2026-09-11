@@ -104,6 +104,11 @@ describe("status", () => {
     const currentReport = await buildStatusReport(context, []);
     expect(currentReport.managedResources[0].health).toBe("managed-current");
     expect(currentReport.healthy).toBe(true);
+    expect(currentReport.agentsSummary).toEqual({
+      total: 3,
+      configured: 0,
+      installed: 0,
+    });
     expect(await verifyManagedState(context)).toEqual([]);
 
     await writeFile(

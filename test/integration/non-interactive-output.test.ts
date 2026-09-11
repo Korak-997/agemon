@@ -598,7 +598,72 @@ describe("non-interactive output contract", () => {
         ],
         "duplication": {
           "overlaps": []
-        }
+        },
+        "agents": [
+          {
+            "adapterId": "claude-code",
+            "displayName": "Claude Code",
+            "configured": false,
+            "configuredResources": [
+              {
+                "path": "CLAUDE.md",
+                "kind": "rule-file",
+                "exists": false
+              },
+              {
+                "path": ".mcp.json",
+                "kind": "structured-config",
+                "exists": false
+              },
+              {
+                "path": ".claude/settings.json",
+                "kind": "structured-config",
+                "exists": false
+              }
+            ],
+            "installation": {
+              "level": "configured",
+              "executablePath": null,
+              "version": null,
+              "evidence": []
+            }
+          },
+          {
+            "adapterId": "gemini-cli",
+            "displayName": "Gemini CLI",
+            "configured": false,
+            "configuredResources": [
+              {
+                "path": "GEMINI.md",
+                "kind": "rule-file",
+                "exists": false
+              },
+              {
+                "path": ".gemini/settings.json",
+                "kind": "structured-config",
+                "exists": false
+              }
+            ],
+            "installation": {
+              "level": "configured",
+              "executablePath": null,
+              "version": null,
+              "evidence": []
+            }
+          },
+          {
+            "adapterId": "copilot",
+            "displayName": "GitHub Copilot",
+            "configured": false,
+            "configuredResources": [],
+            "installation": {
+              "level": "configured",
+              "executablePath": null,
+              "version": null,
+              "evidence": []
+            }
+          }
+        ]
       }"
     `);
   });

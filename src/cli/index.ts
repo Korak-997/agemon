@@ -61,6 +61,7 @@ interface CliOptions {
   allowUnignoredState?: boolean;
   plan?: string;
   quiet?: boolean;
+  checkAgentsUsable?: boolean;
 }
 
 const SILENT_SPINNER: StepSpinner = {
@@ -155,7 +156,10 @@ async function runInspectCommand(options: CliOptions): Promise<void> {
     progress: SILENT_PROGRESS,
   });
 
-  await runInspect(context, { json: Boolean(options.json) });
+  await runInspect(context, {
+    json: Boolean(options.json),
+    checkAgentsUsable: Boolean(options.checkAgentsUsable),
+  });
 }
 
 async function runStatusCommand(options: CliOptions): Promise<void> {
@@ -333,6 +337,10 @@ function createProgram(): Command {
       "Read-only inventory + eight-state classification + duplication report",
     )
     .option("--json", "emit the redacted JSON report instead of a table")
+    .option(
+      "--check-agents-usable",
+      "run a non-mutating usability probe for detected coding agents",
+    )
     .action((_options: CliOptions, command: Command) =>
       runInspectCommand({ ...command.parent?.opts(), ...command.opts() }),
     );

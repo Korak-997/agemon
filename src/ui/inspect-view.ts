@@ -1,3 +1,4 @@
+import type { AgentDetectionRow } from "../adapters/types.js";
 import type { ClassifiedResource, ResourceState } from "../inspect/classify.js";
 import { describeOverlap } from "../inspect/duplication.js";
 import type { InspectReport } from "../inspect/index.js";
@@ -40,6 +41,45 @@ function resourceRow(resource: ClassifiedResource): string[] {
     resource.path,
     badge(resource.state, RESOURCE_STATE_TONE[resource.state]),
     resource.detail ?? "",
+  ];
+}
+
+function agentStateLabel(row: AgentDetectionRow): string {
+  const parts = [row.configured ? "configured" : "not configured"];
+  if (row.installation.level !== "configured") {
+    parts.push(row.installation.level);
+  }
+  return parts.join(", ");
+}
+
+function agentStateTone(row: AgentDetectionRow): Parameters<typeof badge>[1] {
+  if (
+    row.installation.level === "installed" ||
+    row.installation.level === "usable"
+  ) {
+    return "ok";
+  }
+  return row.configured ? "warn" : "neutral";
+}
+
+function agentDetail(row: AgentDetectionRow): string {
+  const { installation } = row;
+  if (installation.executablePath) {
+    return `${installation.executablePath}${
+      installation.version ? `  v${installation.version}` : ""
+    }`;
+  }
+  if (installation.evidence.length > 0) {
+    return installation.evidence.join("; ");
+  }
+  return row.configured ? "not probed" : "";
+}
+
+function agentRow(row: AgentDetectionRow): string[] {
+  return [
+    row.displayName,
+    badge(agentStateLabel(row), agentStateTone(row)),
+    agentDetail(row),
   ];
 }
 
@@ -105,6 +145,11 @@ export function renderInspectReport(report: InspectReport): string {
         binary.present ? "yes" : "no",
       ]),
     ]),
+  );
+
+  blocks.push(section("Agents"));
+  blocks.push(
+    renderTable([["AGENT", "STATE", "DETAIL"], ...report.agents.map(agentRow)]),
   );
 
   blocks.push(section("Duplication"));
