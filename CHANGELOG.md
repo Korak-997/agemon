@@ -1,5 +1,9 @@
 # agemon
 
+## 4.3.1
+
+- feat: add agemon skill bundle and agent rules config
+
 ## 4.3.0
 
 - feat: Add read-only agent detection (Claude Code, Gemini CLI, Copilot) (#11)
