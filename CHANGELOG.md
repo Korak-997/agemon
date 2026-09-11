@@ -1,5 +1,9 @@
 # agemon
 
+## 4.3.0
+
+- feat: Add read-only agent detection (Claude Code, Gemini CLI, Copilot) (#11)
+
 ## 4.2.0
 
 - fix: update output normalization to mask plan IDs in non-interactive output (#10)
