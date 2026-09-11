@@ -1,0 +1,1 @@
+- Renamed from `performance-by-default` to `agemon-performance` for agemon branding — installed skills should read as agemon's own, not a third-party project name.

@@ -1,0 +1,4 @@
+capabilities = [ "crg", "daemon", "skills", "cli-tool", "master-prompt" ]
+
+[conflict_decisions]
+
