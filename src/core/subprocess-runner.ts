@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { basename } from "node:path";
 
 export interface SubprocessResult {
   code: number;
@@ -18,6 +19,7 @@ function formatCommand(command: string, args: string[]): string {
 let fakeCrgInstalledState: boolean | null = null;
 let fakeInstalledSkillNames: Set<string> | null = null;
 let fakeInstalledGlobalNpmPackageNames: Set<string> | null = null;
+let fakeVersionedAgentBinaryNames: Set<string> | null = null;
 let fakeStateSignature: string | null = null;
 
 function buildFakeStateSignature(): string {
@@ -25,6 +27,7 @@ function buildFakeStateSignature(): string {
     process.env.AGEMON_FAKE_PREINSTALLED_CRG ?? "",
     process.env.AGEMON_FAKE_PREINSTALLED_SKILLS ?? "",
     process.env.AGEMON_FAKE_PREINSTALLED_NPM_PACKAGES ?? "",
+    process.env.AGEMON_FAKE_INSTALLED_AGENTS ?? "",
   ].join("||");
 }
 
@@ -54,6 +57,12 @@ function initializeFakeStateIfNeeded(): void {
   fakeInstalledGlobalNpmPackageNames = new Set(
     preinstalledGlobalNpmPackages ?? [],
   );
+
+  const versionedAgentBinaryNames =
+    process.env.AGEMON_FAKE_INSTALLED_AGENTS?.split(",")
+      .map((binaryName) => binaryName.trim())
+      .filter((binaryName) => binaryName.length > 0);
+  fakeVersionedAgentBinaryNames = new Set(versionedAgentBinaryNames ?? []);
 }
 
 function readOptionValue(
@@ -304,6 +313,27 @@ function buildFakeAgnixResponse(args: string[]): SubprocessResult {
   };
 }
 
+const FAKE_AGENT_BINARY_NAMES: ReadonlySet<string> = new Set([
+  "claude",
+  "gemini",
+]);
+
+function buildFakeAgentVersionResponse(binaryName: string): SubprocessResult {
+  if (fakeVersionedAgentBinaryNames?.has(binaryName)) {
+    return {
+      code: 0,
+      stdout: `${binaryName} 1.0.0-fake\n`,
+      stderr: "",
+    };
+  }
+
+  return {
+    code: 0,
+    stdout: "unrecognized output\n",
+    stderr: "",
+  };
+}
+
 export async function runSubprocess(
   command: string,
   args: string[],
@@ -339,6 +369,11 @@ export async function runSubprocess(
 
     if (command === "agnix") {
       return buildFakeAgnixResponse(args);
+    }
+
+    const commandBinaryName = basename(command);
+    if (FAKE_AGENT_BINARY_NAMES.has(commandBinaryName)) {
+      return buildFakeAgentVersionResponse(commandBinaryName);
     }
 
     return {
