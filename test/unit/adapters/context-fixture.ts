@@ -26,14 +26,14 @@ function createNoOpUi(): Context["ui"] {
 
 export interface CreateAdapterTestContextOptions {
   confirm?: (message: string) => Promise<boolean>;
+  cwd?: string;
 }
 
 export async function createAdapterTestContext(
   options: CreateAdapterTestContextOptions = {},
 ): Promise<Context> {
-  const sandboxDirectory = await mkdtemp(
-    join(tmpdir(), "agemon-adapters-test-"),
-  );
+  const sandboxDirectory =
+    options.cwd ?? (await mkdtemp(join(tmpdir(), "agemon-adapters-test-")));
 
   return {
     cwd: sandboxDirectory,
