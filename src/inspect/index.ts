@@ -1,3 +1,5 @@
+import { detectAgents } from "../adapters/detect.js";
+import type { AgentDetectionRow } from "../adapters/types.js";
 import type { Context } from "../core/context.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
@@ -30,13 +32,22 @@ export interface InspectReport {
   structuredConfig: RedactedStructuredConfig[];
   binaries: { name: string; present: boolean }[];
   duplication: DuplicationReport;
+  agents: AgentDetectionRow[];
+}
+
+export interface InspectOptions {
+  checkAgentsUsable?: boolean;
 }
 
 export async function inspectRepository(
   ctx: Context,
   plugins: AgemonPlugin[] = getRegisteredPlugins(),
+  options: InspectOptions = {},
 ): Promise<InspectReport> {
   const discovery = await discoverRepository(ctx);
+  const agents = await detectAgents(ctx, discovery, {
+    checkUsable: options.checkAgentsUsable,
+  });
   const resources = classifyResources(
     discovery,
     ctx.manifest.getActions(),
@@ -103,14 +114,17 @@ export async function inspectRepository(
       present: binary.present,
     })),
     duplication,
+    agents,
   };
 }
 
 export async function runInspect(
   ctx: Context,
-  options: { json: boolean },
+  options: { json: boolean; checkAgentsUsable?: boolean },
 ): Promise<void> {
-  const report = await inspectRepository(ctx);
+  const report = await inspectRepository(ctx, undefined, {
+    checkAgentsUsable: options.checkAgentsUsable,
+  });
 
   if (options.json) {
     ctx.log.log(JSON.stringify(report, null, 2));

@@ -1,10 +1,18 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
+import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import { inspectRepository, runInspect } from "../../../src/inspect/index.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
@@ -187,6 +195,85 @@ describe("inspectRepository", () => {
     expect(
       stateForPath(report, ".github/instructions/api.instructions.md"),
     ).toBe("unmanaged");
+  });
+
+  it("reports agent detection rows capped at 'configured' when the probe consent is declined", async () => {
+    const context = await createInspectContext();
+    await writeFile(
+      join(context.cwd, "CLAUDE.md"),
+      "# AI Agent Rules\n\nBe surgical.\n",
+      "utf8",
+    );
+
+    const report = await inspectRepository(context);
+
+    expect(report.agents.map((row) => row.adapterId)).toEqual([
+      "claude-code",
+      "gemini-cli",
+      "copilot",
+    ]);
+    const claudeCode = report.agents.find(
+      (row) => row.adapterId === "claude-code",
+    );
+    expect(claudeCode?.configured).toBe(true);
+    expect(claudeCode?.installation).toEqual({
+      level: "configured",
+      executablePath: null,
+      version: null,
+      evidence: [],
+    });
+  });
+
+  it("threads checkAgentsUsable through to the adapters' usability probe", async () => {
+    const binDirectory = await mkdtemp(
+      join(tmpdir(), "agemon-inspect-bin-test-"),
+    );
+    createdTempDirectories.push(binDirectory);
+    const claudeBinaryPath = join(binDirectory, "claude");
+    await writeFile(claudeBinaryPath, "#!/bin/sh\necho fake\n", "utf8");
+    await chmod(claudeBinaryPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalFakeSubprocess = process.env.AGEMON_FAKE_SUBPROCESS;
+    const originalFakeInstalledAgents =
+      process.env.AGEMON_FAKE_INSTALLED_AGENTS;
+    const originalFakeUsableAgents = process.env.AGEMON_FAKE_USABLE_AGENTS;
+    process.env.PATH = binDirectory;
+    process.env.AGEMON_FAKE_SUBPROCESS = "1";
+    process.env.AGEMON_FAKE_INSTALLED_AGENTS = "claude";
+    process.env.AGEMON_FAKE_USABLE_AGENTS = "claude";
+
+    try {
+      const context = await createInspectContext();
+      context.confirm = async () => true;
+      context.run = runSubprocess;
+
+      const report = await inspectRepository(context, undefined, {
+        checkAgentsUsable: true,
+      });
+
+      expect(
+        report.agents.find((row) => row.adapterId === "claude-code")
+          ?.installation.level,
+      ).toBe("usable");
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalFakeSubprocess === undefined) {
+        delete process.env.AGEMON_FAKE_SUBPROCESS;
+      } else {
+        process.env.AGEMON_FAKE_SUBPROCESS = originalFakeSubprocess;
+      }
+      if (originalFakeInstalledAgents === undefined) {
+        delete process.env.AGEMON_FAKE_INSTALLED_AGENTS;
+      } else {
+        process.env.AGEMON_FAKE_INSTALLED_AGENTS = originalFakeInstalledAgents;
+      }
+      if (originalFakeUsableAgents === undefined) {
+        delete process.env.AGEMON_FAKE_USABLE_AGENTS;
+      } else {
+        process.env.AGEMON_FAKE_USABLE_AGENTS = originalFakeUsableAgents;
+      }
+    }
   });
 
   it("produces a byte-stable report for unchanged input", async () => {

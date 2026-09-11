@@ -116,6 +116,11 @@ export function renderStatusReport(report: StatusReport): string {
     );
   }
 
+  lines.push(section("Agents"));
+  lines.push(
+    `  ${report.agentsSummary.configured}/${report.agentsSummary.total} configured, ${report.agentsSummary.installed}/${report.agentsSummary.total} installed`,
+  );
+
   lines.push(section("Workspace isolation"));
   if (report.trackedAgemonPaths.length === 0) {
     lines.push("  .agemon/ is not tracked by git");

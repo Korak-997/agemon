@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { detectAgents } from "../adapters/detect.js";
 import type { Context } from "../core/context.js";
 import { fingerprintContent } from "../core/fingerprint.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
@@ -32,11 +33,13 @@ export interface CapabilityHealth {
 }
 
 export interface CapabilityStatusRow extends CapabilityStateRow {
-  /**
-   * A `verify()` verdict, present only when agemon has a ledger record for the
-   * capability (so it is something agemon is expected to keep healthy).
-   */
   health: CapabilityHealth | null;
+}
+
+export interface AgentsSummary {
+  total: number;
+  configured: number;
+  installed: number;
 }
 
 export interface StatusReport {
@@ -44,6 +47,7 @@ export interface StatusReport {
   capabilities: CapabilityStatusRow[];
   duplication: OverlapFinding[];
   trackedAgemonPaths: string[];
+  agentsSummary: AgentsSummary;
   healthy: boolean;
 }
 
@@ -178,6 +182,14 @@ export async function buildStatusReport(
 
   const capabilities = await buildCapabilityStatusRows(ctx, plugins);
 
+  const agents = await detectAgents(ctx, discovery);
+  const agentsSummary: AgentsSummary = {
+    total: agents.length,
+    configured: agents.filter((row) => row.configured).length,
+    installed: agents.filter((row) => row.installation.level !== "configured")
+      .length,
+  };
+
   const trackedAgemonPaths = discovery.isolation.trackedAgemonPaths;
   const healthy =
     managedResources.every(
@@ -192,6 +204,7 @@ export async function buildStatusReport(
     capabilities,
     duplication,
     trackedAgemonPaths,
+    agentsSummary,
     healthy,
   };
 }

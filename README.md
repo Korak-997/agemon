@@ -182,6 +182,41 @@ agemon --yes --skill-groups all
 agemon --yes --skill-groups security,architecture
 ```
 
+### Agent Detection (`agemon inspect`)
+
+`agemon inspect` reports, read-only, which coding-agent ecosystems the repo is set up for
+and which are actually present on the machine. Three ecosystems are covered: **Claude
+Code**, **Gemini CLI**, and **VS Code/GitHub Copilot**. For each, the report shows:
+
+- **configured** — recognizable config exists in the repo (e.g. `CLAUDE.md`,
+  `.claude/settings.json`, `GEMINI.md`, `.gemini/settings.json`, or Copilot instruction
+  files), independent of anything installed on the machine.
+- **installed** — a real executable resolved on `PATH` and reported a version via a
+  `--version`-style probe. The report always shows the resolved absolute path, never just
+  the bare command name, so it's clear exactly what agemon ran. Copilot has no standalone
+  executable, so it never advances past `configured`.
+- **usable** — opt-in only, never run by default. Pass `--check-agents-usable` to also run
+  a non-mutating dry-run check (e.g. listing config) for adapters that define one.
+
+Detection never executes an agent with a prompt or tool access — only version/dry-run
+probes. The first time it looks for installed executables, agemon asks for one-time
+confirmation ("May agemon look for AI coding agents installed on this machine?"); declining
+still returns full `configured` results, just without the installed/usable checks.
+
+```bash
+# Table report, including the Agents section
+agemon inspect
+
+# Same, plus an opt-in non-mutating usability probe
+agemon inspect --check-agents-usable
+
+# Machine-readable report (agents included under `agents`)
+agemon inspect --json
+```
+
+`agemon status` includes a one-line agent summary (counts configured/installed) alongside
+its usual health/drift output.
+
 ## Reversibility Guarantees
 
 - `nuke` removes only agemon-managed artifacts tracked in `.agemon/state.json`.
@@ -284,11 +319,17 @@ intact; the skill's own identity (what gets installed, listed, and invoked) is f
 
 ## Roadmap Notes
 
+Shipped:
+
+- Read-only agent detection (`agemon inspect`'s "Agents" section, `--check-agents-usable`)
+  for Claude Code, Gemini CLI, and Copilot. Delegating work to a detected agent is not yet
+  built.
+
 Planned but not currently implemented:
 
-- Dedicated `status` command.
 - Dedicated `doctor` command.
 - Native Windows/macOS platform support.
+- Agent delegation (`agemon delegate`/`agemon handoff`).
 
 ## License
 
