@@ -73,3 +73,48 @@ export async function probeAgentInstallation(
     ],
   };
 }
+
+export interface UsabilityProbeSpec {
+  usabilityArgs: string[];
+  timeoutMs: number;
+}
+
+export async function probeAgentUsability(
+  ctx: Context,
+  installation: AgentInstallationEvidence,
+  spec: UsabilityProbeSpec,
+): Promise<AgentInstallationEvidence> {
+  if (installation.level !== "installed" || !installation.executablePath) {
+    return installation;
+  }
+
+  const command = [installation.executablePath, ...spec.usabilityArgs].join(
+    " ",
+  );
+  const result = await ctx.run(
+    installation.executablePath,
+    spec.usabilityArgs,
+    {
+      timeoutMs: spec.timeoutMs,
+    },
+  );
+
+  if (result.code !== 0) {
+    return {
+      ...installation,
+      evidence: [
+        ...installation.evidence,
+        `usability probe failed: ${command} exited ${result.code}`,
+      ],
+    };
+  }
+
+  return {
+    ...installation,
+    level: "usable",
+    evidence: [
+      ...installation.evidence,
+      `usability probe succeeded: ${command}`,
+    ],
+  };
+}

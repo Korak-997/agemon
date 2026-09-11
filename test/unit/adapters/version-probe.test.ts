@@ -2,8 +2,10 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { AgentInstallationEvidence } from "../../../src/adapters/types.js";
 import {
   probeAgentInstallation,
+  probeAgentUsability,
   resolveExecutableAbsolutePath,
 } from "../../../src/adapters/version-probe.js";
 import { createAdapterTestContext } from "./context-fixture.js";
@@ -12,6 +14,7 @@ const createdTempDirectories: string[] = [];
 const originalPath = process.env.PATH;
 const originalFakeSubprocess = process.env.AGEMON_FAKE_SUBPROCESS;
 const originalFakeInstalledAgents = process.env.AGEMON_FAKE_INSTALLED_AGENTS;
+const originalFakeUsableAgents = process.env.AGEMON_FAKE_USABLE_AGENTS;
 
 afterEach(async () => {
   for (const directoryPath of createdTempDirectories.splice(0)) {
@@ -27,6 +30,11 @@ afterEach(async () => {
     delete process.env.AGEMON_FAKE_INSTALLED_AGENTS;
   } else {
     process.env.AGEMON_FAKE_INSTALLED_AGENTS = originalFakeInstalledAgents;
+  }
+  if (originalFakeUsableAgents === undefined) {
+    delete process.env.AGEMON_FAKE_USABLE_AGENTS;
+  } else {
+    process.env.AGEMON_FAKE_USABLE_AGENTS = originalFakeUsableAgents;
   }
 });
 
@@ -161,5 +169,79 @@ describe("probeAgentInstallation", () => {
     expect(evidence.evidence.some((line) => line.includes("exit 124"))).toBe(
       true,
     );
+  });
+});
+
+describe("probeAgentUsability", () => {
+  const installedEvidence = (
+    executablePath: string,
+  ): AgentInstallationEvidence => ({
+    level: "installed",
+    executablePath,
+    version: "1.0.0-fake",
+    evidence: [
+      `resolved claude at ${executablePath}`,
+      "reported version 1.0.0-fake",
+    ],
+  });
+
+  it("returns the evidence unchanged when the adapter isn't installed", async () => {
+    const context = await createAdapterTestContext();
+    createdTempDirectories.push(context.cwd);
+    const configuredOnly: AgentInstallationEvidence = {
+      level: "configured",
+      executablePath: null,
+      version: null,
+      evidence: [],
+    };
+
+    const evidence = await probeAgentUsability(context, configuredOnly, {
+      usabilityArgs: ["doctor"],
+      timeoutMs: 1000,
+    });
+
+    expect(evidence).toBe(configuredOnly);
+  });
+
+  it("upgrades to usable when the dry-run probe succeeds", async () => {
+    const directory = await createFakeExecutable("claude");
+    process.env.PATH = directory;
+    process.env.AGEMON_FAKE_SUBPROCESS = "1";
+    process.env.AGEMON_FAKE_USABLE_AGENTS = "claude";
+    const context = await createAdapterTestContext();
+    createdTempDirectories.push(context.cwd);
+    const executablePath = join(directory, "claude");
+
+    const evidence = await probeAgentUsability(
+      context,
+      installedEvidence(executablePath),
+      { usabilityArgs: ["doctor"], timeoutMs: 1000 },
+    );
+
+    expect(evidence.level).toBe("usable");
+    expect(evidence.evidence.some((line) => line.includes("succeeded"))).toBe(
+      true,
+    );
+  });
+
+  it("stays at installed and records the failure when the dry-run probe exits non-zero", async () => {
+    const directory = await createFakeExecutable("claude");
+    process.env.PATH = directory;
+    process.env.AGEMON_FAKE_SUBPROCESS = "1";
+    delete process.env.AGEMON_FAKE_USABLE_AGENTS;
+    const context = await createAdapterTestContext();
+    createdTempDirectories.push(context.cwd);
+    const executablePath = join(directory, "claude");
+
+    const evidence = await probeAgentUsability(
+      context,
+      installedEvidence(executablePath),
+      { usabilityArgs: ["doctor"], timeoutMs: 1000 },
+    );
+
+    expect(evidence.level).toBe("installed");
+    expect(
+      evidence.evidence.some((line) => line.includes("usability probe failed")),
+    ).toBe(true);
   });
 });

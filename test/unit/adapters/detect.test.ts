@@ -10,6 +10,7 @@ const createdTempDirectories: string[] = [];
 const originalPath = process.env.PATH;
 const originalFakeSubprocess = process.env.AGEMON_FAKE_SUBPROCESS;
 const originalFakeInstalledAgents = process.env.AGEMON_FAKE_INSTALLED_AGENTS;
+const originalFakeUsableAgents = process.env.AGEMON_FAKE_USABLE_AGENTS;
 
 afterEach(async () => {
   for (const directoryPath of createdTempDirectories.splice(0)) {
@@ -25,6 +26,11 @@ afterEach(async () => {
     delete process.env.AGEMON_FAKE_INSTALLED_AGENTS;
   } else {
     process.env.AGEMON_FAKE_INSTALLED_AGENTS = originalFakeInstalledAgents;
+  }
+  if (originalFakeUsableAgents === undefined) {
+    delete process.env.AGEMON_FAKE_USABLE_AGENTS;
+  } else {
+    process.env.AGEMON_FAKE_USABLE_AGENTS = originalFakeUsableAgents;
   }
 });
 
@@ -112,6 +118,78 @@ describe("detectAgents", () => {
       claudeRow?.configuredResources.find(
         (resource) => resource.path === "CLAUDE.md",
       )?.exists,
+    ).toBe(true);
+  });
+
+  it("never runs a usability probe unless checkUsable is explicitly passed", async () => {
+    const directory = await createFakeBinDirectory(["claude", "gemini"]);
+    process.env.PATH = directory;
+    process.env.AGEMON_FAKE_SUBPROCESS = "1";
+    process.env.AGEMON_FAKE_INSTALLED_AGENTS = "claude,gemini";
+    process.env.AGEMON_FAKE_USABLE_AGENTS = "claude,gemini";
+
+    const context = await createAdapterTestContext({
+      confirm: async () => true,
+    });
+    createdTempDirectories.push(context.cwd);
+
+    const rows = await detectAgents(context, buildDiscoveryResult());
+    const byAdapterId = new Map(rows.map((row) => [row.adapterId, row]));
+
+    expect(byAdapterId.get("claude-code")?.installation.level).toBe(
+      "installed",
+    );
+    expect(byAdapterId.get("gemini-cli")?.installation.level).toBe("installed");
+  });
+
+  it("upgrades installed adapters to usable when checkUsable is true and the dry-run succeeds", async () => {
+    const directory = await createFakeBinDirectory(["claude", "gemini"]);
+    process.env.PATH = directory;
+    process.env.AGEMON_FAKE_SUBPROCESS = "1";
+    process.env.AGEMON_FAKE_INSTALLED_AGENTS = "claude,gemini";
+    process.env.AGEMON_FAKE_USABLE_AGENTS = "claude,gemini";
+
+    const context = await createAdapterTestContext({
+      confirm: async () => true,
+    });
+    createdTempDirectories.push(context.cwd);
+
+    const rows = await detectAgents(context, buildDiscoveryResult(), {
+      checkUsable: true,
+    });
+    const byAdapterId = new Map(rows.map((row) => [row.adapterId, row]));
+
+    expect(byAdapterId.get("claude-code")?.installation.level).toBe("usable");
+    expect(byAdapterId.get("gemini-cli")?.installation.level).toBe("usable");
+    expect(byAdapterId.get("copilot")?.installation.level).toBe("configured");
+  });
+
+  it("leaves an adapter at installed when checkUsable is true but the dry-run fails", async () => {
+    const directory = await createFakeBinDirectory(["claude", "gemini"]);
+    process.env.PATH = directory;
+    process.env.AGEMON_FAKE_SUBPROCESS = "1";
+    process.env.AGEMON_FAKE_INSTALLED_AGENTS = "claude,gemini";
+    delete process.env.AGEMON_FAKE_USABLE_AGENTS;
+
+    const context = await createAdapterTestContext({
+      confirm: async () => true,
+    });
+    createdTempDirectories.push(context.cwd);
+
+    const rows = await detectAgents(context, buildDiscoveryResult(), {
+      checkUsable: true,
+    });
+    const byAdapterId = new Map(rows.map((row) => [row.adapterId, row]));
+
+    expect(byAdapterId.get("claude-code")?.installation.level).toBe(
+      "installed",
+    );
+    expect(
+      byAdapterId
+        .get("claude-code")
+        ?.installation.evidence.some((line) =>
+          line.includes("usability probe failed"),
+        ),
     ).toBe(true);
   });
 });

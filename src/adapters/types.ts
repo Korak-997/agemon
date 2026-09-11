@@ -25,6 +25,10 @@ export interface AgentAdapter {
   ): DiscoveredAgentResource[];
 
   detectInstallation(ctx: Context): Promise<AgentInstallationEvidence>;
+  detectUsability?(
+    ctx: Context,
+    installation: AgentInstallationEvidence,
+  ): Promise<AgentInstallationEvidence>;
 }
 
 export interface AgentDetectionRow {

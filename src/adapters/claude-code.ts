@@ -3,6 +3,8 @@ import type { AgentAdapter } from "./types.js";
 import {
   extractSemverVersion,
   probeAgentInstallation,
+  probeAgentUsability,
+  type UsabilityProbeSpec,
   type VersionProbeSpec,
 } from "./version-probe.js";
 
@@ -11,6 +13,11 @@ export const CLAUDE_PROBE_SPEC: VersionProbeSpec = {
   versionArgs: ["--version"],
   parseVersion: extractSemverVersion,
   timeoutMs: 3000,
+};
+
+export const CLAUDE_USABILITY_PROBE_SPEC: UsabilityProbeSpec = {
+  usabilityArgs: ["doctor"],
+  timeoutMs: 5000,
 };
 
 export const claudeCodeAdapter: AgentAdapter = {
@@ -26,4 +33,6 @@ export const claudeCodeAdapter: AgentAdapter = {
     ];
   },
   detectInstallation: (ctx) => probeAgentInstallation(ctx, CLAUDE_PROBE_SPEC),
+  detectUsability: (ctx, installation) =>
+    probeAgentUsability(ctx, installation, CLAUDE_USABILITY_PROBE_SPEC),
 };

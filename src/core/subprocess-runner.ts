@@ -20,6 +20,7 @@ let fakeCrgInstalledState: boolean | null = null;
 let fakeInstalledSkillNames: Set<string> | null = null;
 let fakeInstalledGlobalNpmPackageNames: Set<string> | null = null;
 let fakeVersionedAgentBinaryNames: Set<string> | null = null;
+let fakeUsableAgentBinaryNames: Set<string> | null = null;
 let fakeStateSignature: string | null = null;
 
 function buildFakeStateSignature(): string {
@@ -28,6 +29,7 @@ function buildFakeStateSignature(): string {
     process.env.AGEMON_FAKE_PREINSTALLED_SKILLS ?? "",
     process.env.AGEMON_FAKE_PREINSTALLED_NPM_PACKAGES ?? "",
     process.env.AGEMON_FAKE_INSTALLED_AGENTS ?? "",
+    process.env.AGEMON_FAKE_USABLE_AGENTS ?? "",
   ].join("||");
 }
 
@@ -63,6 +65,13 @@ function initializeFakeStateIfNeeded(): void {
       .map((binaryName) => binaryName.trim())
       .filter((binaryName) => binaryName.length > 0);
   fakeVersionedAgentBinaryNames = new Set(versionedAgentBinaryNames ?? []);
+
+  const usableAgentBinaryNames = process.env.AGEMON_FAKE_USABLE_AGENTS?.split(
+    ",",
+  )
+    .map((binaryName) => binaryName.trim())
+    .filter((binaryName) => binaryName.length > 0);
+  fakeUsableAgentBinaryNames = new Set(usableAgentBinaryNames ?? []);
 }
 
 function readOptionValue(
@@ -334,6 +343,36 @@ function buildFakeAgentVersionResponse(binaryName: string): SubprocessResult {
   };
 }
 
+function buildFakeAgentUsabilityResponse(
+  binaryName: string,
+  args: string[],
+): SubprocessResult {
+  if (fakeUsableAgentBinaryNames?.has(binaryName)) {
+    return {
+      code: 0,
+      stdout: `[fake subprocess] ${binaryName} ${args.join(" ")} ok\n`,
+      stderr: "",
+    };
+  }
+
+  return {
+    code: 1,
+    stdout: "",
+    stderr: `${binaryName} ${args.join(" ")}: command failed\n`,
+  };
+}
+
+function buildFakeAgentResponse(
+  binaryName: string,
+  args: string[],
+): SubprocessResult {
+  if (args[0] === "--version") {
+    return buildFakeAgentVersionResponse(binaryName);
+  }
+
+  return buildFakeAgentUsabilityResponse(binaryName, args);
+}
+
 export async function runSubprocess(
   command: string,
   args: string[],
@@ -373,7 +412,7 @@ export async function runSubprocess(
 
     const commandBinaryName = basename(command);
     if (FAKE_AGENT_BINARY_NAMES.has(commandBinaryName)) {
-      return buildFakeAgentVersionResponse(commandBinaryName);
+      return buildFakeAgentResponse(commandBinaryName, args);
     }
 
     return {

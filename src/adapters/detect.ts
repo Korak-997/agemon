@@ -16,10 +16,15 @@ function configuredOnlyEvidence(): AgentInstallationEvidence {
   };
 }
 
+export interface DetectAgentsOptions {
+  checkUsable?: boolean;
+}
+
 type BaseDetectionRow = Omit<AgentDetectionRow, "installation">;
 export async function detectAgents(
   ctx: Context,
   discovery: DiscoveryResult,
+  options: DetectAgentsOptions = {},
 ): Promise<AgentDetectionRow[]> {
   const adapters = getRegisteredAdapters();
   const baseRows: BaseDetectionRow[] = adapters.map((adapter) => {
@@ -45,8 +50,24 @@ export async function detectAgents(
   const installations = await Promise.all(
     adapters.map((adapter) => adapter.detectInstallation(ctx)),
   );
+
+  if (!options.checkUsable) {
+    return baseRows.map((row, index) => ({
+      ...row,
+      installation: installations[index],
+    }));
+  }
+
+  const withUsability = await Promise.all(
+    adapters.map((adapter, index) => {
+      const installation = installations[index];
+      return adapter.detectUsability
+        ? adapter.detectUsability(ctx, installation)
+        : installation;
+    }),
+  );
   return baseRows.map((row, index) => ({
     ...row,
-    installation: installations[index],
+    installation: withUsability[index],
   }));
 }
