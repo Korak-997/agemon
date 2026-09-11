@@ -1,5 +1,9 @@
 # agemon
 
+## 4.4.0
+
+- fix: lint issues are resolved
+
 ## 4.3.1
 
 - feat: add agemon skill bundle and agent rules config
