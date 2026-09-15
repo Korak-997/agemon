@@ -264,4 +264,103 @@ describe("resolveConsent", () => {
     expect(logged.some((line) => line.includes("preview body"))).toBe(true);
     expect(result.approved).toEqual([ruleOperation]);
   });
+
+  it("routes a 'replace' conflict decision into approved with the action rewritten", async () => {
+    const conflictOperation = operation({
+      action: "conflict",
+      targetPath: "CLAUDE.md",
+    });
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([conflictOperation]),
+    });
+
+    const prompts: GatePrompts = {
+      async gate() {
+        return "approve";
+      },
+      async conflict() {
+        return "replace";
+      },
+    };
+
+    const result = await resolveConsent({
+      gates,
+      yes: false,
+      interactive: true,
+      prompts,
+      log: silentLog,
+    });
+
+    expect(result.approved).toEqual([
+      { ...conflictOperation, action: "replace" },
+    ]);
+    expect(result.skipped).toEqual([]);
+    expect(result.conflictResolutions).toEqual([
+      { resourceId: conflictOperation.resourceId, decision: "replace" },
+    ]);
+  });
+
+  it("records a 'keep' conflict decision without approving the operation", async () => {
+    const conflictOperation = operation({
+      action: "conflict",
+      targetPath: "CLAUDE.md",
+    });
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([conflictOperation]),
+    });
+
+    const prompts: GatePrompts = {
+      async gate() {
+        return "approve";
+      },
+      async conflict() {
+        return "keep";
+      },
+    };
+
+    const result = await resolveConsent({
+      gates,
+      yes: false,
+      interactive: true,
+      prompts,
+      log: silentLog,
+    });
+
+    expect(result.approved).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        operation: conflictOperation,
+        reason: expect.stringContaining("keeping your version"),
+      },
+    ]);
+    expect(result.conflictResolutions).toEqual([
+      { resourceId: conflictOperation.resourceId, decision: "keep" },
+    ]);
+  });
+
+  it("honors a recorded 'replace' decision from agemon.toml without prompting", async () => {
+    const conflictOperation = operation({
+      action: "conflict",
+      targetPath: "CLAUDE.md",
+    });
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([conflictOperation]),
+    });
+
+    const result = await resolveConsent({
+      gates,
+      yes: false,
+      interactive: true,
+      prompts: alwaysDecline,
+      log: silentLog,
+      conflictDecisions: { [conflictOperation.resourceId]: "replace" },
+    });
+
+    expect(result.approved).toEqual([
+      { ...conflictOperation, action: "replace" },
+    ]);
+  });
 });

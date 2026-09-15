@@ -54,17 +54,25 @@ describe("clackPrompts.gate", () => {
 
 describe("clackPrompts.conflict", () => {
   it("returns the chosen select value unchanged", async () => {
-    clack.select.mockResolvedValueOnce("keep-mine");
-    await expect(clackPrompts.conflict("Which version?")).resolves.toBe(
-      "keep-mine",
-    );
+    clack.select.mockResolvedValueOnce("keep");
+    await expect(clackPrompts.conflict("Which version?")).resolves.toBe("keep");
   });
 
-  it("defaults to skip", async () => {
+  it("offers keep/replace/show-theirs/skip with skip preselected", async () => {
     clack.select.mockResolvedValueOnce("skip");
     await clackPrompts.conflict("Which version?");
-    expect(clack.select).toHaveBeenCalledWith(
-      expect.objectContaining({ initialValue: "skip" }),
-    );
+    expect(clack.select).toHaveBeenCalledWith({
+      message: "Which version?",
+      initialValue: "skip",
+      options: [
+        { value: "keep", label: "Keep — leave your version as-is" },
+        {
+          value: "replace",
+          label: "Replace — overwrite with agemon's version",
+        },
+        { value: "show-theirs", label: "Show agemon's" },
+        { value: "skip", label: "Skip — decide later" },
+      ],
+    });
   });
 });

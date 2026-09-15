@@ -15,7 +15,7 @@ export async function promptYesNo(message: string): Promise<boolean> {
 }
 
 export type GateReply = "approve" | "decline" | "show-diff";
-export type ConflictReply = "keep-mine" | "show-theirs" | "skip";
+export type ConflictReply = "keep" | "replace" | "show-theirs" | "skip";
 
 export interface CreateConfirmerInput {
   yes: boolean;
