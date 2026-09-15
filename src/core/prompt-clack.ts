@@ -31,9 +31,13 @@ export const clackPrompts: GatePrompts = {
       await select<ConflictReply>({
         message: summary,
         options: [
-          { value: "keep-mine", label: "Keep yours" },
+          { value: "keep", label: "Keep — leave your version as-is" },
+          {
+            value: "replace",
+            label: "Replace — overwrite with agemon's version",
+          },
           { value: "show-theirs", label: "Show agemon's" },
-          { value: "skip", label: "Skip" },
+          { value: "skip", label: "Skip — decide later" },
         ],
         initialValue: "skip",
       }),

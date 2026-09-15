@@ -19,7 +19,7 @@ import {
 } from "./plan-store.js";
 import { isInteractiveTerminal } from "./prompt.js";
 
-type ConflictDecisionMap = Record<string, "keep-mine" | "skip">;
+type ConflictDecisionMap = Record<string, "keep" | "replace" | "skip">;
 
 export interface OrchestratorOptions {
   only?: string;

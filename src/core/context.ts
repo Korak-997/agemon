@@ -46,7 +46,9 @@ export interface Context {
   confirm: (message: string) => Promise<boolean>;
   consent: (
     gates: ConsentGate[],
-    options?: { conflictDecisions?: Record<string, "keep-mine" | "skip"> },
+    options?: {
+      conflictDecisions?: Record<string, "keep" | "replace" | "skip">;
+    },
   ) => Promise<ApprovedOperationSet>;
   skillGroupsOption?: string;
 }

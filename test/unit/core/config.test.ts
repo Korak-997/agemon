@@ -71,7 +71,7 @@ describe("agemon.toml config", () => {
     );
 
     await expect(loadConfig(cwd)).rejects.toThrow(
-      /keep-mine.*skip|skip.*keep-mine/,
+      /"keep", "replace", or "skip"/,
     );
   });
 

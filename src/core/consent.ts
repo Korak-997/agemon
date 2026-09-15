@@ -33,7 +33,7 @@ export interface SkippedOperation {
   reason: string;
 }
 
-export type RecordedConflictDecision = "keep-mine" | "skip";
+export type RecordedConflictDecision = "keep" | "replace" | "skip";
 
 export interface ConflictResolution {
   resourceId: string;
@@ -236,7 +236,7 @@ export async function resolveConsent(
         const { decision, reason } = recordedDecision
           ? {
               decision: recordedDecision,
-              reason: `conflict ${recordedDecision === "keep-mine" ? "resolved by keeping your version" : "skipped"} per agemon.toml`,
+              reason: `conflict ${describeRecordedDecision(recordedDecision)} per agemon.toml`,
             }
           : await resolveConflict(operation, {
               interactive,
@@ -248,6 +248,10 @@ export async function resolveConsent(
             resourceId: operation.resourceId,
             decision,
           });
+        }
+        if (decision === "replace") {
+          approved.push({ ...operation, action: "replace" });
+          continue;
         }
         skipped.push({ operation, reason });
       }
@@ -323,6 +327,17 @@ interface ConflictOutcome {
   reason: string;
 }
 
+function describeRecordedDecision(decision: RecordedConflictDecision): string {
+  switch (decision) {
+    case "keep":
+      return "resolved by keeping your version";
+    case "replace":
+      return "resolved by replacing with agemon's version";
+    case "skip":
+      return "skipped";
+  }
+}
+
 async function resolveConflict(
   operation: ProposedOperation,
   ctx: Omit<GateDecisionContext, "yes">,
@@ -336,18 +351,17 @@ async function resolveConflict(
   }
 
   const reply = await ctx.prompts.conflict(
-    `Conflict at ${operation.targetPath || operation.resourceId}: keep yours, show agemon's, or skip?`,
+    `Conflict at ${operation.targetPath || operation.resourceId}: keep, replace, show agemon's, or skip?`,
   );
   if (reply === "show-theirs") {
     printOperationPreviews([operation], ctx.log);
     return resolveConflict(operation, ctx);
   }
-  return reply === "keep-mine"
-    ? {
-        decision: "keep-mine",
-        reason: "conflict resolved by keeping your version",
-      }
-    : { decision: "skip", reason: "conflict skipped by choice" };
+  if (reply === "skip") {
+    return { decision: "skip", reason: "conflict skipped by choice" };
+  }
+  const decision: RecordedConflictDecision = reply;
+  return { decision, reason: describeRecordedDecision(decision) };
 }
 
 function printOperationPreviews(

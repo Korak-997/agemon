@@ -4,7 +4,7 @@ import { parse, stringify, TomlError } from "smol-toml";
 
 const CONFIG_FILE_NAME = "agemon.toml";
 
-export type ConflictDecision = "keep-mine" | "skip";
+export type ConflictDecision = "keep" | "replace" | "skip";
 
 export interface AgemonConfig {
   capabilities: string[];
@@ -55,9 +55,9 @@ function validateConflictDecisions(
   for (const [resourceId, decision] of Object.entries(
     value as Record<string, unknown>,
   )) {
-    if (decision !== "keep-mine" && decision !== "skip") {
+    if (decision !== "keep" && decision !== "replace" && decision !== "skip") {
       fail(
-        `'conflict_decisions.${resourceId}' must be "keep-mine" or "skip", got ${JSON.stringify(decision)}`,
+        `'conflict_decisions.${resourceId}' must be "keep", "replace", or "skip", got ${JSON.stringify(decision)}`,
       );
     }
     decisions[resourceId] = decision;
