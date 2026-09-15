@@ -1,5 +1,9 @@
 # agemon
 
+## 4.5.0
+
+- fix: add replace option to instruction-file conflict resolution (#12)
+
 ## 4.4.0
 
 - fix: lint issues are resolved
