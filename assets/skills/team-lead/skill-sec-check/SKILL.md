@@ -46,10 +46,11 @@ triggers: ["@sec-check", "security review", "devsecops check", "owasp scan", "se
   ```
 - **Remediation Code:**
   ```typescript
-  // GOOD: Enforces ownership boundary
+  // GOOD: Enforces ownership boundary and allowlists writable fields
   const session = await requireUserSession(event);
+  const { name, description } = body;
   await db.update(projects)
-    .set(body)
+    .set({ name, description })
     .where(and(
       eq(projects.id, id),
       eq(projects.ownerId, session.user.id)

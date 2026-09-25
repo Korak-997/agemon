@@ -18,9 +18,10 @@ structure the message, and when a diff should become more than one commit.
 
 ## 1. Before Staging
 
-- Run `git status` and `git diff` (staged and unstaged) before deciding what goes in. Never stage with a
-  blanket `git add -A` or `git add .` without reviewing what it picks up — untracked files may be scratch
-  output, credentials, or unrelated in-progress work.
+- Run `git status`, `git diff` (unstaged), and `git diff --cached` (staged) before deciding what goes in —
+  `git diff` alone omits already-staged changes, letting them bypass review. Never stage with a blanket
+  `git add -A` or `git add .` without reviewing what it picks up — untracked files may be scratch output,
+  credentials, or unrelated in-progress work.
 - If `git status` shows files you didn't expect to touch, find out why before including them.
 - Check diff contents, not just filenames, for anything that looks like a secret (`.env` values, tokens,
   keys) even in files with innocuous names.

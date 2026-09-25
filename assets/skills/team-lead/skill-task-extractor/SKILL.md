@@ -6,7 +6,7 @@ triggers: ["@extract-tasks", "extract todos", "generate action items", "transcri
 
 # Instruction Rules
 1. **Normalize Vague Statements:** Transform vague discussion points (e.g., *"We should fix the database errors next week"*) into clear, actionable task titles (e.g., *"Implement connection pool timeout handling for PostgreSQL"*).
-2. **Explicit Date Conversion:** Convert all relative date references (e.g., *"by end of week"*, *"next Tuesday"*) into strict ISO format (`YYYY-MM-DD`).
+2. **Explicit Date Conversion:** Convert all relative date references (e.g., *"by end of week"*, *"next Tuesday"*) into strict ISO format (`YYYY-MM-DD`), anchored to the transcript's own date/timestamp if it has one. If no reference date is available, ask the user for one before converting rather than guessing.
 3. **Owner Attribution:** Match mentioned names or roles to explicit task owners. If unassigned, mark clearly as `UNASSIGNED`.
 4. **Output Format:** Dual-format output containing a human-readable Obsidian Task list and a machine-readable JSON payload ready for PM tool APIs (Jira/Linear/Todoist/GitHub Issues).
 
@@ -64,6 +64,15 @@ triggers: ["@extract-tasks", "extract todos", "generate action items", "transcri
       "priority": "Medium",
       "due_date": "2026-09-30",
       "tags": ["design", "ux", "mobile"]
+    },
+    {
+      "id": "TASK-03",
+      "title": "Verify staging environment SSL certificate auto-renewal",
+      "description": "Confirm the staging cert renews automatically before it next expires.",
+      "assignee": "UNASSIGNED",
+      "priority": "Low",
+      "due_date": "2026-10-05",
+      "tags": ["devops", "infra"]
     }
   ]
 }

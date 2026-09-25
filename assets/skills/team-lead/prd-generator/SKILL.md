@@ -41,7 +41,7 @@ Before generating the PRD, collect essential information through a discovery con
 
 ### Step 2: Generate PRD Structure
 
-Use the standard PRD template from `references/prd_template.md` to create a well-structured document. The PRD should include:
+Structure the document with the following sections:
 
 1. **Executive Summary** - High-level overview (2-3 paragraphs)
 2. **Problem Statement** - Clear articulation of the problem
@@ -72,7 +72,7 @@ Acceptance Criteria:
 - [Specific, testable criterion 3]
 ```
 
-Reference `references/user_story_examples.md` for common patterns and best practices.
+Keep each story independent, testable, and free of implementation details (see User Story Best Practices below).
 
 ### Step 4: Define Success Metrics
 
@@ -83,22 +83,11 @@ Use appropriate metrics frameworks based on the product type:
 - **North Star Metric**: Single key metric that represents core value
 - **OKRs**: Objectives and Key Results
 
-Consult `references/metrics_frameworks.md` for detailed guidance on each framework.
+Pick the framework that matches the product type and stakeholder expectations, and define concrete targets for each metric — not just the metric name.
 
 ### Step 5: Validate & Review
 
-Optionally run the validation script to ensure PRD completeness:
-
-```bash
-scripts/validate_prd.sh <prd_file.md>
-```
-
-This checks for:
-- All required sections present
-- User stories follow proper format
-- Success metrics are defined
-- Scope is clearly articulated
-- No placeholder text remains
+Before finalizing, walk through the Self-Review Checklist below to confirm the PRD is complete: all required sections present, user stories follow the standard format, success metrics are defined with targets, scope is clearly bounded, and no placeholder text remains.
 
 ## Usage Patterns
 
@@ -334,34 +323,6 @@ Before finalizing the PRD, verify:
 - [ ] **Timeline is realistic**: Estimates validated with engineering
 - [ ] **Risks are identified**: We've thought through what could go wrong
 - [ ] **Stakeholders aligned**: Key people have reviewed and approved
-
-### Using the Validation Script
-
-```bash
-# Basic validation
-scripts/validate_prd.sh my_prd.md
-
-# Verbose output with suggestions
-scripts/validate_prd.sh my_prd.md --verbose
-
-# Check specific sections only
-scripts/validate_prd.sh my_prd.md --sections "user-stories,metrics"
-```
-
-## Resources
-
-This skill includes bundled resources:
-
-### scripts/
-
-- **generate_prd.sh** - Interactive PRD generation workflow
-- **validate_prd.sh** - Validates PRD completeness and quality
-
-### references/
-
-- **prd_template.md** - Standard PRD template structure
-- **user_story_examples.md** - User story patterns and examples
-- **metrics_frameworks.md** - Guide to PM metrics (AARRR, HEART, OKRs)
 
 ## Tips for Product Managers
 

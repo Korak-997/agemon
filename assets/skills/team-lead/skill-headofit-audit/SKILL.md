@@ -49,7 +49,7 @@ triggers: ["@vendor-audit", "head of it evaluation", "saas audit", "build vs buy
 | **Security & Compliance** | 20% | 5.0 / 5.0 | GDPR compliant, SOC 2 Type II certified, isolated tenant DBs. |
 | **Ops & Maintenance Overhead** | 15% | 3.5 / 5.0 | Requires internal team onboarding and backup orchestration. |
 | **Financial & TCO Impact** | 15% | 4.0 / 5.0 | Payback period achieved within 6 months. |
-| **Weighted Total** | **100%** | **4.25 / 5.0**| **RECOMMENDED** |
+| **Weighted Total** | **100%** | **4.28 / 5.0**| **RECOMMENDED** |
 
 ---
 

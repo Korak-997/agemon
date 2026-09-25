@@ -63,11 +63,13 @@ Selection order:
 Re-running `agemon` in a repo only re-verifies the groups that repo already selected — it never
 asks you to newly opt into groups you previously declined.
 
-Every non-essential skill is vendored into agemon's own repo under `assets/skills/` and renamed
-under an `agemon-*` identity, rather than fetched and installed under its original upstream name
-at bootstrap time — so installs don't depend on GitHub being reachable, won't drift if an
-upstream repo changes, and read as agemon's own rather than a third-party project name. See
-[Vendored Skills](#vendored-skills--attribution) for sources and licenses.
+Every non-essential skill is vendored into agemon's own repo under `assets/skills/`, rather than
+fetched and installed under its original upstream name at bootstrap time — so installs don't
+depend on GitHub being reachable and won't drift if an upstream repo changes. Vendored skills
+sourced from a third-party project are renamed under an `agemon-*` identity so they read as
+agemon's own; the `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` are original to
+this project and keep their `skill-*` names. See [Vendored Skills](#vendored-skills--attribution)
+for sources and licenses.
 
 `essentials` is the one exception: `vercel-labs/agent-skills` carries no detected license, so
 agemon can't vendor (redistribute) a renamed copy of it — it's still fetched live from that repo
@@ -300,9 +302,11 @@ and `teamlead` skill groups (see [Skill Groups](#skill-groups)) are vendored und
 Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
 and a copy of its upstream `LICENSE`. Sources, all MIT-licensed:
 
-Every vendored skill is renamed to an `agemon-*` identity (frontmatter `name` and directory) —
-it should never be obvious from installing it that the content originated elsewhere. Original
-upstream names are preserved only in each skill's `NOTICE.md`, for attribution.
+Every skill vendored from a third-party project is renamed to an `agemon-*` identity (frontmatter
+`name` and directory) — it should never be obvious from installing it that the content originated
+elsewhere. Original upstream names are preserved only in each skill's `NOTICE.md`, for attribution.
+The project-authored `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` have no
+upstream to rename from and keep their original `skill-*` names — see the table below.
 
 | Renamed to | Originally | Source |
 |---|---|---|

@@ -6,8 +6,8 @@ triggers: ["@incident-rca", "post-mortem", "root cause analysis", "incident repo
 
 # Instruction Rules
 1. **Enforce Blameless Culture:** Focus strictly on systemic vulnerabilities, process gaps, and missing safeguards. Never attribute failures to individual human error.
-2. **5 Whys Deep-Dive:** Chain every surface symptom down through at least 5 levels of "Why?" until reaching an actionable architectural or process gap.
-3. **Quantify Impact:** Explicitly quantify outage duration, user blast radius, data loss, and SLA breach metrics.
+2. **5 Whys Deep-Dive:** Chain every surface symptom down through at least 5 levels of "Why?" until reaching an actionable architectural or process gap. If evidence runs out before reaching level 5, mark the chain `UNKNOWN — insufficient evidence` at that point rather than inventing an unsupported cause.
+3. **Quantify Impact:** Explicitly quantify outage duration, user blast radius, data loss, and SLA breach metrics. Mark any metric not available in the evidence as `UNKNOWN` rather than estimating.
 4. **Action Item Discipline:** Output clear action items with specific owners, category tags, and due dates. Avoid vague terms like "improve testing".
 
 # Execution Workflow

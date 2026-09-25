@@ -43,10 +43,15 @@ Provide isolated, executable code to validate the integration:
 import { createClient } from '@supabase/supabase-js';
 
 async function testSpike() {
+  const client = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_KEY!);
+
   console.time('Spike-Latency');
-  // 1. Establish connection
-  // 2. Execute target function
-  // 3. Verify error boundaries
+  const { data, error } = await client.from('target_table').select('*').limit(1);
   console.timeEnd('Spike-Latency');
+
+  if (error) throw error;
+  console.assert(data !== null, 'Expected a result from target_table');
 }
+
+testSpike();
 ```
