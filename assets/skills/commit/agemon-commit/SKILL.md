@@ -34,23 +34,47 @@ structure the message, and when a diff should become more than one commit.
 
 ## 3. Message Structure
 
-- Subject line: imperative mood ("add", "fix", "remove" — not "added", "adds", "fixing"), no trailing
-  period, under ~70 characters.
-- Lead with *why*, not *what*. The diff already shows what changed; a reader with the diff open doesn't
-  need it repeated in prose. State the reason, motivation, or problem being solved.
+This repo enforces [Conventional Commits](https://www.conventionalcommits.org/) — via `.githooks/commit-msg`
+locally and `commitlint` + PR-title linting in CI. Every subject line must use the required format, not just
+as a style preference:
+
+```
+<type>[(scope)][!]: <description>
+```
+
+- Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `revert` (matches
+  `.githooks/commit-msg`).
+- Scope is optional, lowercase, and names a module/concept (`auth`, `installer`) — not a specific filename.
+- Description: imperative mood ("add", "fix", "remove" — not "added", "adds", "fixing"), lowercase after the
+  colon, no trailing period.
+- Subject line under ~50 characters where possible, hard cap ~72.
+- If the change breaks backward compatibility, append `!` before the colon (`feat(api)!: ...`) **and** add a
+  `BREAKING CHANGE:` footer explaining the break.
+- Lead the body with *why*, not *what*. The diff already shows what changed; a reader with the diff open
+  doesn't need it repeated in prose. State the reason, motivation, or problem being solved.
 - Use a body only when the subject line can't carry the necessary context — a one-line change with an
-  obvious reason doesn't need one.
-- Reference an issue/ticket number when one exists, but don't invent one.
+  obvious reason doesn't need one. Wrap body lines at ~72 characters, separated from the subject by one
+  blank line.
 
 ## 4. Follow Existing Convention
 
-- Before writing a message, check `git log --oneline -20` on the current repo for the prevailing style
-  (conventional-commits prefixes like `feat:`/`fix:`, ticket-ID prefixes, sentence case vs. lowercase).
-  Match it — don't introduce a new convention unilaterally.
-- If no convention is discernible and none is specified, default to a plain imperative subject line with no
-  prefix.
+- Before writing a message, check `git log --oneline -20` on the current repo to confirm the prevailing
+  style still matches Section 3 (type casing, scope naming). Match it.
+- The type prefix itself is never optional in this repo — the commit-msg hook and CI both reject a subject
+  line without one, so there is no "no convention discernible" fallback to a bare imperative subject.
 
-## 5. What Not to Do
+## 5. Issue References — Always Ask
+
+- Before finalizing any commit message, ask the user whether this commit should close an issue, and if so,
+  what to include:
+  - **Closes/Fixes #N** — use only when this commit fully resolves the issue; it auto-closes on merge.
+  - **Refs #N** / "Relates to #N" — use when the commit is related but doesn't fully resolve the issue; it
+    links without closing.
+- Never invent an issue number, and never guess Closes vs. Refs on the user's behalf — always confirm which
+  one they want, and for which number, even if a plausible issue seems implied by the task.
+- Don't mix `Closes` and `Refs` for the same issue across multiple commits on one branch.
+
+## 6. What Not to Do
 
 - Don't claim a commit "fixes" or "resolves" something without having verified it (see
   `agemon-verify-before-done`) — a commit message is a durable record, and false claims in it mislead
