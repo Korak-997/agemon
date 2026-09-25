@@ -1,5 +1,9 @@
 # agemon
 
+## 4.7.0
+
+- fix(skills): detect catalog groups added after a project's initial install (#14)
+
 ## 4.6.0
 
 - feat: add team-lead skill group (#13)
