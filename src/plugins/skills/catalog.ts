@@ -124,6 +124,15 @@ export const SKILL_GROUPS: SkillGroup[] = [
     skills: [
       vendoredSkill("team-lead", "agemon-plan-rfc"),
       vendoredSkill("team-lead", "prd-generator"),
+      vendoredSkill("team-lead", "skill-headofit-audit"),
+      vendoredSkill("team-lead", "skill-incident-rca"),
+      vendoredSkill("team-lead", "skill-meeting-lifecycle"),
+      vendoredSkill("team-lead", "skill-obsidian-vault-sync"),
+      vendoredSkill("team-lead", "skill-prd-decomposer"),
+      vendoredSkill("team-lead", "skill-sec-check"),
+      vendoredSkill("team-lead", "skill-task-extractor"),
+      vendoredSkill("team-lead", "skill-techlead-reviewer"),
+      vendoredSkill("team-lead", "skill-tech-spike"),
     ],
   },
 ];
