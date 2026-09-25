@@ -248,7 +248,8 @@ async function describeSkillsState(
 
 async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
   const recordedGroups = getRecordedGroups(ctx);
-  const hasUnofferedGroups = getUnofferedGroups(ctx).length > 0;
+  const unofferedGroups = getUnofferedGroups(ctx);
+  const hasUnofferedGroups = unofferedGroups.length > 0;
 
   if (recordedGroups.length > 0 && !hasUnofferedGroups) {
     const recordedEntries = flattenSkills(recordedGroups);
@@ -261,6 +262,11 @@ async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
     }
   }
 
+  const previewText =
+    recordedGroups.length > 0 && hasUnofferedGroups
+      ? `new skill group(s) available: ${unofferedGroups.map((group) => group.label).join(", ")}`
+      : "add the configured skill groups via 'npx skills add'";
+
   return [
     describeOperation({
       capabilityId: PLUGIN_ID,
@@ -271,7 +277,7 @@ async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
       requiresConsent: true,
       preview: {
         kind: "note",
-        text: "add the configured skill groups via 'npx skills add'",
+        text: previewText,
       },
     }),
   ];
