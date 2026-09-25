@@ -14,9 +14,9 @@ Current v0.1 behavior is plugin-driven and runs in this order:
    unit name derived from the current git repo (or plain directory, outside a repo) —
    see [Daemon naming](#daemon-naming).
 3. `skills`: installs bundled skills via `npx skills`. Always installs the `essentials` group;
-   additional groups (design, security, code quality, architecture, self-review, performance)
-   are selected interactively, via `--skill-groups`, or skipped entirely in a non-interactive
-   session — see [Skill Groups](#skill-groups).
+   additional groups (design, security, code quality, architecture, self-review, performance,
+   team lead) are selected interactively, via `--skill-groups`, or skipped entirely in a
+   non-interactive session — see [Skill Groups](#skill-groups).
 4. `cli-tool`: installs bundled global CLI tools.
 5. `master-prompt`: consolidates agent rule files and pointer files.
 
@@ -47,6 +47,8 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 | `architecture` | `agemon-architecture` | Clean Architecture review: dependency rule, layering, boundary crossing, SOLID. |
 | `self-review` | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | Verification before claiming completion, giving/receiving code review, root-cause debugging. |
 | `performance` | `agemon-performance` | Algorithmic-complexity-first discipline: N+1 detection, hot-loop hygiene, when not to optimize. |
+| `commit` | `agemon-commit` | Staging review, commit message structure, and splitting unrelated changes into separate commits. |
+| `teamlead` | `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync. |
 
 Selection order:
 
@@ -61,11 +63,13 @@ Selection order:
 Re-running `agemon` in a repo only re-verifies the groups that repo already selected — it never
 asks you to newly opt into groups you previously declined.
 
-Every non-essential skill is vendored into agemon's own repo under `assets/skills/` and renamed
-under an `agemon-*` identity, rather than fetched and installed under its original upstream name
-at bootstrap time — so installs don't depend on GitHub being reachable, won't drift if an
-upstream repo changes, and read as agemon's own rather than a third-party project name. See
-[Vendored Skills](#vendored-skills--attribution) for sources and licenses.
+Every non-essential skill is vendored into agemon's own repo under `assets/skills/`, rather than
+fetched and installed under its original upstream name at bootstrap time — so installs don't
+depend on GitHub being reachable and won't drift if an upstream repo changes. Vendored skills
+sourced from a third-party project are renamed under an `agemon-*` identity so they read as
+agemon's own; the `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` are original to
+this project and keep their `skill-*` names. See [Vendored Skills](#vendored-skills--attribution)
+for sources and licenses.
 
 `essentials` is the one exception: `vercel-labs/agent-skills` carries no detected license, so
 agemon can't vendor (redistribute) a renamed copy of it — it's still fetched live from that repo
@@ -292,14 +296,17 @@ Useful sandbox flags:
 
 ## Vendored Skills & Attribution
 
-The `design`, `security`, `code-quality`, `architecture`, `self-review`, and `performance` skill
-groups (see [Skill Groups](#skill-groups)) are vendored under `assets/skills/<group>/<skill>/`.
+The `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`,
+and `teamlead` skill groups (see [Skill Groups](#skill-groups)) are vendored under
+`assets/skills/<group>/<skill>/`.
 Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
 and a copy of its upstream `LICENSE`. Sources, all MIT-licensed:
 
-Every vendored skill is renamed to an `agemon-*` identity (frontmatter `name` and directory) —
-it should never be obvious from installing it that the content originated elsewhere. Original
-upstream names are preserved only in each skill's `NOTICE.md`, for attribution.
+Every skill vendored from a third-party project is renamed to an `agemon-*` identity (frontmatter
+`name` and directory) — it should never be obvious from installing it that the content originated
+elsewhere. Original upstream names are preserved only in each skill's `NOTICE.md`, for attribution.
+The project-authored `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` have no
+upstream to rename from and keep their original `skill-*` names — see the table below.
 
 | Renamed to | Originally | Source |
 |---|---|---|
@@ -308,7 +315,7 @@ upstream names are preserved only in each skill's `NOTICE.md`, for attribution.
 | `agemon-architecture` | `clean-architecture` | [nathankim0/clean-architecture-skills](https://github.com/nathankim0/clean-architecture-skills) |
 | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | `verification-before-completion`, `receiving-code-review`, `requesting-code-review`, `systematic-debugging` | [obra/superpowers](https://github.com/obra/superpowers) (cherry-picked; not a full vendor of that framework) |
 | `agemon-clean-code` | `karpathy-guidelines` | [swarmclawai/andrej-karpathy-skills](https://github.com/swarmclawai/andrej-karpathy-skills) |
-| `agemon-house-rules`, `agemon-performance` | — | Original — authored for this project, `agemon-house-rules` distilled from this repo's own `AGENTS.md`. |
+| `agemon-house-rules`, `agemon-performance`, `agemon-commit`, `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | — | Original — authored for this project, `agemon-house-rules` distilled from this repo's own `AGENTS.md`. The `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` keep their original `skill-*` names rather than the `agemon-*` convention. |
 
 `ui-craft`'s own reference files (33 files under `agemon-design/references/`) still mention
 "ui-craft" by name in prose in a few places — they document that project's own separate CLI/MCP

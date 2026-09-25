@@ -107,6 +107,34 @@ export const SKILL_GROUPS: SkillGroup[] = [
     defaultSelected: false,
     skills: [vendoredSkill("performance", "agemon-performance")],
   },
+  {
+    id: "commit",
+    label: "Commit Hygiene",
+    description:
+      "Staging review, commit message structure, and splitting unrelated changes into separate commits.",
+    defaultSelected: false,
+    skills: [vendoredSkill("commit", "agemon-commit")],
+  },
+  {
+    id: "teamlead",
+    label: "Team Lead",
+    description:
+      "Team-lead workflows: structured RFC planning and PRD generation for major features or architectural changes.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("team-lead", "agemon-plan-rfc"),
+      vendoredSkill("team-lead", "prd-generator"),
+      vendoredSkill("team-lead", "skill-headofit-audit"),
+      vendoredSkill("team-lead", "skill-incident-rca"),
+      vendoredSkill("team-lead", "skill-meeting-lifecycle"),
+      vendoredSkill("team-lead", "skill-obsidian-vault-sync"),
+      vendoredSkill("team-lead", "skill-prd-decomposer"),
+      vendoredSkill("team-lead", "skill-sec-check"),
+      vendoredSkill("team-lead", "skill-task-extractor"),
+      vendoredSkill("team-lead", "skill-techlead-reviewer"),
+      vendoredSkill("team-lead", "skill-tech-spike"),
+    ],
+  },
 ];
 
 export function findSkillGroup(groupId: string): SkillGroup | undefined {

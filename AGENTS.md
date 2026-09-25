@@ -63,12 +63,13 @@ Minimum code that solves the problem. Nothing speculative.
 - When your edits make existing code unreachable or unused (orphaned imports, variables, functions), remove them.
 - Do **not** remove pre-existing dead code or unrelated unused code outside your change — that falls under Surgical Execution (Section H): flag it, don't touch it.
 
-### G. Narrative Flow — Self-Documenting Code
+### G. Narrative Flow — Self-Documenting Code (strict)
 - Code should read top-to-bottom like a clear narrative; a developer should be able to follow the logic without jumping around or guessing.
 - Use highly descriptive, semantic names (`process_pending_invoice_queue`, not `proc_inv`).
 - Replace magic numbers and unexplained literals with named, descriptive constants.
-- Default to zero comments: if code needs a comment to explain *what* it's doing, rewrite the code to be clearer instead.
-- Exception: comments are allowed only for genuinely non-obvious *why* — a regulatory requirement, a workaround for a specific bug or library quirk, a non-obvious algorithmic choice. Never use a comment to restate what the code already says.
+- **If a piece of code needs an explanation to be understood, that is a defect in the code, not a gap to be filled with a comment.** Rewrite, rename, or split it until it reads clearly on its own. This applies during writing and during review alike — a reviewer who has to ask "what does this do?" or "why is this here?" about *what*/*how* logic has found a rewrite target, not a documentation gap.
+- Comments are allowed only for genuinely non-obvious *why* that cannot be expressed in code at all — a regulatory requirement, a workaround for a specific bug or library quirk, a non-obvious algorithmic choice. Never use a comment to restate what the code already says, and never use one to explain *what*/*how* — that logic must be refactored instead.
+- Before finishing any task, re-read the changed code with its why-comments hidden. If its purpose or flow is unclear without them, it is not done — simplify or split it further.
 
 ### H. Surgical Execution & Scope Control
 - Touch only what the task requires. Every changed line should trace directly to the request.
@@ -192,7 +193,9 @@ Apply this sequence to every task:
 - Match the surrounding code's style, naming, and structure.
 - Keep every change surgical: touch only what the task requires.
 - Zero waste in your own changes: no unused imports, variables, or dead branches.
-- Self-documenting code: descriptive names and named constants over explanatory comments.
+- Self-documenting code (strict): if code needs a comment to be understood, that's a defect —
+  rename, restructure, or split it instead. Comments are allowed only for non-obvious *why*
+  that cannot be expressed in code (regulatory constraint, bug workaround, library quirk).
 - Preserve user-authored content outside agemon-managed files and blocks.
 - Prefer safe, reversible changes; call out irreversible or outward-facing steps first.
 - Security and performance by default within scope: validate input, least privilege,
