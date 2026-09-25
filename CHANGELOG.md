@@ -1,5 +1,9 @@
 # agemon
 
+## 4.7.1
+
+- fix(skills): name pending groups in the drift-detection gate preview (#15)
+
 ## 4.7.0
 
 - fix(skills): detect catalog groups added after a project's initial install (#14)
