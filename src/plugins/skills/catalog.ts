@@ -107,6 +107,14 @@ export const SKILL_GROUPS: SkillGroup[] = [
     defaultSelected: false,
     skills: [vendoredSkill("performance", "agemon-performance")],
   },
+  {
+    id: "teamlead",
+    label: "Team Lead",
+    description:
+      "Team-lead workflows: structured RFC planning and drafting for major features or architectural changes.",
+    defaultSelected: false,
+    skills: [vendoredSkill("team-lead", "agemon-plan-rfc")],
+  },
 ];
 
 export function findSkillGroup(groupId: string): SkillGroup | undefined {
