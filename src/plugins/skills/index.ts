@@ -17,13 +17,17 @@ import {
   type SkillBundleEntry,
   type SkillGroup,
 } from "./catalog.js";
-import { resolveGroupsForFreshInstall } from "./group-selection.js";
+import {
+  resolveGroupsForFreshInstall,
+  resolveNewlyOfferedGroups,
+} from "./group-selection.js";
 
 const PLUGIN_ID = "skills";
 
 const ACTION_TYPE_INSTALLED_SKILL = "installed-skill";
 const ACTION_TYPE_PREEXISTING_SKILL = "preexisting-skill";
 const ACTION_TYPE_GENERATED_SKILLS_LOCK = "generated-skills-lock";
+const ACTION_TYPE_OFFERED_SKILL_GROUP = "offered-skill-group";
 const SKILLS_LOCK_FILE = "skills-lock.json";
 const SKILLS_LOCK_GITIGNORE_ENTRY = "/skills-lock.json";
 
@@ -51,6 +55,21 @@ function getRecordedGroups(ctx: Context): SkillGroup[] {
   );
   return SKILL_GROUPS.filter((group) =>
     group.skills.some((skill) => recordedSkillNames.has(skill.skillName)),
+  );
+}
+function getOfferedGroupIds(ctx: Context): Set<string> {
+  return new Set(
+    getPluginActions(ctx)
+      .filter((action) => action.type === ACTION_TYPE_OFFERED_SKILL_GROUP)
+      .map((action) => action.target),
+  );
+}
+
+function getUnofferedGroups(ctx: Context): SkillGroup[] {
+  const decidedGroupIds = new Set(getRecordedGroups(ctx).map((g) => g.id));
+  const offeredGroupIds = getOfferedGroupIds(ctx);
+  return SKILL_GROUPS.filter(
+    (group) => !offeredGroupIds.has(group.id) && !decidedGroupIds.has(group.id),
   );
 }
 
@@ -229,7 +248,9 @@ async function describeSkillsState(
 
 async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
   const recordedGroups = getRecordedGroups(ctx);
-  if (recordedGroups.length > 0) {
+  const hasUnofferedGroups = getUnofferedGroups(ctx).length > 0;
+
+  if (recordedGroups.length > 0 && !hasUnofferedGroups) {
     const recordedEntries = flattenSkills(recordedGroups);
     const installedSkillNames = await listInstalledSkillNames(ctx);
     const allRecordedSkillsPresent = recordedEntries.every((entry) =>
@@ -256,11 +277,41 @@ async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
   ];
 }
 
+async function recordOfferedGroups(
+  ctx: Context,
+  groupsOffered: SkillGroup[],
+): Promise<void> {
+  for (const group of groupsOffered) {
+    await ctx.manifest.recordAction({
+      plugin: PLUGIN_ID,
+      type: ACTION_TYPE_OFFERED_SKILL_GROUP,
+      target: group.id,
+      preExisting: false,
+    });
+  }
+}
+
+function getOptionalGroupsShownDuringFreshInstall(ctx: Context): SkillGroup[] {
+  if (ctx.skillGroupsOption !== undefined || ctx.dryRun || !ctx.interactive) {
+    return [];
+  }
+  return SKILL_GROUPS.filter((group) => !group.defaultSelected);
+}
+
 async function installSkills(ctx: Context): Promise<void> {
-  const groupsToInstall = await resolveGroupsForFreshInstall(
-    ctx,
-    ctx.skillGroupsOption,
-  );
+  const isFreshInstall = getRecordedGroups(ctx).length === 0;
+
+  const groupsToInstall = isFreshInstall
+    ? await resolveGroupsForFreshInstall(ctx, ctx.skillGroupsOption)
+    : await resolveNewlyOfferedGroups(ctx, getUnofferedGroups(ctx));
+
+  if (!ctx.dryRun) {
+    const groupsOffered = isFreshInstall
+      ? getOptionalGroupsShownDuringFreshInstall(ctx)
+      : getUnofferedGroups(ctx);
+    await recordOfferedGroups(ctx, groupsOffered);
+  }
+
   const entriesToInstall = flattenSkills(groupsToInstall);
 
   if (ctx.dryRun) {

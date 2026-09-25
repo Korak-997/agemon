@@ -113,20 +113,22 @@ export interface UpdateCheckInput {
   dryRun: boolean;
 }
 
+export type UpdateCheckOutcome = "updated" | "update-failed" | "not-updated";
+
 export async function checkForUpdate(
   input: UpdateCheckInput,
-): Promise<boolean> {
+): Promise<UpdateCheckOutcome> {
   if (
     input.dryRun ||
     process.env.AGEMON_DEV === "1" ||
     process.env.AGEMON_NO_UPDATE_CHECK === "1"
   ) {
-    return false;
+    return "not-updated";
   }
 
   const latestVersion = await resolveLatestVersion().catch(() => undefined);
   if (!latestVersion || !isNewerVersion(latestVersion, input.currentVersion)) {
-    return false;
+    return "not-updated";
   }
 
   const isInteractive = isInteractiveTerminal();
@@ -134,12 +136,12 @@ export async function checkForUpdate(
 
   if (!isInteractive) {
     console.log(theme.accent(`${updateNotice} Run the installer to upgrade.`));
-    return false;
+    return "not-updated";
   }
 
   const shouldUpdate = await promptYesNo(`${updateNotice} Install it now?`);
   if (!shouldUpdate) {
-    return false;
+    return "not-updated";
   }
 
   console.log(theme.accent("Updating agemon..."));
@@ -150,11 +152,11 @@ export async function checkForUpdate(
         `Automatic update failed. Run it yourself: curl -fsSL ${INSTALL_SCRIPT_URL} | sh`,
       ),
     );
-    return false;
+    return "update-failed";
   }
 
   console.log(
     theme.ok(`Updated to ${latestVersion}. Re-run your command to use it.`),
   );
-  return true;
+  return "updated";
 }

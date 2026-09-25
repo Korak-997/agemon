@@ -46,6 +46,26 @@ function resolveExplicitGroups(skillGroupsOption: string): SkillGroup[] {
   return [...combinedGroups.values()];
 }
 
+async function promptForOptionalGroups(
+  message: string,
+  groupsToOffer: SkillGroup[],
+): Promise<SkillGroup[]> {
+  const selectedIds = assertNotCancelled(
+    await multiselect<string>({
+      message,
+      options: groupsToOffer.map((group) => ({
+        value: group.id,
+        label: `${group.label} (${group.skills.length})`,
+        hint: group.description,
+      })),
+      required: false,
+      initialValues: [],
+    }),
+  );
+
+  return groupsToOffer.filter((group) => selectedIds.includes(group.id));
+}
+
 export async function resolveGroupsForFreshInstall(
   ctx: Context,
   skillGroupsOption: string | undefined,
@@ -66,22 +86,27 @@ export async function resolveGroupsForFreshInstall(
     return defaultGroups();
   }
 
-  const optional = optionalGroups();
-  const selectedIds = assertNotCancelled(
-    await multiselect<string>({
-      message: "Optional skill groups to install",
-      options: optional.map((group) => ({
-        value: group.id,
-        label: `${group.label} (${group.skills.length})`,
-        hint: group.description,
-      })),
-      required: false,
-      initialValues: [],
-    }),
+  const selected = await promptForOptionalGroups(
+    "Optional skill groups to install",
+    optionalGroups(),
   );
 
-  return [
-    ...defaultGroups(),
-    ...optional.filter((group) => selectedIds.includes(group.id)),
-  ];
+  return [...defaultGroups(), ...selected];
+}
+export async function resolveNewlyOfferedGroups(
+  ctx: Context,
+  groupsToOffer: SkillGroup[],
+): Promise<SkillGroup[]> {
+  if (groupsToOffer.length === 0 || ctx.dryRun || !ctx.interactive) {
+    return [];
+  }
+
+  if (ctx.yes) {
+    return groupsToOffer;
+  }
+
+  return promptForOptionalGroups(
+    "New optional skill groups to install",
+    groupsToOffer,
+  );
 }

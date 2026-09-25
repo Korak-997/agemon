@@ -198,11 +198,11 @@ async function runPlanCommand(options: CliOptions): Promise<void> {
 }
 
 async function runInstall(options: CliOptions): Promise<void> {
-  const didUpdate = await checkForUpdate({
+  const updateOutcome = await checkForUpdate({
     currentVersion: VERSION,
     dryRun: Boolean(options.dryRun),
   });
-  if (didUpdate) {
+  if (updateOutcome !== "not-updated") {
     return;
   }
 
@@ -237,11 +237,11 @@ async function runInstall(options: CliOptions): Promise<void> {
 }
 
 async function runApply(options: CliOptions): Promise<void> {
-  const didUpdate = await checkForUpdate({
+  const updateOutcome = await checkForUpdate({
     currentVersion: VERSION,
     dryRun: false,
   });
-  if (didUpdate) {
+  if (updateOutcome !== "not-updated") {
     return;
   }
 
@@ -281,11 +281,11 @@ async function runApply(options: CliOptions): Promise<void> {
 }
 
 async function runNuke(options: CliOptions): Promise<void> {
-  const didUpdate = await checkForUpdate({
+  const updateOutcome = await checkForUpdate({
     currentVersion: VERSION,
     dryRun: Boolean(options.dryRun),
   });
-  if (didUpdate) {
+  if (updateOutcome !== "not-updated") {
     return;
   }
 
