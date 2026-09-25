@@ -134,6 +134,13 @@ describe("skills plugin drift detection", () => {
 
     const planBeforeInteractive = await planSkills(context);
     expect(planBeforeInteractive).not.toEqual([]);
+    const [gateOperation] = planBeforeInteractive;
+    for (const groupId of ["design", "code-quality", "architecture"]) {
+      const group = findSkillGroup(groupId);
+      expect(gateOperation.preview.text).toContain(group?.label);
+    }
+    expect(gateOperation.preview.text).not.toContain("Essentials");
+    expect(gateOperation.preview.text).not.toContain("Security");
 
     context.interactive = true;
     clack.multiselect.mockResolvedValueOnce(["architecture"]);
