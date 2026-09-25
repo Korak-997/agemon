@@ -31,17 +31,17 @@ Before implementing:
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-## 3. Self-Documenting Code
+## 3. Self-Documenting Code (strict)
 
-**Code must be understandable from its structure, names, and control flow.**
+**Code must be understandable from its structure, names, and control flow alone. Needing an explanation is a defect, not a documentation gap.**
 
 - Use descriptive names that make values, conditions, and operations clear without commentary.
 - Keep functions focused; split code when a reader must mentally track unrelated steps at once.
 - Prefer clear intermediate variables and small helpers over dense expressions or hidden side effects.
-- Do not add comments to explain ordinary control flow, variable meaning, or implementation mechanics. Rewrite the code instead.
-- Add a comment only when it records non-obvious context that cannot be made clear in code, such as a compatibility constraint, external contract, or intentionally surprising decision.
+- If a reviewer — or you, re-reading your own change — has to ask "what does this do?" or "why is this here?" about *what*/*how* logic, that logic must be renamed, restructured, or split until it's obvious. Do not resolve that question with a comment.
+- Add a comment only when it records non-obvious context that cannot be made clear in code at all, such as a compatibility constraint, external contract, or intentionally surprising decision. Never use one to explain *what*/*how* something works.
 
-Before finishing, read the changed code without its comments. If its purpose or flow is unclear, simplify or split it before proceeding.
+Before finishing, read the changed code with its why-comments hidden. If its purpose or flow is unclear without them, it isn't done — simplify or split it further, don't add explanation.
 
 ## 4. Surgical Changes
 

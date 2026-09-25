@@ -38,18 +38,21 @@ Test: *"Would a senior engineer call this overcomplicated?"* If yes, simplify.
 - Do **not** remove pre-existing dead code or unrelated unused code outside your change — flag it instead of
   touching it (see Rule 5).
 
-## 4. Narrative Flow — Self-Documenting Code
+## 4. Narrative Flow — Self-Documenting Code (strict)
 
 - Code should read top-to-bottom like a clear narrative; a developer should be able to follow the logic
   without jumping around or guessing.
 - Use highly descriptive, semantic names (`process_pending_invoice_queue`, not `proc_inv`) — naming carries
   the explanation, not comments.
 - Replace magic numbers and unexplained literals with named, descriptive constants.
-- Default to zero comments: if code needs a comment to explain *what* it's doing, rewrite the code to be
-  clearer instead.
-- Exception: comments are allowed only for genuinely non-obvious *why* — a regulatory requirement, a
-  workaround for a specific bug or library quirk, a non-obvious algorithmic choice. Never use a comment to
-  restate what the code already says.
+- **If code needs an explanation to be understood, that's a defect in the code, not a gap for a comment to
+  fill.** Rewrite, rename, or split it until it reads clearly on its own — in both writing and review, "what
+  does this do?" or "why is this here?" about *what*/*how* logic means it needs a rewrite, not a comment.
+- Comments are allowed only for genuinely non-obvious *why* that can't be expressed in code at all — a
+  regulatory requirement, a workaround for a specific bug or library quirk, a non-obvious algorithmic choice.
+  Never use a comment to restate what the code already says, and never use one to explain *what*/*how*.
+- Before finishing, re-read the changed code with its why-comments hidden. If the purpose or flow is unclear
+  without them, simplify or split it further before calling the task done.
 
 ## 5. Surgical Execution & Scope Control
 
