@@ -108,12 +108,23 @@ export const SKILL_GROUPS: SkillGroup[] = [
     skills: [vendoredSkill("performance", "agemon-performance")],
   },
   {
+    id: "commit",
+    label: "Commit Hygiene",
+    description:
+      "Staging review, commit message structure, and splitting unrelated changes into separate commits.",
+    defaultSelected: false,
+    skills: [vendoredSkill("commit", "agemon-commit")],
+  },
+  {
     id: "teamlead",
     label: "Team Lead",
     description:
-      "Team-lead workflows: structured RFC planning and drafting for major features or architectural changes.",
+      "Team-lead workflows: structured RFC planning and PRD generation for major features or architectural changes.",
     defaultSelected: false,
-    skills: [vendoredSkill("team-lead", "agemon-plan-rfc")],
+    skills: [
+      vendoredSkill("team-lead", "agemon-plan-rfc"),
+      vendoredSkill("team-lead", "prd-generator"),
+    ],
   },
 ];
 
