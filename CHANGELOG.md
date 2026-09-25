@@ -1,5 +1,9 @@
 # agemon
 
+## 4.6.0
+
+- feat: add team-lead skill group (#13)
+
 ## 4.5.0
 
 - fix: add replace option to instruction-file conflict resolution (#12)
