@@ -330,9 +330,7 @@ async function recordDeclinedGroups(
   groupsOffered: SkillGroup[],
   groupsToInstall: SkillGroup[],
 ): Promise<void> {
-  const installedGroupIds = new Set(
-    groupsToInstall.map((group) => group.id),
-  );
+  const installedGroupIds = new Set(groupsToInstall.map((group) => group.id));
   const declinedGroups = groupsOffered.filter(
     (group) => !installedGroupIds.has(group.id),
   );
