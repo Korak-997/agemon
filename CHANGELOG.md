@@ -1,5 +1,9 @@
 # agemon
 
+## 4.7.2
+
+- fix: distinguish declined skill groups from never-offered ones (#16)
+
 ## 4.7.1
 
 - fix(skills): name pending groups in the drift-detection gate preview (#15)
