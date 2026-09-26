@@ -127,6 +127,13 @@ async function planSkills(context: Context) {
   return skillsPlugin.plan(context);
 }
 
+async function describeSkillsState(context: Context) {
+  if (!skillsPlugin.describeState) {
+    throw new Error("skillsPlugin.describeState is not defined");
+  }
+  return skillsPlugin.describeState(context);
+}
+
 describe("skills plugin drift detection", () => {
   it("offers a catalog group added after the project's original install", async () => {
     const context = await createTestContext({ interactive: false });
@@ -167,6 +174,30 @@ describe("skills plugin drift detection", () => {
     expect(planAfterDecision).toEqual([]);
   });
 
+  it("keeps a newly added group pending after a non-interactive, non-consenting install", async () => {
+    const context = await createTestContext({ interactive: false, yes: false });
+    await installAsPreUpgradeProject(context);
+
+    await skillsPlugin.install(context);
+    expect(clack.multiselect).not.toHaveBeenCalled();
+
+    const planAfterNonInteractiveInstall = await planSkills(context);
+    expect(planAfterNonInteractiveInstall).not.toEqual([]);
+    const [gateOperation] = planAfterNonInteractiveInstall;
+    expect(gateOperation.preview.text).toContain(
+      findSkillGroup("architecture")?.label,
+    );
+
+    context.interactive = true;
+    clack.multiselect.mockResolvedValueOnce(["architecture"]);
+    await skillsPlugin.install(context);
+
+    const offeredGroupIds = clack.multiselect.mock.calls[0][0].options.map(
+      (option: { value: string }) => option.value,
+    );
+    expect(offeredGroupIds).toContain("architecture");
+  });
+
   it("does not re-offer a group once it has been declined", async () => {
     const context = await createTestContext({ interactive: true });
     await installAsPreUpgradeProject(context);
@@ -180,5 +211,27 @@ describe("skills plugin drift detection", () => {
 
     await skillsPlugin.install(context);
     expect(clack.multiselect).toHaveBeenCalledTimes(1);
+
+    const declinedActions = context.manifest
+      .getActions()
+      .filter(
+        (action) =>
+          action.plugin === "skills" && action.type === "declined-skill-group",
+      )
+      .map((action) => action.target);
+    for (const groupId of ["design", "code-quality", "architecture"]) {
+      expect(declinedActions).toContain(groupId);
+    }
+
+    const stateRows = await describeSkillsState(context);
+    for (const groupId of ["design", "code-quality"]) {
+      const group = findSkillGroup(groupId);
+      const row = stateRows.find(
+        (candidate) => candidate.resourceId === `skill-group:${groupId}`,
+      );
+      expect(row).toBeDefined();
+      expect(row?.label).toBe(group?.label);
+      expect(row?.state).toBe("declined");
+    }
   });
 });

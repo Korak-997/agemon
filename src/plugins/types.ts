@@ -52,6 +52,7 @@ export type CapabilityState =
   | "present-managed"
   | "present-adopted"
   | "absent"
+  | "declined"
   | "unknown";
 
 export interface CapabilityStateRow {
