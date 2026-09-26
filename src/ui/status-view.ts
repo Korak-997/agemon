@@ -18,6 +18,7 @@ const CAPABILITY_STATE_TONE: Record<
   "present-managed": "ok",
   "present-adopted": "warn",
   absent: "neutral",
+  declined: "neutral",
   unknown: "warn",
 };
 
@@ -25,6 +26,7 @@ const CAPABILITY_STATE_LABEL: Record<CapabilityState, string> = {
   "present-managed": "present · managed",
   "present-adopted": "present · adopted",
   absent: "absent",
+  declined: "absent · declined",
   unknown: "unknown",
 };
 

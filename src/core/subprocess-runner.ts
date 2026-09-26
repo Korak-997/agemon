@@ -33,6 +33,15 @@ function buildFakeStateSignature(): string {
   ].join("||");
 }
 
+export function resetFakeSubprocessState(): void {
+  fakeCrgInstalledState = null;
+  fakeInstalledSkillNames = null;
+  fakeInstalledGlobalNpmPackageNames = null;
+  fakeVersionedAgentBinaryNames = null;
+  fakeUsableAgentBinaryNames = null;
+  fakeStateSignature = null;
+}
+
 function initializeFakeStateIfNeeded(): void {
   const currentStateSignature = buildFakeStateSignature();
   if (

@@ -28,6 +28,7 @@ const ACTION_TYPE_INSTALLED_SKILL = "installed-skill";
 const ACTION_TYPE_PREEXISTING_SKILL = "preexisting-skill";
 const ACTION_TYPE_GENERATED_SKILLS_LOCK = "generated-skills-lock";
 const ACTION_TYPE_OFFERED_SKILL_GROUP = "offered-skill-group";
+const ACTION_TYPE_DECLINED_SKILL_GROUP = "declined-skill-group";
 const SKILLS_LOCK_FILE = "skills-lock.json";
 const SKILLS_LOCK_GITIGNORE_ENTRY = "/skills-lock.json";
 
@@ -70,6 +71,14 @@ function getUnofferedGroups(ctx: Context): SkillGroup[] {
   const offeredGroupIds = getOfferedGroupIds(ctx);
   return SKILL_GROUPS.filter(
     (group) => !offeredGroupIds.has(group.id) && !decidedGroupIds.has(group.id),
+  );
+}
+
+function getDeclinedGroupIds(ctx: Context): Set<string> {
+  return new Set(
+    getPluginActions(ctx)
+      .filter((action) => action.type === ACTION_TYPE_DECLINED_SKILL_GROUP)
+      .map((action) => action.target),
   );
 }
 
@@ -186,11 +195,25 @@ async function detectSkills(ctx: Context): Promise<PluginPresence> {
   return { present: true, preExisting: true };
 }
 
+function getReportableGroups(ctx: Context): SkillGroup[] {
+  const recordedGroups = getRecordedGroups(ctx);
+  const declinedGroupIds = getDeclinedGroupIds(ctx);
+  const combinedGroups = new Map(
+    recordedGroups.map((group) => [group.id, group]),
+  );
+  for (const group of SKILL_GROUPS) {
+    if (declinedGroupIds.has(group.id)) {
+      combinedGroups.set(group.id, group);
+    }
+  }
+  return [...combinedGroups.values()];
+}
+
 async function describeSkillsState(
   ctx: Context,
 ): Promise<CapabilityStateRow[]> {
-  const recordedGroups = getRecordedGroups(ctx);
-  if (recordedGroups.length === 0) {
+  const reportableGroups = getReportableGroups(ctx);
+  if (reportableGroups.length === 0) {
     return [
       {
         capabilityId: PLUGIN_ID,
@@ -208,7 +231,7 @@ async function describeSkillsState(
   } catch (error) {
     const detail =
       error instanceof Error ? error.message : "npx skills list failed";
-    return recordedGroups.map((group) => ({
+    return reportableGroups.map((group) => ({
       capabilityId: PLUGIN_ID,
       resourceId: `skill-group:${group.id}`,
       label: group.label,
@@ -217,7 +240,9 @@ async function describeSkillsState(
     }));
   }
 
-  return recordedGroups.map((group): CapabilityStateRow => {
+  const declinedGroupIds = getDeclinedGroupIds(ctx);
+
+  return reportableGroups.map((group): CapabilityStateRow => {
     const resourceId = `skill-group:${group.id}`;
     const installedCount = group.skills.filter((skill) =>
       installedSkillNames.has(skill.skillName),
@@ -228,7 +253,10 @@ async function describeSkillsState(
         capabilityId: PLUGIN_ID,
         resourceId,
         label: group.label,
-        state: "absent",
+        state:
+          installedCount === 0 && declinedGroupIds.has(group.id)
+            ? "declined"
+            : "absent",
         detail: `${installedCount}/${group.skills.length} skills installed`,
       };
     }
@@ -297,6 +325,25 @@ async function recordOfferedGroups(
   }
 }
 
+async function recordDeclinedGroups(
+  ctx: Context,
+  groupsOffered: SkillGroup[],
+  groupsToInstall: SkillGroup[],
+): Promise<void> {
+  const installedGroupIds = new Set(groupsToInstall.map((group) => group.id));
+  const declinedGroups = groupsOffered.filter(
+    (group) => !installedGroupIds.has(group.id),
+  );
+  for (const group of declinedGroups) {
+    await ctx.manifest.recordAction({
+      plugin: PLUGIN_ID,
+      type: ACTION_TYPE_DECLINED_SKILL_GROUP,
+      target: group.id,
+      preExisting: false,
+    });
+  }
+}
+
 function getOptionalGroupsShownDuringFreshInstall(ctx: Context): SkillGroup[] {
   if (ctx.skillGroupsOption !== undefined || ctx.dryRun || !ctx.interactive) {
     return [];
@@ -304,18 +351,33 @@ function getOptionalGroupsShownDuringFreshInstall(ctx: Context): SkillGroup[] {
   return SKILL_GROUPS.filter((group) => !group.defaultSelected);
 }
 
+function getGroupsActuallyOffered(
+  ctx: Context,
+  unofferedGroups: SkillGroup[],
+): SkillGroup[] {
+  if (unofferedGroups.length === 0 || ctx.dryRun) {
+    return [];
+  }
+  if (ctx.yes || ctx.interactive) {
+    return unofferedGroups;
+  }
+  return [];
+}
+
 async function installSkills(ctx: Context): Promise<void> {
   const isFreshInstall = getRecordedGroups(ctx).length === 0;
+  const unofferedGroups = getUnofferedGroups(ctx);
 
   const groupsToInstall = isFreshInstall
     ? await resolveGroupsForFreshInstall(ctx, ctx.skillGroupsOption)
-    : await resolveNewlyOfferedGroups(ctx, getUnofferedGroups(ctx));
+    : await resolveNewlyOfferedGroups(ctx, unofferedGroups);
 
   if (!ctx.dryRun) {
     const groupsOffered = isFreshInstall
       ? getOptionalGroupsShownDuringFreshInstall(ctx)
-      : getUnofferedGroups(ctx);
+      : getGroupsActuallyOffered(ctx, unofferedGroups);
     await recordOfferedGroups(ctx, groupsOffered);
+    await recordDeclinedGroups(ctx, groupsOffered, groupsToInstall);
   }
 
   const entriesToInstall = flattenSkills(groupsToInstall);
