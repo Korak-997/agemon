@@ -17,7 +17,10 @@ vi.mock("@clack/prompts", () => ({
 
 import type { Context } from "../../../src/core/context.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
-import { runSubprocess } from "../../../src/core/subprocess-runner.js";
+import {
+  resetFakeSubprocessState,
+  runSubprocess,
+} from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
@@ -31,6 +34,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   clack.multiselect.mockReset();
   clack.cancel.mockReset();
+  resetFakeSubprocessState();
 });
 
 function createNoOpServiceManager(): ServiceManager {
