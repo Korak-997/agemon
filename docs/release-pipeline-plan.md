@@ -1,6 +1,10 @@
 # agemon — Automated & Hardened Release Pipeline Plan
 
-**Status:** proposed
+**Status:** superseded in part by P1 of [`plan.md`](plan.md) (2026-10-24). P1 ships
+checksummed release assets, build-provenance attestations, a hard-failing verifying
+`install.sh`, a least-privilege two-job Release workflow and SHA-pinned actions, all
+without release-please. Where this document disagrees (release-please, soft-failing
+attestation checks), P1 and [`releasing.md`](releasing.md) are current.
 **Author:** prepared 2026-09-09
 **Scope:** replace the tag-and-hand-written-changelog release process with a fully
 automated, supply-chain-hardened pipeline driven by

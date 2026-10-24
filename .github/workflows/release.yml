@@ -13,28 +13,31 @@ on:
 
 concurrency: ${{ github.workflow }}-${{ inputs.tag || github.ref }}
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
-  release:
-    name: release
+  build:
+    name: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      checksums-digest: ${{ steps.checksums.outputs.digest }}
 
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.x
-          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -61,9 +64,9 @@ jobs:
           TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
 
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+|-beta\.[0-9]+)?$ ]]; then
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
             echo "Unsupported tag format: $TAG"
-            echo "Allowed: vX.Y.Z, vX.Y.Z-alpha.N, vX.Y.Z-beta.N"
+            echo "Allowed: vX.Y.Z, vX.Y.Z-alpha.N, vX.Y.Z-beta.N, vX.Y.Z-rc.N"
             exit 1
           fi
 
@@ -90,14 +93,68 @@ jobs:
             exit 1
           fi
 
-      - name: Package release tarball
+      - name: Package release assets
+        id: checksums
         run: |
           set -euo pipefail
 
+          mkdir release-assets
           npm pack --pack-destination /tmp
-          mv /tmp/agemon-*.tgz agemon.tgz
+          mv /tmp/agemon-*.tgz release-assets/agemon.tgz
+          cp install.sh release-assets/install.sh
+
+          cd release-assets
+          sha256sum agemon.tgz install.sh > SHA256SUMS
+          echo "digest=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Verify assets match the build job
+        working-directory: release-assets
+        env:
+          EXPECTED_CHECKSUMS_DIGEST: ${{ needs.build.outputs.checksums-digest }}
+        run: |
+          set -euo pipefail
+
+          ACTUAL_CHECKSUMS_DIGEST="$(sha256sum SHA256SUMS | cut -d' ' -f1)"
+          if [[ "$ACTUAL_CHECKSUMS_DIGEST" != "$EXPECTED_CHECKSUMS_DIGEST" ]]; then
+            echo "SHA256SUMS changed between the build and publish jobs."
+            exit 1
+          fi
+          sha256sum -c SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: release-assets/SHA256SUMS
 
       - name: Publish GitHub Release
+        working-directory: release-assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -105,11 +162,13 @@ jobs:
 
           TAG="${RELEASE_TAG}"
           PRERELEASE_FLAG=""
-          if [[ "$TAG" == *-alpha.* || "$TAG" == *-beta.* ]]; then
+          if [[ "$TAG" == *-alpha.* || "$TAG" == *-beta.* || "$TAG" == *-rc.* ]]; then
             PRERELEASE_FLAG="--prerelease"
           fi
 
-          gh release create "$TAG" agemon.tgz \
+          gh release create "$TAG" agemon.tgz install.sh SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
             --title "$TAG" \
             --generate-notes \
             $PRERELEASE_FLAG

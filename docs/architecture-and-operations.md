@@ -171,10 +171,16 @@ handlers in `src/cli/index.ts`:
 - Network/cache failures are swallowed silently — never blocks the actual command.
 - Non-interactive stdin/stdout (CI, piped output): prints a one-line notice only, never
   prompts.
-- Interactive TTY with a newer version available: prompts to update; on yes, shells out
-  to the same `curl -fsSL .../install.sh | sh` one-liner documented in the README (single
-  source of truth for the install mechanism), then returns `true` so the caller stops
-  instead of proceeding with code that was just replaced on disk.
+- Interactive TTY with a newer version available: prompts to update; on yes, downloads
+  `install.sh` and `SHA256SUMS` from that exact release (`releases/download/vX.Y.Z/`),
+  writes the script to a private temp directory, re-hashes the file on disk, and runs it
+  with `sh <path>` (no shell string, no pipe) and `AGEMON_VERSION` set, only when the hash
+  matches. The installer then verifies the tarball's checksum itself; build-provenance
+  attestations are checked only when `AGEMON_VERIFY_ATTESTATION=1` is exported, because the
+  updater passes its environment through. The CLI returns `updated` so the
+  caller stops instead of proceeding with code that was just replaced on disk.
+- The tag from the API and the cached version must look like a release version
+  (`X.Y.Z` with an optional `-alpha.N`/`-beta.N`/`-rc.N`); anything else is ignored.
 
 ## Sandbox Harness
 

@@ -100,12 +100,22 @@ Notes:
 Install `agemon` system-wide with the installer script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Korak-997/agemon/master/install.sh | sh
+curl -fsSL https://github.com/Korak-997/agemon/releases/latest/download/install.sh | sh
 ```
 
 This downloads the latest self-contained release build (no `node_modules` required),
-and links it onto your `PATH` — as `/usr/local/bin/agemon` when run as root, or
-`~/.local/bin/agemon` otherwise.
+checks it against the release's `SHA256SUMS`, and links it onto your `PATH` — as
+`/usr/local/bin/agemon` when run as root, or `~/.local/bin/agemon` otherwise.
+
+The one-liner runs `install.sh` without checking it first. To verify the installer too:
+
+```bash
+cd "$(mktemp -d)"
+curl -fsSLO https://github.com/Korak-997/agemon/releases/latest/download/install.sh
+curl -fsSLO https://github.com/Korak-997/agemon/releases/latest/download/SHA256SUMS
+grep ' install.sh$' SHA256SUMS | sha256sum -c -   # macOS: shasum -a 256 -c -
+sh install.sh
+```
 
 Or, from a local clone:
 
@@ -122,8 +132,26 @@ agemon
 
 ### Installer options
 
-- `AGEMON_VERSION`: install a specific release tag instead of `latest` (e.g. `AGEMON_VERSION=0.1.0 sh install.sh`).
+- `AGEMON_VERSION`: install a specific release tag instead of `latest` (e.g. `AGEMON_VERSION=4.8.0 sh install.sh`).
+  Releases up to 4.7.2 have no `SHA256SUMS` and can no longer be installed this way.
 - `AGEMON_INSTALL_DIR`: override the install directory instead of the root/user default.
+  It must be an absolute path to a new or empty directory, or to one a previous agemon
+  install created. The installer refuses anything else (a symlink, your home directory, a
+  source checkout, a directory with other files) and changes nothing.
+- `AGEMON_VERIFY_ATTESTATION=1`: also verify the tarball's build-provenance attestation
+  with `gh attestation verify`. This needs the GitHub CLI, logged in with `gh auth login`.
+
+### What the installer verifies
+
+- **Checksums** (always): the tarball must match the `SHA256SUMS` published with the same
+  release. This catches truncated or corrupted downloads and a CDN serving files from two
+  different releases. It does not catch a consistently stale `latest` alias (you would get
+  an older, still verified release), and a checksum from the same place as the file proves
+  nothing against an attacker who can replace both.
+- **Attestations** (opt-in, above): prove the tarball was built by this repository's release
+  workflow, so they catch a tampered or swapped asset.
+- **Neither** helps if the release workflow itself or the maintainer's account is
+  compromised.
 
 ### Uninstalling agemon itself
 
@@ -140,8 +168,9 @@ sudo rm -rf /usr/local/lib/agemon /usr/local/bin/agemon   # root/system install
 Each run of `agemon`/`agemon nuke` (skipped for `--dry-run`) checks once a day
 whether a newer GitHub Release exists:
 
-- Interactive terminal: prompts to install the update now; on yes, re-runs `install.sh`
-  in place and asks you to re-run your command against the new version.
+- Interactive terminal: prompts to install the update now; on yes, downloads that
+  release's `install.sh`, checks it against the release's `SHA256SUMS`, runs it, and asks
+  you to re-run your command against the new version. Nothing runs if the check fails.
 - Non-interactive (CI, piped output): prints a one-line notice and continues — never
   blocks on a prompt.
 

@@ -20,8 +20,8 @@ function canonicalizeJsonValue(value: unknown): unknown {
   return value;
 }
 
-export function sha256Hex(contents: string): string {
-  return createHash("sha256").update(contents, "utf8").digest("hex");
+export function sha256Hex(contents: string | Buffer): string {
+  return createHash("sha256").update(contents).digest("hex");
 }
 
 export function fingerprintJson(value: unknown): string {
