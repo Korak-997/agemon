@@ -32,6 +32,7 @@ export interface ConsentGate {
 export interface SkippedOperation {
   operation: ProposedOperation;
   reason: string;
+  consentMissing: boolean;
 }
 
 export type RecordedConflictDecision = "keep" | "replace" | "skip";
@@ -232,29 +233,28 @@ export async function resolveConsent(
         input.log.log(gateIntro);
       }
       for (const operation of gate.operations) {
-        const recordedDecision =
-          input.conflictDecisions?.[operation.resourceId];
-        const { decision, reason } = recordedDecision
-          ? {
-              decision: recordedDecision,
-              reason: `conflict ${describeRecordedDecision(recordedDecision)} per agemon.toml`,
-            }
-          : await resolveConflict(operation, {
-              interactive,
-              prompts,
-              log: input.log,
-            });
-        if (decision !== null) {
+        const outcome = await settleConflict(operation, {
+          recordedDecision: input.conflictDecisions?.[operation.resourceId],
+          yes: input.yes,
+          interactive,
+          prompts,
+          log: input.log,
+        });
+        if (outcome.decision !== null && outcome.recordable) {
           conflictResolutions.push({
             resourceId: operation.resourceId,
-            decision,
+            decision: outcome.decision,
           });
         }
-        if (decision === "replace") {
+        if (outcome.decision === "replace") {
           approved.push({ ...operation, action: "replace" });
           continue;
         }
-        skipped.push({ operation, reason });
+        skipped.push({
+          operation,
+          reason: outcome.reason,
+          consentMissing: outcome.decision === null,
+        });
       }
       continue;
     }
@@ -271,12 +271,12 @@ export async function resolveConsent(
       continue;
     }
 
-    const reason =
-      !input.yes && !interactive
-        ? `no consent for the '${gate.id}' gate (non-interactive, no --yes)`
-        : `declined at the '${gate.id}' consent gate`;
+    const consentMissing = !input.yes && !interactive;
+    const reason = consentMissing
+      ? `no consent for the '${gate.id}' gate (non-interactive, no --yes)`
+      : `declined at the '${gate.id}' consent gate`;
     for (const operation of gate.operations) {
-      skipped.push({ operation, reason });
+      skipped.push({ operation, reason, consentMissing });
     }
     input.log.log(`Skipped ${gate.operations.length} operation(s): ${reason}.`);
   }
@@ -339,24 +339,72 @@ function describeRecordedDecision(decision: RecordedConflictDecision): string {
   }
 }
 
+interface SettleConflictContext extends GateDecisionContext {
+  recordedDecision: RecordedConflictDecision | undefined;
+}
+
+interface SettledConflict extends ConflictOutcome {
+  recordable: boolean;
+}
+
+async function settleConflict(
+  operation: ProposedOperation,
+  ctx: SettleConflictContext,
+): Promise<SettledConflict> {
+  if (operation.expectedFingerprint === null) {
+    return {
+      decision: "keep",
+      reason: `${printable(operation.targetPath)} is not a regular file; agemon leaves it alone`,
+      recordable: false,
+    };
+  }
+
+  const { recordedDecision } = ctx;
+  if (recordedDecision === "replace" && !ctx.yes) {
+    if (!ctx.interactive) {
+      return {
+        decision: null,
+        reason: "recorded 'replace' needs --yes or an interactive session",
+        recordable: false,
+      };
+    }
+    return {
+      ...(await resolveConflict(
+        operation,
+        ctx,
+        "agemon.toml records 'replace'. ",
+      )),
+      recordable: true,
+    };
+  }
+  if (recordedDecision !== undefined) {
+    return {
+      decision: recordedDecision,
+      reason: `conflict ${describeRecordedDecision(recordedDecision)} per agemon.toml`,
+      recordable: true,
+    };
+  }
+  return { ...(await resolveConflict(operation, ctx)), recordable: true };
+}
+
 async function resolveConflict(
   operation: ProposedOperation,
   ctx: Omit<GateDecisionContext, "yes">,
+  questionPrefix = "",
 ): Promise<ConflictOutcome> {
   if (!ctx.interactive) {
     return {
       decision: null,
-      reason:
-        "conflict left unresolved — needs an explicit decision (non-interactive)",
+      reason: `conflict left unresolved (non-interactive) — record "${printable(operation.resourceId)}" = "keep", "replace" or "skip" under [conflict_decisions] in agemon.toml`,
     };
   }
 
   const reply = await ctx.prompts.conflict(
-    `Conflict at ${operation.targetPath || operation.resourceId}: keep, replace, show agemon's, or skip?`,
+    `${questionPrefix}Conflict at ${operation.targetPath || operation.resourceId}: keep, replace, show agemon's, or skip?`,
   );
   if (reply === "show-theirs") {
     printOperationPreviews([operation], ctx.log);
-    return resolveConflict(operation, ctx);
+    return resolveConflict(operation, ctx, questionPrefix);
   }
   if (reply === "skip") {
     return { decision: "skip", reason: "conflict skipped by choice" };

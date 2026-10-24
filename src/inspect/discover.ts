@@ -3,11 +3,18 @@ import { readdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { Context } from "../core/context.js";
 import { RefusedFileError, readRegularFileIfExists } from "../core/files.js";
-import { resolveInsideRepo, resolveRepoDirectory } from "../core/repo-paths.js";
+import {
+  hasGitEntry,
+  resolveInsideRepo,
+  resolveRepoDirectory,
+} from "../core/repo-paths.js";
 import { printable } from "../core/untrusted-text.js";
 import { isDenylistedPath } from "./redact.js";
 
 const execFileAsync = promisify(execFile);
+const GIT_LS_FILES_TIMEOUT_MS = 5_000;
+const GIT_LS_FILES_MAX_OUTPUT_BYTES = 1024 * 1024;
+const GIT_ERROR_MAX_CHARACTERS = 200;
 
 export const ROOT_RULE_FILES = [
   "AGENTS.md",
@@ -60,6 +67,7 @@ export interface BinaryResource {
 export interface WorkspaceIsolation {
   status: IsolationStatus;
   trackedAgemonPaths: string[];
+  trackingCheckError: string | null;
 }
 
 export interface DiscoveryResult {
@@ -212,19 +220,54 @@ async function readIsolationStatus(cwd: string): Promise<IsolationStatus> {
   return normalizedEntries.includes(".agemon") ? "ignored" : "not-ignored";
 }
 
-async function listTrackedAgemonPaths(cwd: string): Promise<string[]> {
+interface TrackedAgemonPaths {
+  trackedAgemonPaths: string[];
+  trackingCheckError: string | null;
+}
+
+function describeGitFailure(text: string): string {
+  const firstLine = text.trim().split(/\r?\n/)[0] ?? "";
+  return printable(firstLine).slice(0, GIT_ERROR_MAX_CHARACTERS);
+}
+
+async function listTrackedAgemonPaths(
+  cwd: string,
+): Promise<TrackedAgemonPaths> {
   try {
     const { stdout } = await execFileAsync(
       "git",
-      ["-C", cwd, "ls-files", "--", ".agemon"],
-      { encoding: "utf8" },
+      [
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-C",
+        cwd,
+        "ls-files",
+        "--",
+        ".agemon",
+      ],
+      {
+        encoding: "utf8",
+        timeout: GIT_LS_FILES_TIMEOUT_MS,
+        maxBuffer: GIT_LS_FILES_MAX_OUTPUT_BYTES,
+      },
     );
-    return stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-  } catch {
-    return [];
+    return {
+      trackedAgemonPaths: stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0),
+      trackingCheckError: null,
+    };
+  } catch (error) {
+    const failure = error as { stderr?: string; message?: string };
+    return {
+      trackedAgemonPaths: [],
+      trackingCheckError: (await hasGitEntry(cwd))
+        ? `could not check whether .agemon/ is tracked by git: ${describeGitFailure(failure.stderr || failure.message || "git failed")}`
+        : null,
+    };
   }
 }
 
@@ -260,7 +303,7 @@ export async function discoverRepository(
     })),
     isolation: {
       status: await readIsolationStatus(ctx.cwd),
-      trackedAgemonPaths: await listTrackedAgemonPaths(ctx.cwd),
+      ...(await listTrackedAgemonPaths(ctx.cwd)),
     },
   };
 }

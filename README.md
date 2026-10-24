@@ -168,16 +168,20 @@ sudo rm -rf /usr/local/lib/agemon /usr/local/bin/agemon   # root/system install
 
 ### Update checks
 
-Each run of `agemon`/`agemon nuke` (skipped for `--dry-run`) checks once a day
-whether a newer GitHub Release exists:
+`agemon`, `agemon apply` and `agemon nuke` check once a day whether a newer GitHub Release
+exists. The check never slows a command down:
 
-- Interactive terminal: prompts to install the update now; on yes, downloads that
-  release's `install.sh`, checks it against the release's `SHA256SUMS`, runs it, and asks
-  you to re-run your command against the new version. Nothing runs if the check fails.
-- Non-interactive (CI, piped output): prints a one-line notice and continues — never
-  blocks on a prompt.
+- the lookup starts in the background when the command starts, and its result is shown
+  only **after** the command has finished and exited successfully. If the lookup has not
+  finished by then, it is cancelled and tried again on a later run;
+- in an interactive terminal (without `--yes`) agemon then asks whether to install the
+  update. On yes, it downloads that release's `install.sh`, checks it against the
+  release's `SHA256SUMS`, and runs it. Nothing runs if a check fails;
+- with `--yes`, or without a terminal, it prints a one-line notice instead of asking.
 
-Set `AGEMON_NO_UPDATE_CHECK=1` to disable this entirely.
+There is no check at all for `inspect`, `status`, `plan` or `recover`, with `--dry-run` or
+`--quiet`, when `CI` is set (to anything other than `0` or `false`), or when
+`AGEMON_NO_UPDATE_CHECK=1` is set.
 
 ## CLI Usage
 
@@ -190,8 +194,26 @@ agemon [options]
 Reverse managed changes:
 
 ```bash
-agemon nuke [options]
+agemon nuke [--yes] [--dry-run] [--only <plugins>] [--skip-daemon]
 ```
+
+`nuke` first lists everything it will reverse, including machine-wide steps such as
+uninstalling a global npm package or disabling user linger. It then asks once. Notes:
+
+- `--yes` skips the list and the question;
+- without a terminal and without `--yes`, it prints the list and stops (exit 0), the
+  same way a first install previews. **Scripts that ran `agemon nuke` without `--yes`
+  must now pass it;**
+- it never removes something another installed capability still needs. With
+  `--skip-daemon`, or when the daemon could not be removed, code-review-graph stays as
+  long as the daemon is installed. The list shows each such line as `kept: …`;
+- if one capability cannot be reversed, `nuke` still reverses the others, then exits 1
+  and keeps the failed one's ledger entries so you can fix the cause and re-run;
+- `agemon.toml` is deleted only when nothing failed and the ledger is empty afterwards. With
+  `--only` or `--skip-daemon`, that run must also have reversed at least one entry, so a
+  fresh clone's committed `agemon.toml` survives `nuke --only …`. Deleting it is always
+  listed and asked about like any other reversal;
+- `nuke --dry-run` changes nothing, not even `.agemon/`.
 
 Restore the files an interrupted apply changed (see
 [Interrupted applies](#interrupted-applies)):
@@ -205,11 +227,14 @@ agemon recover [--yes] [--dry-run]
 - `--dry-run`: narrate actions without making changes.
 - `--yes`: skip confirmation prompts.
 - `--only <plugins>`: run only a comma-separated subset of plugins.
-- `--skip-daemon`: skip daemon registration during install.
+- `--skip-daemon`: skip daemon registration during install; keep the daemon during `nuke`.
 - `--skill-groups <groups>`: comma-separated skill group ids to install, or `all`/`none` — see
   [Skill Groups](#skill-groups).
 - `--no-color`: disable ANSI colors.
-- `-v, --verbose`: show raw subprocess output beneath each step.
+- `-v, --verbose`: print each subprocess's command line, exit code and the last 20 lines of
+  its stdout/stderr beneath the step. Secrets that look like tokens, keys, passwords,
+  `Authorization` values, credentials in URLs and PEM blocks are redacted; the environment
+  is never printed. `--quiet` wins over `--verbose`.
 - `-q, --quiet`: reduce output to minimal step/final lines.
 
 Examples:
@@ -224,6 +249,72 @@ agemon --yes --skill-groups all
 # Install only the security and architecture groups on top of essentials
 agemon --yes --skill-groups security,architecture
 ```
+
+### Repository root
+
+agemon works on the repository you are in, not on the directory you run it from. It looks
+from the current directory upwards for the nearest `.git` (a directory, or a `gitdir:`
+file as in a git worktree), and uses the directory that holds it for `agemon.toml`,
+`.agemon/`, rule files and subprocesses. When that is not the current directory, it prints
+`Using repository root <path> (not the current directory).` to stderr.
+
+It falls back to the current directory, with a notice, when:
+
+- there is no `.git` above it;
+- the first `.git` it meets is something else (for example a symlink);
+- that repository contains your home directory, e.g. a home directory tracked as a
+  dotfiles repo. Run `git init` in the project, or run agemon from the repository root;
+- that repository, or its `.git`, belongs to another user (e.g. a `/tmp/.git` someone else
+  created).
+
+agemon reads `.git` from the filesystem only, so git configuration (such as
+`core.worktree`) cannot redirect where it writes.
+
+> **Upgrading:** if you ran agemon from a subdirectory with an earlier release, its state
+> is in that subdirectory. Before upgrading, run `agemon nuke` there with the earlier
+> release, or delete that subdirectory's `.agemon/` and agemon-written files by hand.
+
+### `agemon.toml`
+
+The first successful run writes `agemon.toml` at the repository root; commit it so
+teammates and CI reconcile the same way. It accepts exactly these keys. An unknown key, an
+unknown capability id, or an empty `capabilities` list is an error, never a silent
+fallback:
+
+```toml
+capabilities = ["crg", "daemon", "skills", "cli-tool", "master-prompt"]
+skill_groups = "essentials,security"   # optional
+
+[conflict_decisions]                   # optional
+"rule-file:CLAUDE.md" = "keep"         # keep | replace | skip
+```
+
+A conflict is a rule file that holds your own rules where agemon would write a pointer.
+It needs a decision. `--yes` never picks one for you, so record it under
+`conflict_decisions`:
+
+- `keep` and `skip` apply in any session;
+- `replace` applies with `--yes` (so a committed `replace` overwrites that pointer file in
+  `--yes` runs; agemon backs up the original first), and is asked again in an
+  interactive terminal;
+- without a decision, a non-interactive run exits 2 (see below).
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success, nothing to do, preview only (`--dry-run`, or a first run without consent), or you declined. |
+| `1` | Error, or the apply failed and was rolled back. |
+| `2` | Drift found, consent was missing (operations or conflicts pending in a non-interactive run), or the apply finished but verification found problems. |
+| `130` / `143` | Interrupted by SIGINT / SIGTERM (see [Interrupted applies](#interrupted-applies)). |
+
+`agemon status` exits 2 when it finds a problem in a repository where agemon has state (a
+ledger or an interrupted apply). In a repository agemon never touched, it reports what it
+sees and exits 0.
+
+If `git ls-files` cannot run (git missing, or "dubious ownership" in a CI container),
+`status`, `inspect` and install print `could not check whether .agemon/ is tracked by git`.
+This is a warning only, and it does not change the exit code.
 
 ### Agent Detection (`agemon inspect`)
 

@@ -98,6 +98,9 @@ export function renderInspectReport(report: InspectReport): string {
       )}`,
     );
   }
+  if (report.isolation.trackingCheckError !== null) {
+    blocks.push(`  ${theme.warn(report.isolation.trackingCheckError)}`);
+  }
 
   blocks.push(section("Resources"));
   blocks.push(

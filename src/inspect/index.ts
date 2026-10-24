@@ -26,7 +26,11 @@ export interface RedactedStructuredConfig {
 }
 
 export interface InspectReport {
-  isolation: { status: string; trackedAgemonPaths: string[] };
+  isolation: {
+    status: string;
+    trackedAgemonPaths: string[];
+    trackingCheckError: string | null;
+  };
   resources: ClassifiedResource[];
   capabilities: CapabilityStateRow[];
   structuredConfig: RedactedStructuredConfig[];
@@ -105,6 +109,7 @@ export async function inspectRepository(
     isolation: {
       status: discovery.isolation.status,
       trackedAgemonPaths: discovery.isolation.trackedAgemonPaths,
+      trackingCheckError: discovery.isolation.trackingCheckError,
     },
     resources,
     capabilities,

@@ -1,6 +1,7 @@
-import { rm } from "node:fs/promises";
+import { access, rm } from "node:fs/promises";
 import { relative } from "node:path";
 import { discoverRepository } from "../inspect/discover.js";
+import { redactSecretsInText } from "../inspect/redact.js";
 import { verifyManagedState } from "../inspect/status.js";
 import { CORE_CAPABILITY_IDS } from "../plugins/index.js";
 import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
@@ -13,7 +14,7 @@ import {
 } from "./apply.js";
 import { assertNoInterruptedApply } from "./apply-journal.js";
 import { resolveConfigPath, writeConfig } from "./config.js";
-import type { ConflictResolution } from "./consent.js";
+import type { ConflictResolution, SkippedOperation } from "./consent.js";
 import { buildConsentGates } from "./consent.js";
 import type { Context } from "./context.js";
 import {
@@ -27,12 +28,59 @@ import { printable } from "./untrusted-text.js";
 
 type ConflictDecisionMap = Record<string, "keep" | "replace" | "skip">;
 
-export interface OrchestratorOptions {
-  only?: string;
+export type RunOutcome =
+  | "applied"
+  | "nothing-to-do"
+  | "drift"
+  | "partial"
+  | "declined"
+  | "previewed";
+
+const DRIFT_EXIT_CODE = 2;
+
+export function exitCodeForOutcome(outcome: RunOutcome): number {
+  return outcome === "drift" || outcome === "partial" ? DRIFT_EXIT_CODE : 0;
+}
+
+export interface UninstallOptions {
+  only?: string[];
+  skipIds?: string[];
+}
+
+export type UninstallOutcome = Extract<
+  RunOutcome,
+  "applied" | "nothing-to-do" | "declined" | "previewed"
+>;
+
+const MAX_PREVIEW_LINES_PER_PLUGIN = 20;
+const MAX_PREVIEW_LINE_CHARACTERS = 300;
+const MAX_FAILURE_DETAIL_CHARACTERS = 200;
+
+function singleLine(untrusted: string, maxCharacters: number): string {
+  const line = printable(untrusted).replace(/[\n\t]/g, " ");
+  return line.length > maxCharacters
+    ? `${line.slice(0, maxCharacters)}…`
+    : line;
+}
+
+function describeFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const [firstLine = ""] = message.trim().split(/\r?\n/);
+  return singleLine(
+    redactSecretsInText(firstLine),
+    MAX_FAILURE_DETAIL_CHARACTERS,
+  );
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  return access(path).then(
+    () => true,
+    () => false,
+  );
 }
 
 export interface ReconcileOptions {
-  only?: string;
+  only?: string[];
   agemonVersion: string;
   allowUnignoredState: boolean;
   plan?: Plan;
@@ -41,30 +89,22 @@ export interface ReconcileOptions {
 }
 
 export interface BuildPlanOptions {
-  only?: string;
+  only?: string[];
   agemonVersion: string;
-}
-
-function parseOnlyPluginIds(only?: string): string[] {
-  if (!only) return [];
-  return only
-    .split(",")
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
 }
 
 function resolvePluginOrder(
   allPlugins: AgemonPlugin[],
-  onlyIds: string[],
+  onlyIds: string[] | undefined,
 ): AgemonPlugin[] {
   const pluginById = new Map(allPlugins.map((plugin) => [plugin.id, plugin]));
-  const unresolvedOnlyIds = onlyIds.filter((id) => !pluginById.has(id));
+  const unresolvedOnlyIds = (onlyIds ?? []).filter((id) => !pluginById.has(id));
   if (unresolvedOnlyIds.length > 0) {
     throw new Error(`Unknown plugin id(s): ${unresolvedOnlyIds.join(", ")}`);
   }
 
   const selected =
-    onlyIds.length === 0
+    onlyIds === undefined
       ? [...allPlugins]
       : allPlugins.filter((plugin) => onlyIds.includes(plugin.id));
 
@@ -107,8 +147,7 @@ export async function buildPlan(
   allPlugins: AgemonPlugin[],
   options: BuildPlanOptions,
 ): Promise<Plan> {
-  const onlyIds = parseOnlyPluginIds(options.only);
-  const plugins = resolvePluginOrder(allPlugins, onlyIds);
+  const plugins = resolvePluginOrder(allPlugins, options.only);
 
   const operations: ProposedOperation[] = [];
   for (const plugin of plugins) {
@@ -249,20 +288,42 @@ function assertPlanIsCompatible(
   }
 }
 
+function isSettledConflict(skip: SkippedOperation): boolean {
+  return skip.operation.action === "conflict" && !skip.consentMissing;
+}
+
+async function finishWithNothingToApply(
+  ctx: Context,
+  plugins: AgemonPlugin[],
+  options: ReconcileOptions,
+  conflictResolutions: ConflictResolution[],
+): Promise<RunOutcome> {
+  const driftProblems = await verifyManagedState(ctx, plugins);
+  if (driftProblems.length > 0) {
+    ctx.ui.fail("Nothing to apply, but the environment has drifted:");
+    reportSweepProblems(ctx, driftProblems);
+    return "drift";
+  }
+  if (options.persistConfig) {
+    await persistDesiredStateConfig(ctx, plugins, conflictResolutions);
+  }
+  ctx.ui.succeed(
+    "Nothing to do — every managed resource already matches the desired state.",
+  );
+  return "nothing-to-do";
+}
+
 export async function reconcile(
   ctx: Context,
   allPlugins: AgemonPlugin[],
   options: ReconcileOptions,
-): Promise<void> {
+): Promise<RunOutcome> {
   await assertNoInterruptedApply(ctx.cwd);
-  const plugins = resolvePluginOrder(
-    allPlugins,
-    parseOnlyPluginIds(options.only),
-  );
+  const plugins = resolvePluginOrder(allPlugins, options.only);
 
   if (plugins.length === 0) {
     ctx.ui.info("Nothing to do — no capabilities selected.");
-    return;
+    return "nothing-to-do";
   }
 
   if (options.plan) {
@@ -283,26 +344,18 @@ export async function reconcile(
     (plan.operations.length > 0 && sessionCannotConsent && isFirstRun)
   ) {
     await previewAndStop(ctx, plan);
-    return;
-  }
-
-  if (plan.operations.length === 0) {
-    const driftProblems = await verifyManagedState(ctx, plugins);
-    if (driftProblems.length > 0) {
-      ctx.ui.fail("Nothing to apply, but the environment has drifted:");
-      reportSweepProblems(ctx, driftProblems);
-      return;
-    }
-    if (options.persistConfig) {
-      await persistDesiredStateConfig(ctx, plugins, []);
-    }
-    ctx.ui.succeed(
-      "Nothing to do — every managed resource already matches the desired state.",
-    );
-    return;
+    return "previewed";
   }
 
   const { isolation } = await discoverRepository(ctx);
+  if (isolation.trackingCheckError !== null) {
+    ctx.ui.info(isolation.trackingCheckError);
+  }
+
+  if (plan.operations.length === 0) {
+    return finishWithNothingToApply(ctx, plugins, options, []);
+  }
+
   const gates = buildConsentGates({
     plan,
     isolationStatus: isolation.status,
@@ -310,8 +363,17 @@ export async function reconcile(
   const approval = await ctx.consent(gates, {
     conflictDecisions: options.conflictDecisions,
   });
+  const consentMissing = approval.skipped.some((skip) => skip.consentMissing);
 
   if (approval.approved.length === 0) {
+    if (approval.skipped.every(isSettledConflict)) {
+      return finishWithNothingToApply(
+        ctx,
+        plugins,
+        options,
+        approval.conflictResolutions,
+      );
+    }
     ctx.log.log(
       renderRunSummary({
         kind: "declined",
@@ -321,7 +383,7 @@ export async function reconcile(
         })),
       }),
     );
-    return;
+    return consentMissing ? "drift" : "declined";
   }
 
   let result: Awaited<ReturnType<typeof applyPlan>>;
@@ -358,7 +420,7 @@ export async function reconcile(
         problems: sweepProblems,
       }),
     );
-    return;
+    return "partial";
   }
 
   if (options.persistConfig) {
@@ -372,6 +434,7 @@ export async function reconcile(
       nextSteps: buildNextSteps(options, isolation.trackedAgemonPaths),
     }),
   );
+  return consentMissing ? "drift" : "applied";
 }
 
 function buildNextSteps(
@@ -388,32 +451,225 @@ function buildNextSteps(
   return steps;
 }
 
+function selectUninstallRequest(
+  allPlugins: AgemonPlugin[],
+  options: UninstallOptions,
+): Set<string> {
+  const knownIds = new Set(allPlugins.map((plugin) => plugin.id));
+  const unknownIds = (options.only ?? []).filter((id) => !knownIds.has(id));
+  if (unknownIds.length > 0) {
+    throw new Error(`Unknown plugin id(s): ${unknownIds.join(", ")}`);
+  }
+  const requested = options.only ?? [...knownIds];
+  return new Set(
+    requested.filter((id) => !(options.skipIds ?? []).includes(id)),
+  );
+}
+
+function reasonToKeep(
+  plugin: AgemonPlugin,
+  allPlugins: AgemonPlugin[],
+  installedIds: ReadonlySet<string>,
+  failedIds: ReadonlySet<string>,
+): string | null {
+  const dependent = allPlugins.find(
+    (candidate) =>
+      installedIds.has(candidate.id) &&
+      (candidate.dependsOn ?? []).includes(plugin.id),
+  );
+  if (dependent === undefined) {
+    return null;
+  }
+  return failedIds.has(dependent.id)
+    ? `${dependent.id} could not be uninstalled`
+    : `${dependent.id} is still installed`;
+}
+
+function pluginsWithLedgerEntries(ctx: Context): Set<string> {
+  return new Set(ctx.manifest.getActions().map((action) => action.plugin));
+}
+
+class PreviewPromptError extends Error {}
+
+function previewContext(
+  ctx: Context,
+  collect: (line: string) => void,
+): Context {
+  const refuse = (): never => {
+    throw new PreviewPromptError("the nuke preview must not ask for consent");
+  };
+  return {
+    ...ctx,
+    dryRun: true,
+    ui: { start() {}, succeed() {}, fail() {}, info: collect },
+    confirm: refuse,
+    consent: refuse,
+  };
+}
+
+async function previewPluginReversal(
+  ctx: Context,
+  plugin: AgemonPlugin,
+): Promise<string[]> {
+  const planned: string[] = [];
+  try {
+    await plugin.uninstall(
+      previewContext(ctx, (line) =>
+        planned.push(singleLine(line, MAX_PREVIEW_LINE_CHARACTERS)),
+      ),
+    );
+  } catch (error) {
+    if (error instanceof PreviewPromptError) {
+      throw error;
+    }
+    planned.push(`could not preview (${describeFailure(error)})`);
+  }
+  const overflow = planned.length - MAX_PREVIEW_LINES_PER_PLUGIN;
+  return [
+    ...planned.slice(0, MAX_PREVIEW_LINES_PER_PLUGIN),
+    ...(overflow > 0
+      ? [`… ${overflow} more — run 'agemon nuke --dry-run' for the full list`]
+      : []),
+  ];
+}
+
+async function describeReversal(
+  ctx: Context,
+  allPlugins: AgemonPlugin[],
+  orderedRequest: AgemonPlugin[],
+  hasSelectionFilter: boolean,
+): Promise<string[]> {
+  const lines: string[] = [];
+  const installedBefore = pluginsWithLedgerEntries(ctx);
+  const remainingIds = new Set(installedBefore);
+  for (const plugin of orderedRequest) {
+    if (!installedBefore.has(plugin.id)) {
+      continue;
+    }
+    const keptBecause = reasonToKeep(
+      plugin,
+      allPlugins,
+      remainingIds,
+      new Set(),
+    );
+    if (keptBecause !== null) {
+      lines.push(`kept: ${plugin.id} (${keptBecause})`);
+      continue;
+    }
+    const planned = await previewPluginReversal(ctx, plugin);
+    lines.push(`${plugin.id}:`, ...planned.map((line) => `  ${line}`));
+    remainingIds.delete(plugin.id);
+  }
+  const removesEntries = remainingIds.size < installedBefore.size;
+  if (
+    remainingIds.size === 0 &&
+    (!hasSelectionFilter || removesEntries) &&
+    (await fileExists(resolveConfigPath(ctx.cwd)))
+  ) {
+    lines.push("agemon.toml (deleted)");
+  }
+  return lines;
+}
+
+async function confirmReversal(
+  ctx: Context,
+  reversal: string[],
+): Promise<UninstallOutcome | null> {
+  ctx.log.log(
+    ["agemon nuke will reverse:", ...reversal.map((line) => `  ${line}`)].join(
+      "\n",
+    ),
+  );
+  if (!ctx.interactive) {
+    ctx.log.log("Re-run with --yes to reverse these changes.");
+    return "previewed";
+  }
+  return (await ctx.confirm("Reverse these changes?")) ? null : "declined";
+}
+
 export async function uninstallPlugins(
   ctx: Context,
   allPlugins: AgemonPlugin[],
-  options: OrchestratorOptions,
-): Promise<void> {
+  options: UninstallOptions,
+): Promise<UninstallOutcome> {
   await assertNoInterruptedApply(ctx.cwd);
-  const onlyIds = parseOnlyPluginIds(options.only);
-  const plugins = resolvePluginOrder(allPlugins, onlyIds).reverse();
+  const requestedIds = selectUninstallRequest(allPlugins, options);
+  const orderedRequest = resolvePluginOrder(allPlugins, undefined)
+    .reverse()
+    .filter((plugin) => requestedIds.has(plugin.id));
 
-  if (plugins.length === 0) {
+  if (orderedRequest.length === 0) {
     ctx.ui.info("Nothing to do — no plugins selected.");
-    return;
+    return "nothing-to-do";
   }
 
-  const total = plugins.length;
+  const hasSelectionFilter =
+    options.only !== undefined || (options.skipIds ?? []).length > 0;
+  const installedIds = pluginsWithLedgerEntries(ctx);
+  if (!ctx.dryRun && !ctx.yes) {
+    const reversal = await describeReversal(
+      ctx,
+      allPlugins,
+      orderedRequest,
+      hasSelectionFilter,
+    );
+    const stopOutcome =
+      reversal.length > 0 ? await confirmReversal(ctx, reversal) : null;
+    if (stopOutcome !== null) {
+      return stopOutcome;
+    }
+  }
+
+  const entriesBefore = ctx.manifest.getActions().length;
+  const failedIds = new Set<string>();
+  const failures: string[] = [];
+  const total = orderedRequest.length;
   let step = 0;
-  for (const plugin of plugins) {
+  for (const plugin of orderedRequest) {
     step += 1;
+    const keptBecause = reasonToKeep(
+      plugin,
+      allPlugins,
+      installedIds,
+      failedIds,
+    );
+    if (keptBecause !== null) {
+      ctx.ui.info(`kept: ${plugin.id} (${keptBecause})`);
+      continue;
+    }
     ctx.ui.start(`Uninstalling ${plugin.id}`, { step, total });
-    await plugin.uninstall(ctx);
-    ctx.ui.succeed(`Uninstalled ${plugin.id}`);
+    try {
+      await plugin.uninstall(ctx);
+      if (!ctx.dryRun) {
+        await ctx.manifest.removeActionsForPlugin(plugin.id);
+      }
+      installedIds.delete(plugin.id);
+      ctx.ui.succeed(`Uninstalled ${plugin.id}`);
+    } catch (error) {
+      failedIds.add(plugin.id);
+      failures.push(`${plugin.id} (${describeFailure(error)})`);
+      ctx.ui.fail(`Could not uninstall ${plugin.id}`);
+    }
   }
 
-  if (onlyIds.length === 0) {
+  if (ctx.dryRun) {
+    return "previewed";
+  }
+
+  const removedEntries = ctx.manifest.getActions().length < entriesBefore;
+  if (
+    failures.length === 0 &&
+    !ctx.manifest.hasActions() &&
+    (!hasSelectionFilter || removedEntries)
+  ) {
     await removeDesiredStateConfig(ctx);
   }
-
   await ctx.manifest.pruneIfEmpty();
+
+  if (failures.length > 0) {
+    throw new Error(
+      `nuke could not reverse ${failures.join("; ")}. Their ledger entries are kept — fix the cause and re-run 'agemon nuke'.`,
+    );
+  }
+  return "applied";
 }

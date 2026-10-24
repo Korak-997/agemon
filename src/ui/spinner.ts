@@ -14,7 +14,11 @@ export interface StepSpinner {
   info(label: string): void;
 }
 
-function isInteractive(): boolean {
+interface StepSpinnerOptions {
+  animated?: boolean;
+}
+
+function isAnimatedTerminal(): boolean {
   return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
 }
 
@@ -23,7 +27,11 @@ function formatElapsed(startedAt: number): string {
   return `${seconds.toFixed(1)}s`;
 }
 
-export function createStepSpinner(): StepSpinner {
+export function createStepSpinner(
+  spinnerOptions: StepSpinnerOptions = {},
+): StepSpinner {
+  const isInteractive = (): boolean =>
+    spinnerOptions.animated !== false && isAnimatedTerminal();
   let autoStep = 0;
   let active: ReturnType<typeof clackSpinner> | undefined;
   let currentLabel = "";

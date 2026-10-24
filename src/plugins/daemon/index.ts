@@ -307,7 +307,6 @@ async function revertDaemon(
 
 async function uninstallDaemon(ctx: Context): Promise<void> {
   await revertDaemon(ctx, getPluginActions(ctx));
-  await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
 export const daemonPlugin: AgemonPlugin = {

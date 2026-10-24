@@ -24,7 +24,11 @@ export function buildDiscoveryResult(
       denylisted: false,
     })),
     binaries: [],
-    isolation: { status: "no-gitignore-file", trackedAgemonPaths: [] },
+    isolation: {
+      status: "no-gitignore-file",
+      trackedAgemonPaths: [],
+      trackingCheckError: null,
+    },
     ...overrides,
   };
 }

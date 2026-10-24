@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { writeJournal } from "../../../src/core/apply-journal.js";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
@@ -22,6 +23,7 @@ import {
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
+import { renderStatusReport } from "../../../src/ui/status-view.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -387,5 +389,100 @@ describe("status and discovery against hostile repo contents", () => {
         ),
       ]),
     );
+  });
+});
+
+describe("discoverRepository git tracking check", () => {
+  function git(cwd: string, args: string[]): void {
+    execFileSync("git", args, { cwd, stdio: "ignore" });
+  }
+
+  it("never runs a core.fsmonitor hook that the repository configures", async () => {
+    const context = await createStatusContext();
+    git(context.cwd, ["init", "-q"]);
+    const marker = join(context.cwd, "fsmonitor-ran");
+    const hook = join(context.cwd, "hook.sh");
+    await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
+    git(context.cwd, ["config", "core.fsmonitor", hook]);
+
+    const discovery = await discoverRepository(context);
+
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(discovery.isolation.trackingCheckError).toBeNull();
+  });
+
+  it("reports a failed tracking check instead of treating .agemon/ as untracked", async () => {
+    const context = await createStatusContext();
+    await mkdir(join(context.cwd, ".git"));
+
+    const discovery = await discoverRepository(context);
+
+    expect(discovery.isolation.trackedAgemonPaths).toEqual([]);
+    expect(discovery.isolation.trackingCheckError).toMatch(
+      /^could not check whether \.agemon\/ is tracked by git: /,
+    );
+    const report = await buildStatusReport(context, []);
+    expect(report.healthy).toBe(true);
+    expect(renderStatusReport(report)).not.toContain(
+      ".agemon/ is not tracked by git",
+    );
+  });
+
+  it("does not warn outside a git repository", async () => {
+    const context = await createStatusContext();
+
+    const discovery = await discoverRepository(context);
+
+    expect(discovery.isolation.trackingCheckError).toBeNull();
+  });
+});
+
+describe("status with agemon state", () => {
+  it("flags an open interrupted-apply journal and points to 'agemon recover'", async () => {
+    const context = await createStatusContext();
+    await writeJournal(context.cwd, {
+      planId: "0123456789abcdef",
+      startedAt: "2026-10-24T00:00:00.000Z",
+      capabilityOrder: ["master-prompt"],
+      ledgerBefore: [],
+      snapshots: [],
+    });
+
+    const report = await buildStatusReport(context, []);
+
+    expect(report.interruptedApply).toEqual({
+      planId: "0123456789abcdef",
+      startedAt: "2026-10-24T00:00:00.000Z",
+    });
+    expect(report.healthy).toBe(false);
+    expect(report.hasAgemonState).toBe(true);
+    const rendered = renderStatusReport(report).replace(/[\s│]+/g, " ");
+    expect(rendered).toContain(
+      "An earlier apply (plan 0123456789abcdef, started 2026-10-24T00:00:00.000Z) was interrupted — run 'agemon recover'.",
+    );
+  });
+
+  it("reports no agemon state for a repo agemon never touched, even with duplication", async () => {
+    const context = await createStatusContext();
+    const rules =
+      "## Rules\n\n- Always write tests before code.\n- Never commit secrets.\n";
+    await writeFile(join(context.cwd, "AGENTS.md"), rules, "utf8");
+    await writeFile(join(context.cwd, "CLAUDE.md"), rules, "utf8");
+
+    const report = await buildStatusReport(context, []);
+
+    expect(report.healthy).toBe(false);
+    expect(report.hasAgemonState).toBe(false);
+  });
+
+  it("reports agemon state once the ledger has entries", async () => {
+    const context = await createStatusContext();
+    await recordManagedRuleFile(context, "AGENTS.md", "rules\n");
+
+    const report = await buildStatusReport(context, []);
+
+    expect(report.hasAgemonState).toBe(true);
   });
 });

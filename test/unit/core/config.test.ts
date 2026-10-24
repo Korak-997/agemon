@@ -82,6 +82,28 @@ describe("agemon.toml config", () => {
     await expect(loadConfig(cwd)).rejects.toThrow(/capabilities/);
   });
 
+  it("fails closed on an unknown top-level key and lists the valid keys", async () => {
+    const cwd = await createSandbox();
+    await writeFile(
+      join(cwd, "agemon.toml"),
+      'capabilities = ["crg"]\nskill_group = "all"\n',
+      "utf8",
+    );
+
+    await expect(loadConfig(cwd)).rejects.toThrow(
+      "agemon.toml is invalid: unknown key 'skill_group'. Valid keys: capabilities, skill_groups, conflict_decisions.",
+    );
+  });
+
+  it("fails closed when capabilities is empty", async () => {
+    const cwd = await createSandbox();
+    await writeFile(join(cwd, "agemon.toml"), "capabilities = []\n", "utf8");
+
+    await expect(loadConfig(cwd)).rejects.toThrow(
+      "'capabilities' must list at least one capability id",
+    );
+  });
+
   it("refuses an agemon.toml that links to /dev/zero instead of hanging", async () => {
     const cwd = await createSandbox();
     await symlink("/dev/zero", join(cwd, "agemon.toml"));

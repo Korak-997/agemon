@@ -1570,3 +1570,36 @@ describe("applyPlan in-process rollback with the real master-prompt plugin", () 
     await expect(readJournals(ctx.cwd)).resolves.toHaveLength(1);
   });
 });
+
+describe("applyPlan with a resolved conflict", () => {
+  it("writes the pointer when a conflict was approved as 'replace'", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(
+      join(ctx.cwd, "CLAUDE.md"),
+      "# Claude\n\nIndependent rules.\n",
+      "utf8",
+    );
+    const plan = await buildPlan(ctx, [masterPromptPlugin], {
+      agemonVersion: "9.9.9",
+    });
+    const conflict = plan.operations.find(
+      (op) => op.targetPath === "CLAUDE.md",
+    );
+    expect(conflict?.action).toBe("conflict");
+
+    await applyPlan(ctx, [masterPromptPlugin], {
+      plan,
+      approved: plan.operations.map((op) =>
+        op === conflict ? { ...op, action: "replace" as const } : op,
+      ),
+      ...IGNORED_ISOLATION,
+    });
+
+    await expect(
+      readFile(join(ctx.cwd, "CLAUDE.md"), "utf8"),
+    ).resolves.toContain("AGENTS.md");
+    await expect(
+      readFile(join(ctx.cwd, "CLAUDE.md"), "utf8"),
+    ).resolves.not.toContain("Independent rules.");
+  });
+});

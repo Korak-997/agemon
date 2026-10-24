@@ -34,6 +34,15 @@ function planWith(operations: ProposedOperation[]): Plan {
   };
 }
 
+function conflictOn(targetPath: string): ProposedOperation {
+  return operation({
+    action: "conflict",
+    targetPath,
+    resourceId: `rule-file:${targetPath}`,
+    expectedFingerprint: "sha256:theirs",
+  });
+}
+
 const silentLog = { log() {} };
 
 const alwaysDecline: GatePrompts = {
@@ -146,10 +155,7 @@ describe("resolveConsent", () => {
   });
 
   it("approves install/service/config gates under --yes but never a conflict", async () => {
-    const conflictOperation = operation({
-      action: "conflict",
-      targetPath: "CLAUDE.md",
-    });
+    const conflictOperation = conflictOn("CLAUDE.md");
     const gates = buildConsentGates({
       isolationStatus: "ignored",
       plan: planWith([
@@ -185,6 +191,7 @@ describe("resolveConsent", () => {
       {
         operation: conflictOperation,
         reason: expect.stringContaining("non-interactive"),
+        consentMissing: true,
       },
     ]);
   });
@@ -226,6 +233,7 @@ describe("resolveConsent", () => {
       {
         operation: installOperation,
         reason: expect.stringContaining("install-tooling"),
+        consentMissing: false,
       },
     ]);
   });
@@ -266,10 +274,7 @@ describe("resolveConsent", () => {
   });
 
   it("routes a 'replace' conflict decision into approved with the action rewritten", async () => {
-    const conflictOperation = operation({
-      action: "conflict",
-      targetPath: "CLAUDE.md",
-    });
+    const conflictOperation = conflictOn("CLAUDE.md");
     const gates = buildConsentGates({
       isolationStatus: "ignored",
       plan: planWith([conflictOperation]),
@@ -302,10 +307,7 @@ describe("resolveConsent", () => {
   });
 
   it("records a 'keep' conflict decision without approving the operation", async () => {
-    const conflictOperation = operation({
-      action: "conflict",
-      targetPath: "CLAUDE.md",
-    });
+    const conflictOperation = conflictOn("CLAUDE.md");
     const gates = buildConsentGates({
       isolationStatus: "ignored",
       plan: planWith([conflictOperation]),
@@ -333,6 +335,7 @@ describe("resolveConsent", () => {
       {
         operation: conflictOperation,
         reason: expect.stringContaining("keeping your version"),
+        consentMissing: false,
       },
     ]);
     expect(result.conflictResolutions).toEqual([
@@ -340,11 +343,97 @@ describe("resolveConsent", () => {
     ]);
   });
 
-  it("honors a recorded 'replace' decision from agemon.toml without prompting", async () => {
-    const conflictOperation = operation({
-      action: "conflict",
-      targetPath: "CLAUDE.md",
+  it("marks gates declined for lack of a TTY as missing consent, and an interactive no as declined", async () => {
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([
+        operation({ action: "create", targetPath: "AGENTS.md" }),
+      ]),
     });
+
+    const nonInteractive = await resolveConsent({
+      gates,
+      yes: false,
+      interactive: false,
+      prompts: alwaysDecline,
+      log: silentLog,
+    });
+    const interactive = await resolveConsent({
+      gates,
+      yes: false,
+      interactive: true,
+      prompts: alwaysDecline,
+      log: silentLog,
+    });
+
+    expect(nonInteractive.skipped.map((skip) => skip.consentMissing)).toEqual([
+      true,
+    ]);
+    expect(interactive.skipped.map((skip) => skip.consentMissing)).toEqual([
+      false,
+    ]);
+  });
+
+  it("applies a recorded 'replace' decision from agemon.toml without prompting under --yes", async () => {
+    const conflictOperation = conflictOn("CLAUDE.md");
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([conflictOperation]),
+    });
+
+    const result = await resolveConsent({
+      gates,
+      yes: true,
+      interactive: false,
+      prompts: {
+        ...alwaysDecline,
+        async conflict() {
+          throw new Error("must not prompt");
+        },
+      },
+      log: silentLog,
+      conflictDecisions: { [conflictOperation.resourceId]: "replace" },
+    });
+
+    expect(result.approved).toEqual([
+      { ...conflictOperation, action: "replace" },
+    ]);
+  });
+
+  it("still asks on a TTY when agemon.toml records 'replace', and the answer wins", async () => {
+    const conflictOperation = conflictOn("CLAUDE.md");
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([conflictOperation]),
+    });
+    const questions: string[] = [];
+
+    const result = await resolveConsent({
+      gates,
+      yes: false,
+      interactive: true,
+      prompts: {
+        ...alwaysDecline,
+        async conflict(summary) {
+          questions.push(summary);
+          return "keep";
+        },
+      },
+      log: silentLog,
+      conflictDecisions: { [conflictOperation.resourceId]: "replace" },
+    });
+
+    expect(questions).toEqual([
+      expect.stringContaining("agemon.toml records 'replace'"),
+    ]);
+    expect(result.approved).toEqual([]);
+    expect(result.conflictResolutions).toEqual([
+      { resourceId: conflictOperation.resourceId, decision: "keep" },
+    ]);
+  });
+
+  it("skips a recorded 'replace' as missing consent with no TTY and no --yes", async () => {
+    const conflictOperation = conflictOn("CLAUDE.md");
     const gates = buildConsentGates({
       isolationStatus: "ignored",
       plan: planWith([conflictOperation]),
@@ -353,14 +442,75 @@ describe("resolveConsent", () => {
     const result = await resolveConsent({
       gates,
       yes: false,
-      interactive: true,
+      interactive: false,
       prompts: alwaysDecline,
       log: silentLog,
       conflictDecisions: { [conflictOperation.resourceId]: "replace" },
     });
 
-    expect(result.approved).toEqual([
-      { ...conflictOperation, action: "replace" },
+    expect(result.approved).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        operation: conflictOperation,
+        reason: "recorded 'replace' needs --yes or an interactive session",
+        consentMissing: true,
+      },
     ]);
+  });
+
+  it("settles a recorded 'keep' without consent", async () => {
+    const conflictOperation = conflictOn("CLAUDE.md");
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([conflictOperation]),
+    });
+
+    const result = await resolveConsent({
+      gates,
+      yes: false,
+      interactive: false,
+      prompts: alwaysDecline,
+      log: silentLog,
+      conflictDecisions: { [conflictOperation.resourceId]: "keep" },
+    });
+
+    expect(result.skipped.map((skip) => skip.consentMissing)).toEqual([false]);
+  });
+
+  it("keeps a conflict on a file that is not a regular file without offering 'replace'", async () => {
+    const symlinkConflict = operation({
+      action: "conflict",
+      targetPath: "CLAUDE.md",
+      resourceId: "rule-file:CLAUDE.md",
+      expectedFingerprint: null,
+    });
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([symlinkConflict]),
+    });
+
+    const result = await resolveConsent({
+      gates,
+      yes: true,
+      interactive: true,
+      prompts: {
+        ...alwaysDecline,
+        async conflict() {
+          throw new Error("must not prompt");
+        },
+      },
+      log: silentLog,
+      conflictDecisions: { [symlinkConflict.resourceId]: "replace" },
+    });
+
+    expect(result.approved).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        operation: symlinkConflict,
+        reason: "CLAUDE.md is not a regular file; agemon leaves it alone",
+        consentMissing: false,
+      },
+    ]);
+    expect(result.conflictResolutions).toEqual([]);
   });
 });

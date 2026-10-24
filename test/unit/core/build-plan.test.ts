@@ -87,7 +87,7 @@ describe("buildPlan", () => {
 
     const plan = await buildPlan(context, [masterPromptPlugin], {
       ...PLAN_OPTIONS,
-      only: "master-prompt",
+      only: ["master-prompt"],
     });
 
     expect(plan.operations).toHaveLength(5);
@@ -102,7 +102,7 @@ describe("buildPlan", () => {
 
     const plan = await buildPlan(context, [masterPromptPlugin], {
       ...PLAN_OPTIONS,
-      only: "master-prompt",
+      only: ["master-prompt"],
     });
 
     expect(plan.operations).toEqual([]);
@@ -113,7 +113,7 @@ describe("buildPlan", () => {
 
     const plan = await buildPlan(context, getRegisteredPlugins(), {
       ...PLAN_OPTIONS,
-      only: "daemon",
+      only: ["daemon"],
     });
 
     const capabilityOrder = plan.operations.map(

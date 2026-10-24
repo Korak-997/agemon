@@ -672,6 +672,15 @@ async function verifyMasterPrompt(
   };
 }
 
+class RuleFileRevertError extends Error {
+  constructor(
+    failures: string[],
+    readonly revertedEntryIds: string[],
+  ) {
+    super(`Could not revert rule files — ${failures.join("; ")}`);
+  }
+}
+
 async function revertMasterPrompt(
   ctx: Context,
   entries: LedgerEntry[],
@@ -702,9 +711,11 @@ async function revertMasterPrompt(
   }
 
   const failures: string[] = [];
+  const revertedEntryIds: string[] = [];
   for (const action of managedActions) {
     try {
       await revertManagedRuleFile(ctx, action);
+      revertedEntryIds.push(action.id);
     } catch (error) {
       failures.push(
         `${printable(action.target)}: ${printable(error instanceof Error ? error.message : String(error))}`,
@@ -712,7 +723,7 @@ async function revertMasterPrompt(
     }
   }
   if (failures.length > 0) {
-    throw new Error(`Could not revert rule files — ${failures.join("; ")}`);
+    throw new RuleFileRevertError(failures, revertedEntryIds);
   }
 }
 
@@ -849,8 +860,14 @@ async function preserveChangedRuleFile(
 }
 
 async function uninstallMasterPrompt(ctx: Context): Promise<void> {
-  await revertMasterPrompt(ctx, pluginActions(ctx));
-  await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
+  try {
+    await revertMasterPrompt(ctx, pluginActions(ctx));
+  } catch (error) {
+    if (error instanceof RuleFileRevertError) {
+      await ctx.manifest.removeActionIds(error.revertedEntryIds);
+    }
+    throw error;
+  }
 }
 
 export const masterPromptPlugin: AgemonPlugin = {

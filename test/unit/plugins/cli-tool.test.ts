@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
+import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
@@ -107,7 +108,7 @@ describe("cli-tool plugin", () => {
     expect(actionsAfterInstall[0]?.preExisting).toBe(false);
     expect(actionsAfterInstall[0]?.target).toBe("agnix");
 
-    await cliToolPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
 
     const verificationAfterUninstall = await cliToolPlugin.verify(context);
     expect(verificationAfterUninstall.ok).toBe(false);
@@ -116,6 +117,16 @@ describe("cli-tool plugin", () => {
       .getActions()
       .filter((action) => action.plugin === "cli-tool");
     expect(actionsAfterUninstall).toEqual([]);
+  });
+
+  it("leaves the ledger to the orchestrator when uninstalled directly", async () => {
+    const context = await createTestContext();
+    await cliToolPlugin.install(context);
+    const ledgerBefore = context.manifest.getActions();
+
+    await cliToolPlugin.uninstall(context);
+
+    expect(context.manifest.getActions()).toEqual(ledgerBefore);
   });
 
   it("records pre-existing CLI tools without managing uninstall", async () => {
@@ -131,7 +142,7 @@ describe("cli-tool plugin", () => {
     expect(actionsAfterDetect).toHaveLength(1);
     expect(actionsAfterDetect[0]?.preExisting).toBe(true);
 
-    await cliToolPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
 
     const actionsAfterUninstall = context.manifest
       .getActions()
@@ -155,7 +166,7 @@ describe("cli-tool plugin", () => {
       preExisting: false,
     });
 
-    await cliToolPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
 
     expect(commands).toEqual([]);
     expect(messages).toContain(

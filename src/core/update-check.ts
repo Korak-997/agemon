@@ -92,10 +92,15 @@ function isNewerVersion(candidate: string, current: string): boolean {
   return false;
 }
 
-async function fetchLatestVersionFromGitHub(): Promise<string | undefined> {
+async function fetchLatestVersionFromGitHub(
+  signal: AbortSignal,
+): Promise<string | undefined> {
   const response = await fetch(LATEST_RELEASE_API_URL, {
     headers: { "User-Agent": "agemon-update-check" },
-    signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
+    signal: AbortSignal.any([
+      signal,
+      AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
+    ]),
   });
   if (!response.ok) {
     return undefined;
@@ -104,7 +109,9 @@ async function fetchLatestVersionFromGitHub(): Promise<string | undefined> {
   return parseReleaseVersion(body.tag_name);
 }
 
-async function resolveLatestVersion(): Promise<string | undefined> {
+async function resolveLatestVersion(
+  signal: AbortSignal,
+): Promise<string | undefined> {
   const cachePath = resolveCachePath();
   const cached = readCache(cachePath);
   const cacheAge = cached
@@ -116,7 +123,7 @@ async function resolveLatestVersion(): Promise<string | undefined> {
   }
 
   try {
-    const fetchedVersion = await fetchLatestVersionFromGitHub();
+    const fetchedVersion = await fetchLatestVersionFromGitHub(signal);
     if (fetchedVersion) {
       writeCache(cachePath, {
         lastCheckedAt: new Date().toISOString(),
@@ -211,30 +218,45 @@ async function runVerifiedInstaller(version: string): Promise<void> {
 export interface UpdateCheckInput {
   currentVersion: string;
   dryRun: boolean;
+  quiet: boolean;
 }
 
 export type UpdateCheckOutcome = "updated" | "update-failed" | "not-updated";
 
-export async function checkForUpdate(
-  input: UpdateCheckInput,
-): Promise<UpdateCheckOutcome> {
-  if (
+export interface PendingUpdateCheck {
+  finish(options: { yes: boolean }): Promise<UpdateCheckOutcome>;
+  abort(): void;
+}
+
+const CI_DISABLED_VALUES: readonly string[] = ["", "0", "false"];
+
+function isRunningInCi(): boolean {
+  const ci = process.env.CI;
+  return ci !== undefined && !CI_DISABLED_VALUES.includes(ci.toLowerCase());
+}
+
+function isUpdateCheckDisabled(input: UpdateCheckInput): boolean {
+  return (
     input.dryRun ||
+    input.quiet ||
+    isRunningInCi() ||
     process.env.AGEMON_DEV === "1" ||
     process.env.AGEMON_NO_UPDATE_CHECK === "1"
-  ) {
+  );
+}
+
+async function offerUpdate(
+  latestVersion: string | undefined,
+  currentVersion: string,
+  options: { yes: boolean },
+): Promise<UpdateCheckOutcome> {
+  if (!latestVersion || !isNewerVersion(latestVersion, currentVersion)) {
     return "not-updated";
   }
 
-  const latestVersion = await resolveLatestVersion().catch(() => undefined);
-  if (!latestVersion || !isNewerVersion(latestVersion, input.currentVersion)) {
-    return "not-updated";
-  }
+  const updateNotice = `A new version of agemon is available: ${currentVersion} -> ${latestVersion}.`;
 
-  const isInteractive = isInteractiveTerminal();
-  const updateNotice = `A new version of agemon is available: ${input.currentVersion} -> ${latestVersion}.`;
-
-  if (!isInteractive) {
+  if (options.yes || !isInteractiveTerminal()) {
     console.log(theme.accent(`${updateNotice} Run the installer to upgrade.`));
     return "not-updated";
   }
@@ -257,8 +279,38 @@ export async function checkForUpdate(
     return "update-failed";
   }
 
-  console.log(
-    theme.ok(`Updated to ${latestVersion}. Re-run your command to use it.`),
-  );
+  console.log(theme.ok(`Updated to ${latestVersion}.`));
   return "updated";
+}
+
+export function startUpdateCheck(
+  input: UpdateCheckInput,
+): PendingUpdateCheck | null {
+  if (isUpdateCheckDisabled(input)) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  let lookup: { latestVersion: string | undefined } | null = null;
+  resolveLatestVersion(controller.signal).then(
+    (latestVersion) => {
+      lookup = { latestVersion };
+    },
+    () => {
+      lookup = { latestVersion: undefined };
+    },
+  );
+
+  return {
+    async finish(options) {
+      if (lookup === null) {
+        controller.abort();
+        return "not-updated";
+      }
+      return offerUpdate(lookup.latestVersion, input.currentVersion, options);
+    },
+    abort() {
+      controller.abort();
+    },
+  };
 }

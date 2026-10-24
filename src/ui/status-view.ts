@@ -71,6 +71,15 @@ export function renderStatusReport(report: StatusReport): string {
   const lines: string[] = [];
 
   lines.push(section("Environment").trimStart());
+  if (report.interruptedApply !== null) {
+    lines.push(
+      box({
+        title: `${symbol("warn")} Interrupted apply`,
+        body: `An earlier apply (plan ${report.interruptedApply.planId}, started ${report.interruptedApply.startedAt}) was interrupted — run 'agemon recover'.`,
+        tone: "warn",
+      }),
+    );
+  }
   lines.push(
     report.healthy
       ? box({
@@ -124,7 +133,11 @@ export function renderStatusReport(report: StatusReport): string {
   );
 
   lines.push(section("Workspace isolation"));
-  if (report.trackedAgemonPaths.length === 0) {
+  if (report.trackingCheckError !== null) {
+    lines.push(
+      `  ${theme.warn(`${symbol("warn")} ${report.trackingCheckError}`)}`,
+    );
+  } else if (report.trackedAgemonPaths.length === 0) {
     lines.push("  .agemon/ is not tracked by git");
   } else {
     lines.push(

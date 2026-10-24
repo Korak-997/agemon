@@ -4,12 +4,16 @@ import { join, relative } from "node:path";
 
 export type Snapshot = Map<string, string>;
 
+const UNSNAPSHOTTED_DIRECTORIES = new Set([".git"]);
+
 async function collectFilePaths(dir: string, files: string[]): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      await collectFilePaths(fullPath, files);
+      if (!UNSNAPSHOTTED_DIRECTORIES.has(entry.name)) {
+        await collectFilePaths(fullPath, files);
+      }
     } else if (entry.isFile()) {
       files.push(fullPath);
     }

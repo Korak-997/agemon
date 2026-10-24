@@ -542,7 +542,6 @@ async function revertSkills(
 
 async function uninstallSkills(ctx: Context): Promise<void> {
   await revertSkills(ctx, getPluginActions(ctx));
-  await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
 export const skillsPlugin: AgemonPlugin = {

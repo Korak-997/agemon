@@ -20,6 +20,7 @@ import type {
 import type { Context } from "../../../src/core/context.js";
 import {
   buildPlan,
+  exitCodeForOutcome,
   reconcile,
   uninstallPlugins,
 } from "../../../src/core/orchestrator.js";
@@ -97,6 +98,7 @@ async function createTestContext(
 interface FakeCapabilityOptions {
   id: string;
   targetPath: string;
+  failsVerificationAfterApply?: boolean;
 }
 
 function createFakeCapability(options: FakeCapabilityOptions): {
@@ -106,6 +108,7 @@ function createFakeCapability(options: FakeCapabilityOptions): {
 } {
   let planCalls = 0;
   let installCalls = 0;
+  let verifyCalls = 0;
   return {
     planCallCount: () => planCalls,
     installCallCount: () => installCalls,
@@ -141,7 +144,10 @@ function createFakeCapability(options: FakeCapabilityOptions): {
         );
       },
       async verify() {
-        return { ok: true };
+        verifyCalls += 1;
+        return options.failsVerificationAfterApply && verifyCalls > 1
+          ? { ok: false, detail: "verification failed on purpose" }
+          : { ok: true };
       },
       async uninstall() {
         return;
@@ -203,7 +209,7 @@ describe("reconcile", () => {
 
     await reconcile(context, [alpha.plugin, beta.plugin], {
       ...RECONCILE_OPTIONS,
-      only: "alpha",
+      only: ["alpha"],
     });
 
     expect(alpha.installCallCount()).toBe(1);
@@ -220,7 +226,7 @@ describe("reconcile", () => {
 
     await reconcile(context, [masterPromptPlugin], {
       ...RECONCILE_OPTIONS,
-      only: "master-prompt",
+      only: ["master-prompt"],
       persistConfig: true,
     });
 
@@ -234,7 +240,7 @@ describe("reconcile", () => {
 
     await reconcile(context, [masterPromptPlugin], {
       ...RECONCILE_OPTIONS,
-      only: "master-prompt",
+      only: ["master-prompt"],
       persistConfig: false,
     });
 
@@ -497,5 +503,511 @@ describe("an interrupted apply blocks reconcile and nuke", () => {
     ).rejects.toThrow(
       `The interrupted-apply journal ${journalPath} is invalid:`,
     );
+  });
+});
+
+describe("reconcile outcomes", () => {
+  function skipEveryOperation(consentMissing: boolean): Context["consent"] {
+    return async (gates) => ({
+      approved: [],
+      skipped: gates.flatMap((gate) =>
+        gate.operations.map((operation) => ({
+          operation,
+          reason: "test",
+          consentMissing,
+        })),
+      ),
+      workspaceIsolationApproved: true,
+      conflictResolutions: [],
+    });
+  }
+
+  it("maps each outcome to its exit code", () => {
+    expect(
+      (
+        [
+          "applied",
+          "nothing-to-do",
+          "previewed",
+          "declined",
+          "drift",
+          "partial",
+        ] as const
+      ).map(exitCodeForOutcome),
+    ).toEqual([0, 0, 0, 0, 2, 2]);
+  });
+
+  it("returns 'applied' after a verified apply", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const { plugin } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+
+    await expect(reconcile(context, [plugin], RECONCILE_OPTIONS)).resolves.toBe(
+      "applied",
+    );
+  });
+
+  it("returns 'partial' when verification fails after the apply", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const { plugin } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+      failsVerificationAfterApply: true,
+    });
+
+    await expect(reconcile(context, [plugin], RECONCILE_OPTIONS)).resolves.toBe(
+      "partial",
+    );
+  });
+
+  it("returns 'previewed' under --dry-run", async () => {
+    const context = await createTestContext(approveEveryGate);
+    context.dryRun = true;
+    const { plugin } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+
+    await expect(reconcile(context, [plugin], RECONCILE_OPTIONS)).resolves.toBe(
+      "previewed",
+    );
+  });
+
+  it("returns 'declined' when the user said no", async () => {
+    const context = await createTestContext(skipEveryOperation(false));
+    const { plugin } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+
+    await expect(reconcile(context, [plugin], RECONCILE_OPTIONS)).resolves.toBe(
+      "declined",
+    );
+  });
+
+  it("returns 'drift' when operations are pending but nobody could consent", async () => {
+    const context = await createTestContext(skipEveryOperation(true));
+    const { plugin, installCallCount } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+
+    await expect(reconcile(context, [plugin], RECONCILE_OPTIONS)).resolves.toBe(
+      "drift",
+    );
+    expect(installCallCount()).toBe(0);
+  });
+
+  it("returns 'drift' after an apply that left an operation without consent", async () => {
+    const context = await createTestContext(async (gates) => {
+      const [first, ...rest] = gates.flatMap((gate) => gate.operations);
+      return {
+        approved: [first],
+        skipped: rest.map((operation) => ({
+          operation,
+          reason: "unresolved",
+          consentMissing: true,
+        })),
+        workspaceIsolationApproved: true,
+        conflictResolutions: [],
+      };
+    });
+    const alpha = createFakeCapability({ id: "alpha", targetPath: "a.txt" });
+    const beta = createFakeCapability({ id: "beta", targetPath: "b.txt" });
+
+    await expect(
+      reconcile(context, [alpha.plugin, beta.plugin], RECONCILE_OPTIONS),
+    ).resolves.toBe("drift");
+    expect(alpha.installCallCount()).toBe(1);
+  });
+
+  it("returns 'nothing-to-do' when every pending operation is a settled conflict", async () => {
+    const context = await createTestContext(skipEveryOperation(false));
+    await writeFile(
+      join(context.cwd, "CLAUDE.md"),
+      "# Claude\n\nIndependent rules.\n",
+      "utf8",
+    );
+    context.consent = approveEveryGate;
+    await reconcile(context, [masterPromptPlugin], RECONCILE_OPTIONS);
+    context.consent = async (gates) => {
+      const operations = gates.flatMap((gate) => gate.operations);
+      expect(operations.map((operation) => operation.action)).toEqual([
+        "conflict",
+      ]);
+      return skipEveryOperation(false)(gates);
+    };
+
+    await expect(
+      reconcile(context, [masterPromptPlugin], RECONCILE_OPTIONS),
+    ).resolves.toBe("nothing-to-do");
+  });
+
+  it("runs nothing and returns 'nothing-to-do' for an explicitly empty selection", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const { plugin, planCallCount } = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+
+    await expect(
+      reconcile(context, [plugin], { ...RECONCILE_OPTIONS, only: [] }),
+    ).resolves.toBe("nothing-to-do");
+    expect(planCallCount()).toBe(0);
+  });
+});
+
+describe("uninstallPlugins", () => {
+  interface Uninstallable {
+    plugin: AgemonPlugin;
+  }
+
+  function uninstallable(
+    id: string,
+    uninstalled: string[],
+    options: { dependsOn?: string[]; failsWith?: string } = {},
+  ): Uninstallable {
+    return {
+      plugin: {
+        id,
+        dependsOn: options.dependsOn,
+        riskClass: "executes",
+        async detect() {
+          return { present: true, preExisting: false };
+        },
+        async install() {},
+        async verify() {
+          return { ok: true };
+        },
+        async uninstall(ctx) {
+          if (ctx.dryRun) {
+            ctx.ui.info(`Would remove ${id}`);
+            return;
+          }
+          if (options.failsWith) {
+            throw new Error(options.failsWith);
+          }
+          uninstalled.push(id);
+        },
+      },
+    };
+  }
+
+  async function createNukeContext(ledgerPluginIds: string[]): Promise<{
+    ctx: Context;
+    printed: string[];
+    configPath: string;
+  }> {
+    const ctx = await createTestContext(approveEveryGate);
+    const printed: string[] = [];
+    ctx.log = {
+      log: (message: string) => printed.push(message),
+      error() {},
+    };
+    ctx.ui = {
+      ...ctx.ui,
+      info: (line: string) => printed.push(line),
+    };
+    for (const plugin of ledgerPluginIds) {
+      await ctx.manifest.recordAction({
+        plugin,
+        type: "fake",
+        target: `${plugin}-target`,
+        preExisting: false,
+      });
+    }
+    const configPath = join(ctx.cwd, "agemon.toml");
+    await writeFile(configPath, 'capabilities = ["base"]\n', "utf8");
+    return { ctx, printed, configPath };
+  }
+
+  function ledgerPlugins(ctx: Context): string[] {
+    return ctx.manifest.getActions().map((entry) => entry.plugin);
+  }
+
+  async function exists(path: string): Promise<boolean> {
+    return readFile(path).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  it("keeps going past a failing plugin, then reports it and keeps its entries", async () => {
+    const uninstalled: string[] = [];
+    const { ctx, configPath } = await createNukeContext(["a", "b", "c"]);
+    const plugins = [
+      uninstallable("a", uninstalled).plugin,
+      uninstallable("b", uninstalled, { failsWith: "b broke" }).plugin,
+      uninstallable("c", uninstalled).plugin,
+    ];
+
+    await expect(uninstallPlugins(ctx, plugins, {})).rejects.toThrow(
+      "nuke could not reverse b (b broke). Their ledger entries are kept — fix the cause and re-run 'agemon nuke'.",
+    );
+
+    expect(uninstalled).toEqual(["c", "a"]);
+    expect(ledgerPlugins(ctx)).toEqual(["b"]);
+    expect(await exists(configPath)).toBe(true);
+  });
+
+  it("keeps a dependency whose dependent could not be uninstalled", async () => {
+    const uninstalled: string[] = [];
+    const { ctx, printed } = await createNukeContext(["base", "dependent"]);
+    const plugins = [
+      uninstallable("base", uninstalled).plugin,
+      uninstallable("dependent", uninstalled, {
+        dependsOn: ["base"],
+        failsWith: "systemctl failed",
+      }).plugin,
+    ];
+
+    await expect(uninstallPlugins(ctx, plugins, {})).rejects.toThrow(
+      /dependent \(systemctl failed\)/,
+    );
+
+    expect(uninstalled).toEqual([]);
+    expect(printed).toContain(
+      "kept: base (dependent could not be uninstalled)",
+    );
+    expect(ledgerPlugins(ctx)).toEqual(["base", "dependent"]);
+  });
+
+  it("keeps a dependency of a skipped plugin that is still installed", async () => {
+    const uninstalled: string[] = [];
+    const { ctx, printed } = await createNukeContext(["base", "dependent"]);
+    const plugins = [
+      uninstallable("base", uninstalled).plugin,
+      uninstallable("dependent", uninstalled, { dependsOn: ["base"] }).plugin,
+    ];
+
+    await expect(
+      uninstallPlugins(ctx, plugins, { skipIds: ["dependent"] }),
+    ).resolves.toBe("applied");
+
+    expect(uninstalled).toEqual([]);
+    expect(printed).toContain("kept: base (dependent is still installed)");
+  });
+
+  it("removes the dependency and agemon.toml when the skipped dependent was never installed", async () => {
+    const uninstalled: string[] = [];
+    const { ctx, configPath } = await createNukeContext(["base"]);
+    const plugins = [
+      uninstallable("base", uninstalled).plugin,
+      uninstallable("dependent", uninstalled, { dependsOn: ["base"] }).plugin,
+    ];
+
+    await expect(
+      uninstallPlugins(ctx, plugins, { skipIds: ["dependent"] }),
+    ).resolves.toBe("applied");
+
+    expect(uninstalled).toEqual(["base"]);
+    expect(ledgerPlugins(ctx)).toEqual([]);
+    expect(await exists(configPath)).toBe(false);
+  });
+
+  it("does not pull in dependencies when only a dependent is requested", async () => {
+    const uninstalled: string[] = [];
+    const { ctx } = await createNukeContext(["base", "dependent"]);
+    const plugins = [
+      uninstallable("base", uninstalled).plugin,
+      uninstallable("dependent", uninstalled, { dependsOn: ["base"] }).plugin,
+    ];
+
+    await uninstallPlugins(ctx, plugins, { only: ["dependent"] });
+
+    expect(uninstalled).toEqual(["dependent"]);
+    expect(ledgerPlugins(ctx)).toEqual(["base"]);
+  });
+
+  it("keeps agemon.toml in a fresh clone when nuke --only removes nothing", async () => {
+    const uninstalled: string[] = [];
+    const { ctx, configPath } = await createNukeContext([]);
+
+    await uninstallPlugins(ctx, [uninstallable("base", uninstalled).plugin], {
+      only: ["base"],
+    });
+
+    expect(await exists(configPath)).toBe(true);
+  });
+
+  it("returns 'declined' and changes nothing when the user says no", async () => {
+    const uninstalled: string[] = [];
+    const { ctx } = await createNukeContext(["base"]);
+    ctx.yes = false;
+    ctx.interactive = true;
+    const questions: string[] = [];
+    ctx.confirm = async (question) => {
+      questions.push(question);
+      return false;
+    };
+
+    await expect(
+      uninstallPlugins(ctx, [uninstallable("base", uninstalled).plugin], {}),
+    ).resolves.toBe("declined");
+
+    expect(questions).toEqual(["Reverse these changes?"]);
+    expect(uninstalled).toEqual([]);
+    expect(ledgerPlugins(ctx)).toEqual(["base"]);
+  });
+
+  it("lists what it would reverse and stops without --yes when nobody can answer", async () => {
+    const uninstalled: string[] = [];
+    const { ctx, printed, configPath } = await createNukeContext(["base"]);
+    ctx.yes = false;
+    const statePath = join(ctx.cwd, ".agemon/state.json");
+    const stateBefore = await readFile(statePath, "utf8");
+
+    await expect(
+      uninstallPlugins(ctx, [uninstallable("base", uninstalled).plugin], {}),
+    ).resolves.toBe("previewed");
+
+    expect(printed.join("\n")).toContain(
+      "agemon nuke will reverse:\n  base:\n    Would remove base\n  agemon.toml (deleted)",
+    );
+    expect(printed).toContain("Re-run with --yes to reverse these changes.");
+    expect(uninstalled).toEqual([]);
+    await expect(readFile(statePath, "utf8")).resolves.toBe(stateBefore);
+    expect(await exists(configPath)).toBe(true);
+  });
+
+  it("leaves the ledger and agemon.toml byte-identical under --dry-run", async () => {
+    const uninstalled: string[] = [];
+    const { ctx, configPath } = await createNukeContext(["base"]);
+    ctx.dryRun = true;
+    const statePath = join(ctx.cwd, ".agemon/state.json");
+    const stateBefore = await readFile(statePath, "utf8");
+    const configBefore = await readFile(configPath, "utf8");
+
+    await expect(
+      uninstallPlugins(ctx, [uninstallable("base", uninstalled).plugin], {}),
+    ).resolves.toBe("previewed");
+
+    await expect(readFile(statePath, "utf8")).resolves.toBe(stateBefore);
+    await expect(readFile(configPath, "utf8")).resolves.toBe(configBefore);
+  });
+
+  function previewing(
+    id: string,
+    previewLines: string[] | Error,
+  ): AgemonPlugin {
+    const plugin = uninstallable(id, []).plugin;
+    return {
+      ...plugin,
+      async uninstall(ctx) {
+        if (!ctx.dryRun) {
+          return;
+        }
+        if (previewLines instanceof Error) {
+          throw previewLines;
+        }
+        for (const line of previewLines) {
+          ctx.ui.info(line);
+        }
+      },
+    };
+  }
+
+  async function previewOf(
+    plugins: AgemonPlugin[],
+    ledgerPluginIds: string[],
+  ): Promise<string> {
+    const { ctx, printed } = await createNukeContext(ledgerPluginIds);
+    ctx.yes = false;
+    await uninstallPlugins(ctx, plugins, {});
+    return printed.join("\n");
+  }
+
+  it("keeps a forged ledger target on one line so it cannot fake a 'kept:' line", async () => {
+    const preview = await previewOf(
+      [previewing("skills", ["Would remove skill x\nkept: crg (fake)"])],
+      ["skills"],
+    );
+
+    expect(preview).not.toMatch(/^\s*kept: crg/m);
+    expect(preview).toContain("Would remove skill x kept: crg (fake)");
+  });
+
+  it("caps each plugin's preview so one plugin cannot hide another's effects", async () => {
+    const flood = Array.from({ length: 30 }, (_, index) => `line ${index}`);
+    const preview = await previewOf(
+      [
+        previewing("crg", ["Would uninstall code-review-graph from pipx"]),
+        previewing("skills", flood),
+      ],
+      ["crg", "skills"],
+    );
+
+    expect(preview).toContain(
+      "… 10 more — run 'agemon nuke --dry-run' for the full list",
+    );
+    expect(preview).toContain("Would uninstall code-review-graph from pipx");
+    expect(preview).toContain("agemon.toml (deleted)");
+  });
+
+  it("lists a plugin whose preview fails instead of aborting", async () => {
+    const preview = await previewOf(
+      [previewing("skills", new Error("listing failed\nsecond line"))],
+      ["skills"],
+    );
+
+    expect(preview).toContain("could not preview (listing failed)");
+  });
+
+  it("stops when a plugin tries to ask a question during the preview", async () => {
+    const { ctx } = await createNukeContext(["base"]);
+    ctx.yes = false;
+    const prompting: AgemonPlugin = {
+      ...uninstallable("base", []).plugin,
+      async uninstall(previewCtx) {
+        await previewCtx.confirm("really?");
+      },
+    };
+
+    await expect(uninstallPlugins(ctx, [prompting], {})).rejects.toThrow(
+      "the nuke preview must not ask for consent",
+    );
+    expect(ledgerPlugins(ctx)).toEqual(["base"]);
+  });
+
+  it("asks before deleting agemon.toml even when the ledger is empty", async () => {
+    const { ctx, configPath, printed } = await createNukeContext([]);
+    ctx.yes = false;
+
+    await expect(
+      uninstallPlugins(ctx, [uninstallable("base", []).plugin], {}),
+    ).resolves.toBe("previewed");
+
+    expect(await exists(configPath)).toBe(true);
+    expect(printed.join("\n")).toContain("agemon.toml (deleted)");
+  });
+
+  it("deletes agemon.toml with --yes when the ledger is empty", async () => {
+    const { ctx, configPath } = await createNukeContext([]);
+
+    await uninstallPlugins(ctx, [uninstallable("base", []).plugin], {});
+
+    expect(await exists(configPath)).toBe(false);
+  });
+
+  it("reports only the first, redacted line of a failure", async () => {
+    const { ctx } = await createNukeContext(["base"]);
+    const plugins = [
+      uninstallable("base", [], {
+        failsWith:
+          "npm ERR! //registry.npmjs.org/:_authToken=npm_secret\nmore detail",
+      }).plugin,
+    ];
+
+    const failure = await uninstallPlugins(ctx, plugins, {}).catch(
+      (error: Error) => error.message,
+    );
+
+    expect(failure).toContain(
+      "base (npm ERR! //registry.npmjs.org/:_authToken=<redacted:credential-key>)",
+    );
+    expect(failure).not.toContain("npm_secret");
+    expect(failure).not.toContain("more detail");
   });
 });

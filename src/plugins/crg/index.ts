@@ -217,7 +217,6 @@ async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
 
 async function uninstallCrg(ctx: Context): Promise<void> {
   await revertCrg(ctx, getPluginActions(ctx));
-  await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
 export const crgPlugin: AgemonPlugin = {

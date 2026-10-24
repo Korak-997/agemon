@@ -16,6 +16,10 @@ import {
   runSubprocess,
   type SubprocessResult,
 } from "./subprocess-runner.js";
+import {
+  type RunSubprocess,
+  traceSubprocessCalls,
+} from "./subprocess-trace.js";
 
 export type { SubprocessResult } from "./subprocess-runner.js";
 
@@ -54,11 +58,13 @@ export interface Context {
 }
 
 export interface CreateContextInput {
+  repoRoot: string;
   dryRun: boolean;
   yes: boolean;
   ui: StepSpinner;
   progress: StepProgress;
   skillGroups?: string;
+  verbose?: boolean;
 }
 
 export async function createContext(
@@ -68,6 +74,8 @@ export async function createContext(
     osReleasePath: process.env.AGEMON_OS_RELEASE_PATH,
   });
   const interactive = isInteractiveTerminal();
+  const runInRepo: RunSubprocess = (command, args, options) =>
+    runSubprocess(command, args, { cwd: input.repoRoot, ...options });
 
   const checkedBinaries = REQUIRED_BINARIES.map(
     (name) => platform.binaries[name],
@@ -86,7 +94,7 @@ export async function createContext(
   }
 
   return {
-    cwd: process.cwd(),
+    cwd: input.repoRoot,
     os: platform.os,
     binaries: checkedBinaries,
     dryRun: input.dryRun,
@@ -96,8 +104,8 @@ export async function createContext(
     log: console,
     ui: input.ui,
     progress: input.progress,
-    run: runSubprocess,
-    manifest: await StateManifest.load(process.cwd()),
+    run: input.verbose ? traceSubprocessCalls(runInRepo, input.ui) : runInRepo,
+    manifest: await StateManifest.load(input.repoRoot),
     serviceManager: createServiceManager({
       os: platform.os,
       run: runSubprocess,

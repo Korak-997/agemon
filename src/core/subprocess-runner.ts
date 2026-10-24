@@ -10,6 +10,7 @@ export interface SubprocessResult {
 export interface RunSubprocessOptions {
   timeoutMs?: number;
   killSignal?: NodeJS.Signals;
+  cwd?: string;
 }
 
 function formatCommand(command: string, args: string[]): string {
@@ -451,7 +452,7 @@ export async function runSubprocess(
     };
 
     const childProcess = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd: options.cwd ?? process.cwd(),
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });

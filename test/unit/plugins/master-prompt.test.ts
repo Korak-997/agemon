@@ -19,6 +19,7 @@ import {
 } from "../../../src/core/backups.js";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
+import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
@@ -134,7 +135,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
     });
     expect(await planFor(context)).toEqual([]);
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readFile(join(context.cwd, "AGENTS.md"), "utf8")).toBe(
       originalAgents,
@@ -163,7 +164,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
       ok: true,
     });
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     for (const target of ["AGENTS.md", "CLAUDE.md", "GEMINI.md"]) {
       await expect(
@@ -195,7 +196,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
 
     expect(await planFor(context)).toEqual([]);
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
     expect(await readFile(join(context.cwd, "CLAUDE.md"), "utf8")).toBe(
       handWrittenPointer,
     );
@@ -387,7 +388,7 @@ describe("master-prompt revert — never loses user content", () => {
     await writeFile(join(context.cwd, "CLAUDE.md"), HAND_WRITTEN_RULES, "utf8");
 
     await replaceWithPointer(context, "CLAUDE.md");
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
   });
@@ -403,7 +404,7 @@ describe("master-prompt revert — never loses user content", () => {
     await writeFile(join(context.cwd, "AGENTS.md"), brokenMarkers, "utf8");
     const info = collectInfo(context);
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "AGENTS.md")).toBe(brokenMarkers);
     expect(await readText(context, "AGENTS.md.agemon-original")).toBe(
@@ -423,7 +424,7 @@ describe("master-prompt revert — never loses user content", () => {
     await replaceWithPointer(context, "CLAUDE.md");
     await writeFile(join(context.cwd, "CLAUDE.md"), "edited later\n", "utf8");
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "CLAUDE.md")).toBe("edited later\n");
     expect(await readText(context, "CLAUDE.md.agemon-original")).toBe(
@@ -440,7 +441,7 @@ describe("master-prompt revert — never loses user content", () => {
       "utf8",
     );
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "GEMINI.md")).toBe("my gemini notes\n");
     await expect(
@@ -457,7 +458,7 @@ describe("master-prompt revert — never loses user content", () => {
     const withUserText = `${await readText(context, "AGENTS.md")}\n## Mine\n\nkeep me\n`;
     await writeFile(join(context.cwd, "AGENTS.md"), withUserText, "utf8");
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     const remaining = await readText(context, "AGENTS.md");
     expect(remaining).toContain("## Mine");
@@ -475,7 +476,7 @@ describe("master-prompt revert — never loses user content", () => {
       "utf8",
     );
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
     await context.manifest.pruneIfEmpty();
 
     expect(await readText(context, "CLAUDE.md.agemon-original")).toBe(
@@ -526,7 +527,7 @@ describe("master-prompt revert — never loses user content", () => {
     );
     context.manifest = await StateManifest.load(context.cwd);
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "CLAUDE.md")).toBe("v1 pointer\n");
     expect(await readText(context, "CLAUDE.md.agemon-original")).toBe(
@@ -544,7 +545,7 @@ describe("master-prompt revert — never loses user content", () => {
       checksum: entry.backup?.checksum ?? "",
     };
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
   });
@@ -560,7 +561,7 @@ describe("master-prompt revert — never loses user content", () => {
     const entry = recordedEntry(context, "CLAUDE.md");
     entry.backup = { path: foreignFile, checksum: "irrelevant" };
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
     await expect(readFile(foreignFile, "utf8")).resolves.toBe(
@@ -574,9 +575,9 @@ describe("master-prompt revert — never loses user content", () => {
     await rm(join(context.cwd, "CLAUDE.md"));
     await mkdir(join(context.cwd, "CLAUDE.md"));
 
-    await expect(masterPromptPlugin.uninstall(context)).rejects.toThrow(
-      /CLAUDE\.md/,
-    );
+    await expect(
+      uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {}),
+    ).rejects.toThrow(/CLAUDE\.md/);
 
     await expect(readText(context, "GEMINI.md")).rejects.toMatchObject({
       code: "ENOENT",
@@ -584,6 +585,40 @@ describe("master-prompt revert — never loses user content", () => {
     await expect(readText(context, "AGENTS.md")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("keeps only the failed entry after a partial uninstall, so a retry is clean", async () => {
+    const context = await createTestContext();
+    await masterPromptPlugin.install(context);
+    await rm(join(context.cwd, "CLAUDE.md"));
+    await mkdir(join(context.cwd, "CLAUDE.md"));
+
+    await expect(masterPromptPlugin.uninstall(context)).rejects.toThrow(
+      /CLAUDE\.md/,
+    );
+
+    expect(
+      context.manifest
+        .getActions()
+        .filter((entry) => entry.plugin === "master-prompt")
+        .map((entry) => entry.target),
+    ).toEqual(["CLAUDE.md"]);
+
+    await rm(join(context.cwd, "CLAUDE.md"), { recursive: true });
+    const retryLines: string[] = [];
+    await uninstallPlugins(
+      {
+        ...context,
+        yes: true,
+        ui: { ...context.ui, info: (line: string) => retryLines.push(line) },
+      },
+      [masterPromptPlugin],
+      {},
+    );
+
+    expect(retryLines.filter((line) => /manual cleanup/i.test(line))).toEqual(
+      [],
+    );
   });
 
   it("restores from a legacy-named backup only after its checksum matches", async () => {
@@ -597,7 +632,7 @@ describe("master-prompt revert — never loses user content", () => {
       join(context.cwd, ".agemon/backups/rule-file_CLAUDE.md.bak"),
     );
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
   });
@@ -617,7 +652,7 @@ describe("master-prompt revert — never loses user content", () => {
       join(context.cwd, ".agemon/backups/rule-file_CLAUDE.md.bak"),
     );
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "CLAUDE.md")).toBe(pointerContents);
     const copies = (await readdir(context.cwd)).filter((name) =>
@@ -636,7 +671,7 @@ describe("master-prompt revert — never loses user content", () => {
       "utf8",
     );
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "AGENTS.md")).toBe("# House rules\n");
     await expect(
@@ -701,7 +736,11 @@ describe("master-prompt — untrusted ledger, backups and oversized files", () =
       });
       const messages = collectInfo(context);
 
-      await masterPromptPlugin.uninstall(context);
+      await uninstallPlugins(
+        { ...context, yes: true },
+        [masterPromptPlugin],
+        {},
+      );
 
       expect(messages).toContain(
         `ignoring ledger entry for ${target}: master-prompt does not manage that file`,
@@ -755,7 +794,7 @@ describe("master-prompt — untrusted ledger, backups and oversized files", () =
     );
     await writeFile(legacyBackupPath, HAND_WRITTEN_RULES, "utf8");
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
     await expect(readFile(legacyBackupPath, "utf8")).rejects.toMatchObject({
@@ -774,9 +813,9 @@ describe("master-prompt — untrusted ledger, backups and oversized files", () =
     await rm(join(context.cwd, ".agemon/backups"), { recursive: true });
     await symlink(outside, join(context.cwd, ".agemon/backups"));
 
-    await expect(masterPromptPlugin.uninstall(context)).rejects.toThrow(
-      /symlink or not a directory/,
-    );
+    await expect(
+      uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {}),
+    ).rejects.toThrow(/symlink or not a directory/);
 
     expect(await readText(context, "CLAUDE.md")).toBe(pointerContents);
     expect(recordedEntry(context, "CLAUDE.md")).toBeDefined();
@@ -839,7 +878,7 @@ describe("master-prompt — backup candidates from an untrusted or older ledger"
     };
     await writeFile(join(context.cwd, "CLAUDE.md"), "edited pointer\n", "utf8");
 
-    await masterPromptPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [masterPromptPlugin], {});
 
     await expect(readFile(join(outside, "victim.bak"), "utf8")).resolves.toBe(
       "victim file\n",

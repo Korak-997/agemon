@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
+import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
@@ -102,7 +103,7 @@ describe("skills plugin", () => {
       actionsAfterInstall.every((action) => action.preExisting === false),
     ).toBe(true);
 
-    await skillsPlugin.uninstall(context);
+    await uninstallPlugins({ ...context, yes: true }, [skillsPlugin], {});
 
     const verificationAfterUninstall = await skillsPlugin.verify(context);
     expect(verificationAfterUninstall.ok).toBe(false);

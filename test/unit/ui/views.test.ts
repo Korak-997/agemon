@@ -131,8 +131,11 @@ describe("renderStatusReport", () => {
     ],
     duplication: [],
     trackedAgemonPaths: [],
+    trackingCheckError: null,
+    interruptedApply: null,
     agentsSummary: { total: 3, configured: 1, installed: 0 },
     healthy: true,
+    hasAgemonState: true,
   };
 
   it("renders a healthy environment with no duplication and clean isolation", () => {
@@ -165,7 +168,11 @@ describe("renderStatusReport", () => {
 
 describe("renderInspectReport", () => {
   const base: InspectReport = {
-    isolation: { status: "ignored", trackedAgemonPaths: [] },
+    isolation: {
+      status: "ignored",
+      trackedAgemonPaths: [],
+      trackingCheckError: null,
+    },
     resources: [
       {
         resourceId: "rule-file:AGENTS.md",

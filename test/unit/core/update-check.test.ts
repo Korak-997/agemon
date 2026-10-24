@@ -14,7 +14,25 @@ const prompt = vi.hoisted(() => ({
 vi.mock("node:child_process", () => childProcess);
 vi.mock("../../../src/core/prompt.js", () => prompt);
 
-const { checkForUpdate } = await import("../../../src/core/update-check.js");
+const { startUpdateCheck } = await import("../../../src/core/update-check.js");
+
+const LOOKUP_SETTLE_MS = 50;
+
+function settleLookup(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, LOOKUP_SETTLE_MS));
+}
+
+async function checkForUpdate(input: {
+  currentVersion: string;
+  dryRun: boolean;
+}): Promise<string> {
+  const pending = startUpdateCheck({ ...input, quiet: false });
+  if (pending === null) {
+    return "skipped";
+  }
+  await settleLookup();
+  return pending.finish({ yes: false });
+}
 
 const CURRENT_VERSION = "4.7.2";
 const LATEST_VERSION = "4.8.0";
@@ -67,6 +85,7 @@ beforeEach(async () => {
   vi.stubEnv("XDG_CACHE_HOME", cacheHome);
   vi.stubEnv("AGEMON_DEV", "");
   vi.stubEnv("AGEMON_NO_UPDATE_CHECK", "");
+  vi.stubEnv("CI", "");
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   serveRelease({});
@@ -231,5 +250,87 @@ describe("checkForUpdate installer verification", () => {
       checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false }),
     ).resolves.toBe("update-failed");
     expect(childProcess.execFileSync).not.toHaveBeenCalled();
+  });
+});
+
+describe("startUpdateCheck lifecycle", () => {
+  const input = {
+    currentVersion: CURRENT_VERSION,
+    dryRun: false,
+    quiet: false,
+  };
+
+  it.each([
+    ["--dry-run", { dryRun: true }, {}],
+    ["--quiet", { quiet: true }, {}],
+    ["CI=1", {}, { CI: "1" }],
+    ["CI=true", {}, { CI: "true" }],
+  ])("skips the check entirely under %s", (_label, overrides, env) => {
+    for (const [name, value] of Object.entries(env)) {
+      vi.stubEnv(name, value);
+    }
+
+    expect(startUpdateCheck({ ...input, ...overrides })).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("still checks when CI is explicitly false", () => {
+    vi.stubEnv("CI", "false");
+
+    expect(startUpdateCheck(input)).not.toBeNull();
+  });
+
+  it("starts the lookup at once and prints the notice only when finished", async () => {
+    const pending = startUpdateCheck(input);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(console.log).not.toHaveBeenCalled();
+    await settleLookup();
+
+    await expect(pending?.finish({ yes: true })).resolves.toBe("not-updated");
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `A new version of agemon is available: ${CURRENT_VERSION} -> ${LATEST_VERSION}.`,
+      ),
+    );
+    expect(prompt.promptYesNo).not.toHaveBeenCalled();
+    expect(childProcess.execFileSync).not.toHaveBeenCalled();
+  });
+
+  it("aborts a lookup that has not finished and returns at once", async () => {
+    let lookupSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            lookupSignal = init.signal;
+            init.signal.addEventListener("abort", () =>
+              reject(init.signal.reason),
+            );
+          }),
+      ),
+    );
+    const pending = startUpdateCheck(input);
+
+    await expect(pending?.finish({ yes: false })).resolves.toBe("not-updated");
+
+    expect(lookupSignal?.aborted).toBe(true);
+    expect(console.log).not.toHaveBeenCalled();
+  });
+
+  it("aborts the lookup when the command ends without finishing it", () => {
+    let lookupSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: { signal: AbortSignal }) => {
+        lookupSignal = init.signal;
+        return new Promise(() => {});
+      }),
+    );
+
+    startUpdateCheck(input)?.abort();
+
+    expect(lookupSignal?.aborted).toBe(true);
   });
 });

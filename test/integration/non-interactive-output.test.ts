@@ -390,7 +390,8 @@ describe("non-interactive output contract", () => {
       {
         "isolation": {
           "status": "ignored",
-          "trackedAgemonPaths": []
+          "trackedAgemonPaths": [],
+          "trackingCheckError": null
         },
         "resources": [
           {

@@ -22,9 +22,12 @@ function setOrDeleteEnv(name: string, value: string | undefined): void {
   process.env[name] = value;
 }
 
+const UNRESOLVED_CONFLICT_EXIT_CODE = 2;
+
 async function runRoundtripFixture(
   fixtureName: string,
   nukeArgs = ["nuke", "--yes"],
+  installExitCode = 0,
 ) {
   const sandboxDirectory = await mkdtemp(
     join(tmpdir(), "agemon-roundtrip-test-"),
@@ -62,8 +65,7 @@ async function runRoundtripFixture(
   );
 
   try {
-    const installExitCode = await runCli(["--yes"]);
-    expect(installExitCode).toBe(0);
+    expect(await runCli(["--yes"])).toBe(installExitCode);
 
     const nukeExitCode = await runCli(nukeArgs);
     expect(nukeExitCode).toBe(0);
@@ -158,14 +160,20 @@ describe("nuke roundtrip", () => {
   });
 
   it("restores existing CLAUDE fixture byte-identically", async () => {
-    const { beforeSnapshot, afterSnapshot } =
-      await runRoundtripFixture("existing-claude-md");
+    const { beforeSnapshot, afterSnapshot } = await runRoundtripFixture(
+      "existing-claude-md",
+      ["nuke", "--yes"],
+      UNRESOLVED_CONFLICT_EXIT_CODE,
+    );
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
   it("restores messy agent rules fixture byte-identically", async () => {
-    const { beforeSnapshot, afterSnapshot } =
-      await runRoundtripFixture("messy-agent-rules");
+    const { beforeSnapshot, afterSnapshot } = await runRoundtripFixture(
+      "messy-agent-rules",
+      ["nuke", "--yes"],
+      UNRESOLVED_CONFLICT_EXIT_CODE,
+    );
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
@@ -246,7 +254,7 @@ describe("phase 5 — dedup-safe rule-file reconciliation", () => {
         "utf8",
       );
 
-      expect(await runCli(["--yes"])).toBe(0);
+      expect(await runCli(["--yes"])).toBe(UNRESOLVED_CONFLICT_EXIT_CODE);
 
       const merged = await readFile(agentsPath, "utf8");
       expect(merged.startsWith(originalAgents)).toBe(true);
@@ -258,7 +266,7 @@ describe("phase 5 — dedup-safe rule-file reconciliation", () => {
         originalClaude,
       );
 
-      expect(await runCli(["--yes"])).toBe(0);
+      expect(await runCli(["--yes"])).toBe(UNRESOLVED_CONFLICT_EXIT_CODE);
       expect(await readFile(agentsPath, "utf8")).toBe(merged);
 
       expect(await runCli(["nuke", "--yes"])).toBe(0);
@@ -295,7 +303,7 @@ describe("phase 5 — block-level revert without a backup dependency", () => {
       const agentsPath = join(repoDirectory, "AGENTS.md");
       const originalAgents = await readFile(agentsPath, "utf8");
 
-      expect(await runCli(["--yes"])).toBe(0);
+      expect(await runCli(["--yes"])).toBe(UNRESOLVED_CONFLICT_EXIT_CODE);
       expect(await readFile(agentsPath, "utf8")).not.toBe(originalAgents);
 
       await rm(join(repoDirectory, ".agemon", "backups"), {
@@ -313,7 +321,7 @@ describe("phase 5 — block-level revert without a backup dependency", () => {
       const agentsPath = join(repoDirectory, "AGENTS.md");
       const originalAgents = await readFile(agentsPath, "utf8");
 
-      expect(await runCli(["--yes"])).toBe(0);
+      expect(await runCli(["--yes"])).toBe(UNRESOLVED_CONFLICT_EXIT_CODE);
 
       const merged = await readFile(agentsPath, "utf8");
       const brokenMarkers = merged.replace(
@@ -380,7 +388,7 @@ describe("phase 6 — re-check, status, and persisted intent", () => {
     });
   });
 
-  it("agemon.toml drives a non-interactive re-run after the ledger is wiped", async () => {
+  it("a non-interactive re-run without --yes reports the pending operations it cannot consent to", async () => {
     await withFixtureRepo("clean-repo", async (repoDirectory) => {
       expect(await runCli(["--yes"])).toBe(0);
       await rm(join(repoDirectory, ".agemon"), {
@@ -388,7 +396,7 @@ describe("phase 6 — re-check, status, and persisted intent", () => {
         force: true,
       });
 
-      expect(await runCli([])).toBe(0);
+      expect(await runCli([])).toBe(2);
     });
   });
 });

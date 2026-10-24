@@ -67,3 +67,23 @@ describe("createStepSpinner (non-interactive fallback)", () => {
     expect(idle[0]).toBe("Binary check: pipx present");
   });
 });
+
+describe("createStepSpinner without animation", () => {
+  it("prints plain step lines even on a colour terminal", () => {
+    const originalIsTty = process.stdout.isTTY;
+    const originalNoColor = process.env.NO_COLOR;
+    process.stdout.isTTY = true;
+    delete process.env.NO_COLOR;
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: string) => {
+      lines.push(line);
+    });
+    try {
+      createStepSpinner({ animated: false }).start("Applying crg");
+    } finally {
+      process.stdout.isTTY = originalIsTty;
+      process.env.NO_COLOR = originalNoColor;
+    }
+    expect(lines).toEqual(["[1] Applying crg"]);
+  });
+});

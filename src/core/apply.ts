@@ -256,10 +256,13 @@ function groupApprovedByCapability(
   plan: Plan,
   approved: ProposedOperation[],
 ): Map<string, ProposedOperation[]> {
-  const approvedIds = new Set(approved.map((operation) => operation.id));
+  const approvedById = new Map(
+    approved.map((operation) => [operation.id, operation] as const),
+  );
   const grouped = new Map<string, ProposedOperation[]>();
-  for (const operation of plan.operations) {
-    if (!approvedIds.has(operation.id)) {
+  for (const planned of plan.operations) {
+    const operation = approvedById.get(planned.id);
+    if (operation === undefined) {
       continue;
     }
     const bucket = grouped.get(operation.capabilityId);

@@ -1,8 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, rm, watch } from "node:fs/promises";
 import { join } from "node:path";
 import { runCli } from "../src/cli/index.js";
-import { getRegisteredPlugins } from "../src/plugins/index.js";
 import {
   diffSnapshots,
   formatDiff,
@@ -63,31 +63,8 @@ function buildAgemonArgv(flags: RunFlags): string[] {
 
 function buildNukeArgv(flags: RunFlags): string[] {
   const argv = ["nuke", "--yes"];
-
-  if (flags.only) {
-    argv.push("--only", flags.only);
-    return argv;
-  }
-
-  if (!flags.skipDaemon) {
-    return argv;
-  }
-
-  const originalDev = process.env.AGEMON_DEV;
-  process.env.AGEMON_DEV = "1";
-  try {
-    const selectedPluginIds = getRegisteredPlugins()
-      .filter((plugin) => plugin.id !== "daemon")
-      .map((plugin) => plugin.id)
-      .join(",");
-
-    if (selectedPluginIds.length > 0) {
-      argv.push("--only", selectedPluginIds);
-    }
-  } finally {
-    setOrDeleteEnv("AGEMON_DEV", originalDev);
-  }
-
+  if (flags.only) argv.push("--only", flags.only);
+  if (flags.skipDaemon) argv.push("--skip-daemon");
   return argv;
 }
 
@@ -112,6 +89,7 @@ async function prepareRun(
   await mkdir(repoDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
   await cp(fixtureDir, repoDir, { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: repoDir, stdio: "ignore" });
 
   return { runDir, repoDir, homeDir };
 }

@@ -120,3 +120,108 @@ export function redactJsonValue(input: unknown): JsonRedactionResult {
 
   return { value: walk(input, "", null), redactedPaths };
 }
+
+const PEM_BLOCK_PATTERN =
+  /-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(?:-----END [A-Z0-9 ]+-----|$)/g;
+const TOKEN_WRAPPER_PATTERN = /^([("'`[{<]*)(.*?)([)"'`\]}>,;.]*)$/s;
+const KEY_SEPARATOR_PATTERN = /([A-Za-z0-9_.-]+)(["']?[=:])/g;
+const KEY_PATH_SEPARATOR = /[/:?&]/;
+const STANDALONE_SEPARATORS: ReadonlySet<string> = new Set(["=", ":"]);
+const CAMEL_CASE_CREDENTIAL_SUFFIX =
+  /(?:token|secret|password|passwd|apikey)$/i;
+const AUTH_SCHEME_PATTERN = /^(?:bearer|basic)$/i;
+
+function redactedMarker(reason: RedactionReason): string {
+  return `<redacted:${reason}>`;
+}
+
+function namesCredentialKey(rawKey: string): boolean {
+  const key = rawKey.replace(/^[-"']+/, "").replace(/["':]+$/, "");
+  return (
+    CREDENTIAL_KEY_PATTERN.test(key) ||
+    CAMEL_CASE_CREDENTIAL_SUFFIX.test(key) ||
+    AUTH_SCHEME_PATTERN.test(key)
+  );
+}
+
+interface TokenRedaction {
+  text: string;
+  announcesSecret: boolean;
+}
+
+function redactKeyValue(token: string): TokenRedaction | null {
+  for (const match of token.matchAll(KEY_SEPARATOR_PATTERN)) {
+    if (!namesCredentialKey(match[1])) {
+      continue;
+    }
+    const valueStart = (match.index ?? 0) + match[0].length;
+    const upToValue = token.slice(0, valueStart);
+    const value = token.slice(valueStart);
+    if (value.length === 0 || AUTH_SCHEME_PATTERN.test(value)) {
+      return { text: token, announcesSecret: true };
+    }
+    return {
+      text: `${upToValue}${redactedMarker("credential-key")}`,
+      announcesSecret: false,
+    };
+  }
+  return null;
+}
+
+function redactToken(
+  token: string,
+  previousToken: string,
+  secretWasAnnounced: boolean,
+): TokenRedaction {
+  const [, prefix, core, suffix] = TOKEN_WRAPPER_PATTERN.exec(
+    token,
+  ) as RegExpExecArray;
+  if (AUTH_SCHEME_PATTERN.test(core)) {
+    return { text: token, announcesSecret: true };
+  }
+  if (secretWasAnnounced) {
+    return {
+      text: `${prefix}${redactedMarker("credential-key")}${suffix}`,
+      announcesSecret: false,
+    };
+  }
+  if (STANDALONE_SEPARATORS.has(core)) {
+    return {
+      text: token,
+      announcesSecret: namesCredentialKey(
+        previousToken.split(KEY_PATH_SEPARATOR).at(-1) ?? "",
+      ),
+    };
+  }
+  const keyValue = redactKeyValue(token);
+  if (keyValue !== null) {
+    return keyValue;
+  }
+  if (core.startsWith("-") && namesCredentialKey(core)) {
+    return { text: token, announcesSecret: true };
+  }
+  const reason = classifyString(core, null);
+  return {
+    text:
+      reason === null ? token : `${prefix}${redactedMarker(reason)}${suffix}`,
+    announcesSecret: false,
+  };
+}
+
+export function redactSecretsInText(text: string): string {
+  let previousToken = "";
+  let secretWasAnnounced = false;
+  return text
+    .replace(PEM_BLOCK_PATTERN, redactedMarker("pem"))
+    .split(/(\s+)/)
+    .map((token) => {
+      if (token.length === 0 || /^\s+$/.test(token)) {
+        return token;
+      }
+      const redaction = redactToken(token, previousToken, secretWasAnnounced);
+      previousToken = token;
+      secretWasAnnounced = redaction.announcesSecret;
+      return redaction.text;
+    })
+    .join("");
+}

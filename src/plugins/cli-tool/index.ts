@@ -276,7 +276,6 @@ async function revertCliTools(
 
 async function uninstallCliTools(ctx: Context): Promise<void> {
   await revertCliTools(ctx, getPluginActions(ctx));
-  await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
 export const cliToolPlugin: AgemonPlugin = {

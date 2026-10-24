@@ -447,6 +447,18 @@ export class StateManifest {
     await this.persist();
   }
 
+  async removeActionIds(ids: readonly string[]): Promise<void> {
+    const removedIds = new Set(ids);
+    const nextActions = this.state.actions.filter(
+      (action) => !removedIds.has(action.id),
+    );
+    if (nextActions.length === this.state.actions.length) {
+      return;
+    }
+    this.state.actions = nextActions;
+    await this.persist();
+  }
+
   async restoreActions(entries: LedgerEntry[]): Promise<void> {
     const restoredActions = entries.map(normalizeLedgerEntry);
     if (

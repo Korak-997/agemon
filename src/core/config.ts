@@ -8,6 +8,11 @@ import {
 import { printable } from "./untrusted-text.js";
 
 const CONFIG_FILE_NAME = "agemon.toml";
+const CONFIG_KEYS: readonly string[] = [
+  "capabilities",
+  "skill_groups",
+  "conflict_decisions",
+];
 
 export type ConflictDecision = "keep" | "replace" | "skip";
 
@@ -29,12 +34,24 @@ function validateCapabilities(value: unknown): string[] {
   if (!Array.isArray(value)) {
     fail("'capabilities' must be an array of capability ids");
   }
+  if (value.length === 0) {
+    fail("'capabilities' must list at least one capability id");
+  }
   return value.map((entry) => {
     if (typeof entry !== "string" || entry.trim().length === 0) {
       fail("'capabilities' entries must be non-empty strings");
     }
     return entry;
   });
+}
+
+function validateKnownKeys(record: Record<string, unknown>): void {
+  const unknownKey = Object.keys(record).find(
+    (key) => !CONFIG_KEYS.includes(key),
+  );
+  if (unknownKey !== undefined) {
+    fail(`unknown key '${unknownKey}'. Valid keys: ${CONFIG_KEYS.join(", ")}.`);
+  }
 }
 
 function validateSkillGroups(value: unknown): string | null {
@@ -93,6 +110,7 @@ export async function loadConfig(cwd: string): Promise<AgemonConfig | null> {
   }
 
   const record = parsed as Record<string, unknown>;
+  validateKnownKeys(record);
   return {
     capabilities: validateCapabilities(record.capabilities),
     skillGroups: validateSkillGroups(record.skill_groups),

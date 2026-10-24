@@ -9,6 +9,8 @@ import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
 import { ApplyInterruptedError } from "../core/interruption.js";
 import {
   buildPlan,
+  exitCodeForOutcome,
+  type RunOutcome,
   reconcile,
   uninstallPlugins,
 } from "../core/orchestrator.js";
@@ -18,8 +20,9 @@ import {
   RECOVER_LIMIT_NOTE,
   recoverInterruptedApply,
 } from "../core/recover.js";
+import { resolveRepositoryRoot } from "../core/repo-paths.js";
 import { printable } from "../core/untrusted-text.js";
-import { checkForUpdate } from "../core/update-check.js";
+import { startUpdateCheck } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { runStatus } from "../inspect/status.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
@@ -67,6 +70,7 @@ interface CliOptions {
   allowUnignoredState?: boolean;
   plan?: string;
   quiet?: boolean;
+  verbose?: boolean;
   checkAgentsUsable?: boolean;
 }
 
@@ -78,7 +82,10 @@ const SILENT_SPINNER: StepSpinner = {
 };
 
 function selectSpinner(options: CliOptions): StepSpinner {
-  return options.quiet ? SILENT_SPINNER : createStepSpinner();
+  if (options.quiet) {
+    return SILENT_SPINNER;
+  }
+  return createStepSpinner({ animated: !options.verbose });
 }
 
 function selectProgress(options: CliOptions): StepProgress {
@@ -131,36 +138,70 @@ function selectPlugins(options: CliOptions): AgemonPlugin[] {
   );
 }
 
+function parseOnlyOption(options: CliOptions): string[] | undefined {
+  if (options.only === undefined) {
+    return undefined;
+  }
+  const ids = options.only
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+  if (ids.length === 0) {
+    throw new Error("--only needs at least one plugin id");
+  }
+  if (options.skipDaemon && ids.includes("daemon")) {
+    throw new Error("--only daemon conflicts with --skip-daemon");
+  }
+  return ids;
+}
+
+async function resolveRepositoryRootFor(options: CliOptions): Promise<string> {
+  const { root, notice } = await resolveRepositoryRoot(process.cwd());
+  if (notice !== null && !options.quiet && !options.json) {
+    console.error(theme.dim(notice));
+  }
+  return root;
+}
+
+function assertConfiguredCapabilitiesAreKnown(config: AgemonConfig): void {
+  const knownIds = getRegisteredPlugins().map((plugin) => plugin.id);
+  const unknownIds = config.capabilities.filter((id) => !knownIds.includes(id));
+  if (unknownIds.length > 0) {
+    throw new Error(
+      `agemon.toml lists unknown capabilities: ${unknownIds.map(printable).join(", ")}. Known: ${knownIds.join(", ")}.`,
+    );
+  }
+}
+
 interface DesiredStateDefaults {
   config: AgemonConfig | null;
-  only: string | undefined;
+  only: string[] | undefined;
   skillGroups: string | undefined;
 }
 
 async function resolveDesiredStateDefaults(
   options: CliOptions,
-  availablePlugins: AgemonPlugin[],
+  repoRoot: string,
 ): Promise<DesiredStateDefaults> {
-  const config = await loadConfig(process.cwd());
-
-  let only = options.only;
-  if (!only && config) {
-    const availableIds = new Set(availablePlugins.map((plugin) => plugin.id));
-    const configuredIds = config.capabilities.filter((id) =>
-      availableIds.has(id),
-    );
-    only = configuredIds.length > 0 ? configuredIds.join(",") : undefined;
+  const config = await loadConfig(repoRoot);
+  if (config) {
+    assertConfiguredCapabilitiesAreKnown(config);
   }
+
+  const configuredIds = config?.capabilities.filter(
+    (id) => !(options.skipDaemon && id === "daemon"),
+  );
 
   return {
     config,
-    only,
+    only: parseOnlyOption(options) ?? configuredIds,
     skillGroups: options.skillGroups ?? config?.skillGroups ?? undefined,
   };
 }
 
-async function runInspectCommand(options: CliOptions): Promise<void> {
+async function runInspectCommand(options: CliOptions): Promise<number> {
   const context = await createContext({
+    repoRoot: await resolveRepositoryRootFor(options),
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
@@ -171,26 +212,33 @@ async function runInspectCommand(options: CliOptions): Promise<void> {
     json: Boolean(options.json),
     checkAgentsUsable: Boolean(options.checkAgentsUsable),
   });
+  return 0;
 }
 
-async function runStatusCommand(options: CliOptions): Promise<void> {
+async function runStatusCommand(options: CliOptions): Promise<number> {
   const context = await createContext({
+    repoRoot: await resolveRepositoryRootFor(options),
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
     progress: SILENT_PROGRESS,
   });
 
-  await runStatus(context, getRegisteredPlugins());
+  const report = await runStatus(context, getRegisteredPlugins());
+  return report.healthy || !report.hasAgemonState
+    ? 0
+    : exitCodeForOutcome("drift");
 }
 
-async function runPlanCommand(options: CliOptions): Promise<void> {
+async function runPlanCommand(options: CliOptions): Promise<number> {
+  const repoRoot = await resolveRepositoryRootFor(options);
   const plugins = selectPlugins(options);
   const { only, skillGroups } = await resolveDesiredStateDefaults(
     options,
-    plugins,
+    repoRoot,
   );
   const context = await createContext({
+    repoRoot,
     dryRun: true,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
@@ -206,34 +254,31 @@ async function runPlanCommand(options: CliOptions): Promise<void> {
 
   context.log.log(renderPlan(plan));
   context.log.log(`\nPlan written to ${relative(context.cwd, planPath)}`);
+  return 0;
 }
 
-async function runInstall(options: CliOptions): Promise<void> {
-  const updateOutcome = await checkForUpdate({
-    currentVersion: VERSION,
-    dryRun: Boolean(options.dryRun),
-  });
-  if (updateOutcome !== "not-updated") {
-    return;
-  }
-
+async function runInstall(options: CliOptions): Promise<number> {
+  const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
   const { config, only, skillGroups } = await resolveDesiredStateDefaults(
     options,
-    plugins,
+    repoRoot,
   );
   openInteractiveFrame(options);
+  let outcome: RunOutcome;
   try {
     const context = await createContext({
+      repoRoot,
       dryRun: Boolean(options.dryRun),
       yes: Boolean(options.yes),
       ui: spinner,
+      verbose: Boolean(options.verbose),
       progress: selectProgress(options),
       skillGroups,
     });
 
-    await reconcile(context, plugins, {
+    outcome = await reconcile(context, plugins, {
       only,
       agemonVersion: VERSION,
       allowUnignoredState: Boolean(options.allowUnignoredState),
@@ -245,32 +290,29 @@ async function runInstall(options: CliOptions): Promise<void> {
     throw error;
   }
   closeInteractiveFrame(options);
+  return exitCodeForOutcome(outcome);
 }
 
-async function runApply(options: CliOptions): Promise<void> {
+async function runApply(options: CliOptions): Promise<number> {
   if (options.plan) {
     assertValidPlanId(options.plan);
   }
-  const updateOutcome = await checkForUpdate({
-    currentVersion: VERSION,
-    dryRun: false,
-  });
-  if (updateOutcome !== "not-updated") {
-    return;
-  }
-
+  const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
   const { config, only, skillGroups } = await resolveDesiredStateDefaults(
     options,
-    plugins,
+    repoRoot,
   );
   openInteractiveFrame(options);
+  let outcome: RunOutcome;
   try {
     const context = await createContext({
+      repoRoot,
       dryRun: false,
       yes: Boolean(options.yes),
       ui: spinner,
+      verbose: Boolean(options.verbose),
       progress: selectProgress(options),
       skillGroups,
     });
@@ -279,7 +321,7 @@ async function runApply(options: CliOptions): Promise<void> {
       ? await readPlan(context.cwd, options.plan)
       : undefined;
 
-    await reconcile(context, plugins, {
+    outcome = await reconcile(context, plugins, {
       only,
       agemonVersion: VERSION,
       allowUnignoredState: Boolean(options.allowUnignoredState),
@@ -292,40 +334,43 @@ async function runApply(options: CliOptions): Promise<void> {
     throw error;
   }
   closeInteractiveFrame(options);
+  return exitCodeForOutcome(outcome);
 }
 
-async function runNuke(options: CliOptions): Promise<void> {
-  const updateOutcome = await checkForUpdate({
-    currentVersion: VERSION,
-    dryRun: Boolean(options.dryRun),
-  });
-  if (updateOutcome !== "not-updated") {
-    return;
-  }
-
+async function runNuke(options: CliOptions): Promise<number> {
+  const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = getRegisteredPlugins();
   const context = await createContext({
+    repoRoot,
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: spinner,
+    verbose: Boolean(options.verbose),
     progress: selectProgress(options),
   });
 
-  await uninstallPlugins(context, plugins, { only: options.only });
+  const outcome = await uninstallPlugins(context, plugins, {
+    only: parseOnlyOption(options),
+    skipIds: options.skipDaemon ? ["daemon"] : [],
+  });
+  return exitCodeForOutcome(outcome);
 }
 
-async function runRecover(options: CliOptions): Promise<void> {
+async function runRecover(options: CliOptions): Promise<number> {
   const context = await createContext({
+    repoRoot: await resolveRepositoryRootFor(options),
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: selectSpinner(options),
+    verbose: Boolean(options.verbose),
     progress: selectProgress(options),
   });
 
   await recoverInterruptedApply(context, getRegisteredPlugins(), {
     dryRun: Boolean(options.dryRun),
   });
+  return 0;
 }
 
 export function exitCodeFor(error: unknown): number {
@@ -333,8 +378,37 @@ export function exitCodeFor(error: unknown): number {
   return cause instanceof ApplyInterruptedError ? cause.exitCode : 1;
 }
 
-function createProgram(): Command {
+const EXIT_CODE_HELP = `
+Exit codes:
+  0    success, nothing to do, preview only, or declined
+  1    error, or rolled back
+  2    drift found, consent missing, or applied but verification failed
+  130  interrupted (143 for SIGTERM)`;
+
+function createProgram(recordExitCode: (code: number) => void): Command {
   const program = new Command();
+  const record =
+    (run: (options: CliOptions) => Promise<number>) =>
+    async (options: CliOptions) =>
+      recordExitCode(await run(options));
+  const recordWithUpdateCheck =
+    (run: (options: CliOptions) => Promise<number>) =>
+    async (options: CliOptions) => {
+      const pendingUpdate = startUpdateCheck({
+        currentVersion: VERSION,
+        dryRun: Boolean(options.dryRun),
+        quiet: Boolean(options.quiet),
+      });
+      try {
+        const exitCode = await run(options);
+        recordExitCode(exitCode);
+        if (exitCode === 0) {
+          await pendingUpdate?.finish({ yes: Boolean(options.yes) });
+        }
+      } finally {
+        pendingUpdate?.abort();
+      }
+    };
 
   program
     .name("agemon")
@@ -356,12 +430,13 @@ function createProgram(): Command {
     .option("-v, --verbose", "show raw subprocess output beneath each step")
     .option("-q, --quiet", "print only the final summary")
     .addHelpText("beforeAll", () => `${renderBanner("agemon", DESCRIPTION)}\n`)
+    .addHelpText("after", EXIT_CODE_HELP)
     .hook("preAction", (thisCommand) => {
       if (thisCommand.opts().color === false) {
         process.env.NO_COLOR = "1";
       }
     })
-    .action((options: CliOptions) => runInstall(options));
+    .action(recordWithUpdateCheck(runInstall));
 
   program
     .command("inspect")
@@ -374,7 +449,10 @@ function createProgram(): Command {
       "run a non-mutating usability probe for detected coding agents",
     )
     .action((_options: CliOptions, command: Command) =>
-      runInspectCommand({ ...command.parent?.opts(), ...command.opts() }),
+      record(runInspectCommand)({
+        ...command.parent?.opts(),
+        ...command.opts(),
+      }),
     );
 
   program
@@ -383,7 +461,10 @@ function createProgram(): Command {
       "Post-install health + drift summary from the provenance ledger",
     )
     .action((_options: CliOptions, command: Command) =>
-      runStatusCommand({ ...command.parent?.opts(), ...command.opts() }),
+      record(runStatusCommand)({
+        ...command.parent?.opts(),
+        ...command.opts(),
+      }),
     );
 
   program
@@ -397,7 +478,7 @@ function createProgram(): Command {
       "comma-separated skill group ids to install, or 'all'/'none'",
     )
     .action((_options: CliOptions, command: Command) =>
-      runPlanCommand({ ...command.parent?.opts(), ...command.opts() }),
+      record(runPlanCommand)({ ...command.parent?.opts(), ...command.opts() }),
     );
 
   program
@@ -412,7 +493,10 @@ function createProgram(): Command {
     )
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
     .action((_options: CliOptions, command: Command) =>
-      runApply({ ...command.parent?.opts(), ...command.opts() }),
+      recordWithUpdateCheck(runApply)({
+        ...command.parent?.opts(),
+        ...command.opts(),
+      }),
     );
 
   program
@@ -420,9 +504,13 @@ function createProgram(): Command {
     .description("Reverse agemon-managed changes")
     .option("--dry-run", "narrate actions without making changes")
     .option("--yes", "skip confirmation prompts")
+    .option("--skip-daemon", "keep the daemon (and what it needs) installed")
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
     .action((_options: CliOptions, command: Command) =>
-      runNuke({ ...command.parent?.opts(), ...command.opts() }),
+      recordWithUpdateCheck(runNuke)({
+        ...command.parent?.opts(),
+        ...command.opts(),
+      }),
     );
 
   program
@@ -435,7 +523,7 @@ function createProgram(): Command {
     .option("--yes", "restore without asking")
     .addHelpText("after", `\n${RECOVER_LIMIT_NOTE}`)
     .action((_options: CliOptions, command: Command) =>
-      runRecover({ ...command.parent?.opts(), ...command.opts() }),
+      record(runRecover)({ ...command.parent?.opts(), ...command.opts() }),
     );
 
   program.exitOverride();
@@ -444,12 +532,15 @@ function createProgram(): Command {
 }
 
 export async function runCli(argv: string[]): Promise<number> {
-  const program = createProgram();
+  let exitCode = 0;
+  const program = createProgram((code) => {
+    exitCode = code;
+  });
 
   try {
     assertFakeBackendsAreDevOnly();
     await program.parseAsync(argv, { from: "user" });
-    return 0;
+    return exitCode;
   } catch (error) {
     if (error instanceof CommanderError) {
       return error.exitCode;

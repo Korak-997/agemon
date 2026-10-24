@@ -1,4 +1,5 @@
 import { detectAgents } from "../adapters/detect.js";
+import { readJournals } from "../core/apply-journal.js";
 import type { Context } from "../core/context.js";
 import { RefusedFileError, readRegularFileIfExists } from "../core/files.js";
 import { fingerprintContent } from "../core/fingerprint.js";
@@ -44,13 +45,33 @@ export interface AgentsSummary {
   installed: number;
 }
 
+export interface InterruptedApplySummary {
+  planId: string;
+  startedAt: string;
+}
+
 export interface StatusReport {
   managedResources: ManagedResourceStatus[];
   capabilities: CapabilityStatusRow[];
   duplication: OverlapFinding[];
   trackedAgemonPaths: string[];
+  trackingCheckError: string | null;
+  interruptedApply: InterruptedApplySummary | null;
   agentsSummary: AgentsSummary;
   healthy: boolean;
+  hasAgemonState: boolean;
+}
+
+async function findInterruptedApply(
+  ctx: Context,
+): Promise<InterruptedApplySummary | null> {
+  const [interrupted] = await readJournals(ctx.cwd);
+  return interrupted
+    ? {
+        planId: printable(interrupted.journal.planId),
+        startedAt: printable(interrupted.journal.startedAt),
+      }
+    : null;
 }
 
 function isFileBackedRuleEntry(entry: LedgerEntry): entry is LedgerEntry & {
@@ -240,21 +261,26 @@ export async function buildStatusReport(
   };
 
   const trackedAgemonPaths = discovery.isolation.trackedAgemonPaths;
+  const interruptedApply = await findInterruptedApply(ctx);
   const healthy =
     managedResources.every(
       (resource) => resource.health === "managed-current",
     ) &&
     duplication.length === 0 &&
     capabilities.every((row) => row.health === null || row.health.ok) &&
-    trackedAgemonPaths.length === 0;
+    trackedAgemonPaths.length === 0 &&
+    interruptedApply === null;
 
   return {
     managedResources,
     capabilities,
     duplication,
     trackedAgemonPaths,
+    trackingCheckError: discovery.isolation.trackingCheckError,
+    interruptedApply,
     agentsSummary,
     healthy,
+    hasAgemonState: ctx.manifest.hasActions() || interruptedApply !== null,
   };
 }
 
@@ -300,7 +326,8 @@ async function buildCapabilityStatusRows(
 export async function runStatus(
   ctx: Context,
   plugins: AgemonPlugin[],
-): Promise<void> {
+): Promise<StatusReport> {
   const report = await buildStatusReport(ctx, plugins);
   ctx.log.log(renderStatusReport(report));
+  return report;
 }
