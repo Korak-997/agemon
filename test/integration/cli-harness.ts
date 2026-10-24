@@ -78,6 +78,7 @@ export async function captureNonInteractiveRun(
     env: {
       ...process.env,
       HOME: homeDirectory,
+      XDG_STATE_HOME: join(sandboxDirectory, "state"),
       PATH: `${fakeBinariesDirectory}${delimiter}${process.env.PATH ?? ""}`,
       AGEMON_DEV: "1",
       AGEMON_FAKE_SUBPROCESS: "1",

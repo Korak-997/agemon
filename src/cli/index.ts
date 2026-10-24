@@ -6,6 +6,7 @@ import { Command, CommanderError } from "commander";
 import { type AgemonConfig, loadConfig } from "../core/config.js";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
+import { ApplyInterruptedError } from "../core/interruption.js";
 import {
   buildPlan,
   reconcile,
@@ -13,6 +14,10 @@ import {
 } from "../core/orchestrator.js";
 import { assertValidPlanId, readPlan, writePlan } from "../core/plan-store.js";
 import { isInteractiveTerminal } from "../core/prompt.js";
+import {
+  RECOVER_LIMIT_NOTE,
+  recoverInterruptedApply,
+} from "../core/recover.js";
 import { printable } from "../core/untrusted-text.js";
 import { checkForUpdate } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
@@ -110,7 +115,7 @@ const ERROR_HINTS: { match: RegExp; hint: string }[] = [
   },
 ];
 
-function renderCliError(untrustedMessage: string): string {
+export function renderCliError(untrustedMessage: string): string {
   const message = printable(untrustedMessage);
   const hint = ERROR_HINTS.find((entry) => entry.match.test(message))?.hint;
   const lines = [
@@ -310,6 +315,24 @@ async function runNuke(options: CliOptions): Promise<void> {
   await uninstallPlugins(context, plugins, { only: options.only });
 }
 
+async function runRecover(options: CliOptions): Promise<void> {
+  const context = await createContext({
+    dryRun: Boolean(options.dryRun),
+    yes: Boolean(options.yes),
+    ui: selectSpinner(options),
+    progress: selectProgress(options),
+  });
+
+  await recoverInterruptedApply(context, getRegisteredPlugins(), {
+    dryRun: Boolean(options.dryRun),
+  });
+}
+
+export function exitCodeFor(error: unknown): number {
+  const cause = error instanceof Error ? error.cause : undefined;
+  return cause instanceof ApplyInterruptedError ? cause.exitCode : 1;
+}
+
 function createProgram(): Command {
   const program = new Command();
 
@@ -402,6 +425,19 @@ function createProgram(): Command {
       runNuke({ ...command.parent?.opts(), ...command.opts() }),
     );
 
+  program
+    .command("recover")
+    .description("Restore the files an interrupted apply changed")
+    .option(
+      "--dry-run",
+      "show what would be restored without changing anything",
+    )
+    .option("--yes", "restore without asking")
+    .addHelpText("after", `\n${RECOVER_LIMIT_NOTE}`)
+    .action((_options: CliOptions, command: Command) =>
+      runRecover({ ...command.parent?.opts(), ...command.opts() }),
+    );
+
   program.exitOverride();
 
   return program;
@@ -421,7 +457,7 @@ export async function runCli(argv: string[]): Promise<number> {
     console.error(
       renderCliError(error instanceof Error ? error.message : String(error)),
     );
-    return 1;
+    return exitCodeFor(error);
   }
 }
 

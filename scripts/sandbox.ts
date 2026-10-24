@@ -164,6 +164,7 @@ async function invokeAgemon(
 ): Promise<{ exitCode: number; output: string }> {
   const originalCwd = process.cwd();
   const originalHome = process.env.HOME;
+  const originalStateHome = process.env.XDG_STATE_HOME;
   const originalDev = process.env.AGEMON_DEV;
   const originalFakeSubprocess = process.env.AGEMON_FAKE_SUBPROCESS;
   const originalFakeServices = process.env.AGEMON_FAKE_SERVICES;
@@ -173,6 +174,7 @@ async function invokeAgemon(
 
   process.chdir(repoDir);
   process.env.HOME = homeDir;
+  process.env.XDG_STATE_HOME = join(homeDir, ".local", "state");
   process.env.AGEMON_DEV = "1";
   setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", real ? undefined : "1");
   setOrDeleteEnv("AGEMON_FAKE_SERVICES", real ? undefined : "1");
@@ -190,6 +192,7 @@ async function invokeAgemon(
   } finally {
     process.chdir(originalCwd);
     setOrDeleteEnv("HOME", originalHome);
+    setOrDeleteEnv("XDG_STATE_HOME", originalStateHome);
     setOrDeleteEnv("AGEMON_DEV", originalDev);
     setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", originalFakeSubprocess);
     setOrDeleteEnv("AGEMON_FAKE_SERVICES", originalFakeServices);

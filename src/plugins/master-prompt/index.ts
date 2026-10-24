@@ -13,8 +13,8 @@ import {
   MAX_READ_FILE_LABEL,
   RefusedFileError,
   readRegularFileIfExists,
+  saveVerifiedCopyBeside,
   writeFileAtomic,
-  writeNewFileWithFallback,
 } from "../../core/files.js";
 import { fingerprintContent, fingerprintJson } from "../../core/fingerprint.js";
 import { resolveInsideRepo } from "../../core/repo-paths.js";
@@ -43,7 +43,6 @@ const AGENT_RULES_START_MARKER = `<!-- agemon:start:${AGENT_RULES_BLOCK_ID} -->`
 
 const ACTION_TYPE_MANAGED_RULE_FILE = "managed-rule-file";
 const ACTION_TYPE_ADOPTED_POINTER = "adopted-pointer";
-const PRESERVED_ORIGINAL_SUFFIX = ".agemon-original";
 
 const POINTER_MAX_NORMALIZED_LENGTH = 800;
 const UNREADABLE_RULE_FILE = Symbol("unreadable rule file");
@@ -826,24 +825,6 @@ async function revertManagedRuleFile(
   await preserveChangedRuleFile(ctx, action, currentContents === null, backup);
 }
 
-async function saveBackupBesideTarget(
-  targetPath: string,
-  backup: FoundBackup,
-): Promise<string> {
-  const preferredPath = `${targetPath}${PRESERVED_ORIGINAL_SUFFIX}`;
-  const savedPath = await writeNewFileWithFallback(
-    preferredPath,
-    `${preferredPath}.${Date.now()}`,
-    backup.contents,
-  );
-  if ((await readRegularFileIfExists(savedPath)) !== backup.contents) {
-    throw new Error(
-      `Could not verify the copy of ${backup.path} at ${savedPath}`,
-    );
-  }
-  return savedPath;
-}
-
 async function preserveChangedRuleFile(
   ctx: Context,
   action: LedgerEntry,
@@ -857,9 +838,9 @@ async function preserveChangedRuleFile(
     ctx.ui.info(`manual cleanup needed: ${what}`);
     return;
   }
-  const savedPath = await saveBackupBesideTarget(
+  const savedPath = await saveVerifiedCopyBeside(
     await resolveInsideRepo(ctx.cwd, action.target),
-    backup,
+    backup.contents,
   );
   await removeRedundantBackups(ctx, action, backup, backup.contents);
   ctx.ui.info(

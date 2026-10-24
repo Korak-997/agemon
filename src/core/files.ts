@@ -13,6 +13,7 @@ const OWNER_ONLY_MODE = 0o600;
 const DEFAULT_NEW_FILE_MODE = 0o666;
 const PERMISSION_BITS = 0o777;
 const READ_CHUNK_BYTES = 64 * 1024;
+const PRESERVED_ORIGINAL_SUFFIX = ".agemon-original";
 
 const BYTES_PER_MEBIBYTE = 1024 * 1024;
 
@@ -127,6 +128,7 @@ async function modeOfReplaceableFile(filePath: string): Promise<number | null> {
 export async function writeFileAtomic(
   filePath: string,
   contents: string,
+  options: { newFileMode?: number } = {},
 ): Promise<void> {
   const existingMode = await modeOfReplaceableFile(filePath);
   const tempPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
@@ -134,7 +136,9 @@ export async function writeFileAtomic(
   const handle = await open(
     tempPath,
     "wx",
-    existingMode === null ? DEFAULT_NEW_FILE_MODE : OWNER_ONLY_MODE,
+    existingMode === null
+      ? (options.newFileMode ?? DEFAULT_NEW_FILE_MODE)
+      : OWNER_ONLY_MODE,
   );
   try {
     try {
@@ -178,4 +182,20 @@ export async function writeNewFileWithFallback(
   }
   await writeNewFile(fallbackPath, contents);
   return fallbackPath;
+}
+
+export async function saveVerifiedCopyBeside(
+  targetPath: string,
+  contents: string,
+): Promise<string> {
+  const preferredPath = `${targetPath}${PRESERVED_ORIGINAL_SUFFIX}`;
+  const savedPath = await writeNewFileWithFallback(
+    preferredPath,
+    `${preferredPath}.${Date.now()}`,
+    contents,
+  );
+  if ((await readRegularFileIfExists(savedPath)) !== contents) {
+    throw new Error(`Could not verify the copy saved at ${savedPath}`);
+  }
+  return savedPath;
 }

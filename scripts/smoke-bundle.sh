@@ -5,6 +5,7 @@ EXPECTED_VERSION="$(node -p "require('./package.json').version")"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
+export XDG_STATE_HOME="$WORK_DIR/state"
 
 npm pack --pack-destination "$WORK_DIR" >/dev/null
 tar -xzf "$WORK_DIR"/agemon-*.tgz -C "$WORK_DIR" --strip-components=1

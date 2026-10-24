@@ -1,4 +1,3 @@
-import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { IsolationStatus } from "../inspect/discover.js";
 import type {
@@ -9,22 +8,33 @@ import type {
 import { capabilityLabel } from "../ui/labels.js";
 import { SILENT_PROGRESS } from "../ui/progress.js";
 import {
-  readFirstExistingBackup,
-  resolveImmutableBackupPath,
-} from "./backups.js";
+  type ApplyJournal,
+  deleteJournal,
+  type JournalSnapshot,
+  writeJournal,
+} from "./apply-journal.js";
 import type { Context } from "./context.js";
+import { errorMessage } from "./error-message.js";
 import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
 import { fingerprintContent, sha256Hex } from "./fingerprint.js";
 import { writeAgemonGitignoreEntry } from "./gitignore.js";
-import { type Plan, writePlan } from "./plan-store.js";
+import {
+  type ExitProcess,
+  type InterruptionWatch,
+  ignoringTerminalErrors,
+  watchForInterruption,
+} from "./interruption.js";
+import { PLAN_SEGMENTS, type Plan, writePlan } from "./plan-store.js";
 import { resolveInsideRepo, resolveStateDirectory } from "./repo-paths.js";
-import type { LedgerEntry } from "./state-manifest.js";
+import { rollBackApply } from "./rollback.js";
 
 export const FILE_TARGETING_ACTIONS: ReadonlySet<ProposedOperation["action"]> =
   new Set(["create", "replace", "merge-block", "merge-key", "adopt"]);
 
 const STAGED_FILE_NAME_LENGTH = 16;
 const STAGED_MANIFEST_FILE = "manifest.json";
+const INTERRUPTED_MESSAGE =
+  "Interrupted — rolling back after the current step (press Ctrl-C again to stop now, then run 'agemon recover').";
 
 export interface ApplyPlanInput {
   plan: Plan;
@@ -32,6 +42,7 @@ export interface ApplyPlanInput {
   workspaceIsolationApproved: boolean | null;
   isolationStatus: IsolationStatus;
   allowUnignoredState: boolean;
+  exitProcess?: ExitProcess;
 }
 
 export interface ApplyPlanResult {
@@ -53,21 +64,6 @@ export class ApplyRollbackError extends Error {
     this.name = "ApplyRollbackError";
     this.rollback = rollback;
   }
-}
-
-interface FileRollbackSnapshot {
-  targetPath: string;
-  resourceId: string;
-  previousContents: string | null;
-}
-
-interface SnapshotRestoreOutcome {
-  restored: string[];
-  manualCleanup: string[];
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function stagedFileName(targetPath: string): string {
@@ -145,7 +141,7 @@ async function stageApprovedFiles(
 
     stagedRoot ??= await resolveStateDirectory(
       ctx.cwd,
-      ["plans", planId, "staged"],
+      [...PLAN_SEGMENTS, planId, "staged"],
       { create: true },
     );
 
@@ -171,44 +167,6 @@ async function stageApprovedFiles(
     );
   }
   return stagedByCapability;
-}
-
-async function revertTouchedCapabilities(
-  ctx: Context,
-  pluginById: Map<string, AgemonPlugin>,
-  touchedCapabilityOrder: string[],
-  ledgerActionIdsBeforeRun: ReadonlySet<string>,
-): Promise<{ reverted: string[]; manualCleanup: string[] }> {
-  const newEntriesByCapability = new Map<string, LedgerEntry[]>();
-  for (const entry of ctx.manifest.getActions()) {
-    if (ledgerActionIdsBeforeRun.has(entry.id)) {
-      continue;
-    }
-    const bucket = newEntriesByCapability.get(entry.plugin);
-    if (bucket) {
-      bucket.push(entry);
-    } else {
-      newEntriesByCapability.set(entry.plugin, [entry]);
-    }
-  }
-
-  const manualCleanup: string[] = [];
-  const reverted: string[] = [];
-  for (const capabilityId of [...touchedCapabilityOrder].reverse()) {
-    const plugin = pluginById.get(capabilityId);
-    const newEntries = newEntriesByCapability.get(capabilityId) ?? [];
-    if (!plugin?.revert || newEntries.length === 0) {
-      continue;
-    }
-    try {
-      await plugin.revert(ctx, newEntries);
-      reverted.push(capabilityId);
-    } catch (revertError) {
-      manualCleanup.push(`${capabilityId}: ${errorMessage(revertError)}`);
-    }
-  }
-
-  return { reverted, manualCleanup };
 }
 
 function fileTargetingOperations(
@@ -262,86 +220,36 @@ async function assertPlanIsFresh(
   }
 }
 
+function stagedFingerprintsByTarget(
+  stagedByCapability: Map<string, StagedFile[]>,
+): Map<string, string> {
+  const fingerprints = new Map<string, string>();
+  for (const stagedFiles of stagedByCapability.values()) {
+    for (const staged of stagedFiles) {
+      fingerprints.set(staged.targetPath, fingerprintContent(staged.contents));
+    }
+  }
+  return fingerprints;
+}
+
 async function captureRollbackSnapshots(
   ctx: Context,
   operations: ProposedOperation[],
-): Promise<FileRollbackSnapshot[]> {
-  const snapshots: FileRollbackSnapshot[] = [];
+  stagedByCapability: Map<string, StagedFile[]>,
+): Promise<JournalSnapshot[]> {
+  const stagedFingerprints = stagedFingerprintsByTarget(stagedByCapability);
+  const snapshots: JournalSnapshot[] = [];
   for (const operation of fileTargetingOperations(operations)) {
     const previousContents = await readRegularFileIfExists(
       await resolveInsideRepo(ctx.cwd, operation.targetPath),
     );
     snapshots.push({
       targetPath: operation.targetPath,
-      resourceId: operation.resourceId,
       previousContents,
+      stagedFingerprint: stagedFingerprints.get(operation.targetPath) ?? null,
     });
   }
   return snapshots;
-}
-
-async function findExactBackupCopy(
-  ctx: Context,
-  resourceId: string,
-  previousContents: string,
-): Promise<string | null> {
-  try {
-    const backup = await readFirstExistingBackup(ctx.cwd, [
-      resolveImmutableBackupPath(ctx.cwd, resourceId),
-    ]);
-    return backup?.contents === previousContents ? backup.path : null;
-  } catch {
-    return null;
-  }
-}
-
-async function describeFailedRestore(
-  ctx: Context,
-  snapshot: FileRollbackSnapshot,
-  error: unknown,
-): Promise<string> {
-  if (snapshot.previousContents === null) {
-    return `${snapshot.targetPath}: could not remove it (${errorMessage(error)})`;
-  }
-  const failure = `${snapshot.targetPath}: could not restore its pre-apply contents (${errorMessage(error)})`;
-  const exactCopyPath = await findExactBackupCopy(
-    ctx,
-    snapshot.resourceId,
-    snapshot.previousContents,
-  );
-  return exactCopyPath === null
-    ? `${failure}; no exact copy on disk`
-    : `${failure}; they are in ${exactCopyPath} — copy it out before the next apply`;
-}
-
-async function restoreSnapshot(
-  ctx: Context,
-  snapshot: FileRollbackSnapshot,
-): Promise<string> {
-  const absolutePath = await resolveInsideRepo(ctx.cwd, snapshot.targetPath);
-  if (snapshot.previousContents === null) {
-    await rm(absolutePath, { force: true });
-    return `removed ${snapshot.targetPath}`;
-  }
-  await writeFileAtomic(absolutePath, snapshot.previousContents);
-  return `restored ${snapshot.targetPath}`;
-}
-
-async function restoreRollbackSnapshots(
-  ctx: Context,
-  snapshots: FileRollbackSnapshot[],
-): Promise<SnapshotRestoreOutcome> {
-  const outcome: SnapshotRestoreOutcome = { restored: [], manualCleanup: [] };
-  for (const snapshot of [...snapshots].reverse()) {
-    try {
-      outcome.restored.push(await restoreSnapshot(ctx, snapshot));
-    } catch (error) {
-      outcome.manualCleanup.push(
-        await describeFailedRestore(ctx, snapshot, error),
-      );
-    }
-  }
-  return outcome;
 }
 
 function groupApprovedByCapability(
@@ -396,45 +304,76 @@ async function runCapabilityWork(
   }
 }
 
-export async function applyPlan(
+async function rollBackInProcess(
   ctx: Context,
-  allPlugins: AgemonPlugin[],
-  input: ApplyPlanInput,
-): Promise<ApplyPlanResult> {
-  const pluginById = new Map(
-    allPlugins.map((plugin) => [plugin.id, plugin] as const),
+  pluginById: Map<string, AgemonPlugin>,
+  journalPath: string,
+  journal: ApplyJournal,
+  cause: unknown,
+): Promise<never> {
+  const outcome = await rollBackApply(ctx, pluginById, journal, {
+    saveFailedRestores: false,
+  });
+  const manualCleanup = [...outcome.manualCleanup];
+  if (manualCleanup.length === 0) {
+    try {
+      await deleteJournal(journalPath);
+    } catch (journalError) {
+      manualCleanup.push(`journal: ${errorMessage(journalError)}`);
+    }
+  }
+
+  ignoringTerminalErrors(() => {
+    ctx.ui.fail(
+      manualCleanup.length === 0
+        ? `apply rolled back — repo left as it started (${errorMessage(cause)})`
+        : `apply partly rolled back — the journal is kept; fix the items below, then run 'agemon recover' (${errorMessage(cause)})`,
+    );
+    for (const detail of manualCleanup) {
+      ctx.ui.fail(`manual cleanup needed: ${detail}`);
+    }
+  });
+  throw new ApplyRollbackError(
+    {
+      message: errorMessage(cause),
+      restored: outcome.restored,
+      reverted: outcome.reverted,
+      manualCleanup,
+    },
+    cause,
   );
-  const approvedByCapability = groupApprovedByCapability(
-    input.plan,
-    input.approved,
-  );
+}
 
-  ctx.manifest.setRecordingAgemonVersion(input.plan.agemonVersion);
+async function deleteJournalAfterSuccess(
+  ctx: Context,
+  journalPath: string,
+): Promise<void> {
+  try {
+    await deleteJournal(journalPath);
+  } catch (journalError) {
+    ignoringTerminalErrors(() =>
+      ctx.ui.fail(
+        `Applied, but could not delete the rollback journal ${journalPath} (${errorMessage(journalError)}). Delete it by hand; do not run 'agemon recover', which would undo this apply.`,
+      ),
+    );
+  }
+}
 
-  await assertPlanIsFresh(ctx, input.plan.id, input.approved);
-  await enforceWorkspaceIsolation(ctx, input);
-  await writePlan(ctx.cwd, input.plan);
-
-  const stagedByCapability = await stageApprovedFiles(
-    ctx,
-    pluginById,
-    input.plan.id,
-    approvedByCapability,
-  );
-
-  const rollbackSnapshots = await captureRollbackSnapshots(ctx, input.approved);
-  const ledgerActionIdsBeforeRun = new Set(
-    ctx.manifest.getActions().map((action) => action.id),
-  );
-
+async function runJournalledCapabilities(
+  ctx: Context,
+  pluginById: Map<string, AgemonPlugin>,
+  approvedByCapability: Map<string, ProposedOperation[]>,
+  stagedByCapability: Map<string, StagedFile[]>,
+  interruption: InterruptionWatch,
+  { path: journalPath, journal }: { path: string; journal: ApplyJournal },
+): Promise<ProposedOperation[]> {
   const progress = ctx.progress ?? SILENT_PROGRESS;
   const capabilityCount = approvedByCapability.size;
   const applied: ProposedOperation[] = [];
-  const touchedCapabilityOrder: string[] = [];
   progress.start("Applying capabilities", capabilityCount);
   try {
     for (const [capabilityId, operations] of approvedByCapability) {
-      touchedCapabilityOrder.push(capabilityId);
+      interruption.throwIfInterrupted();
       const plugin = pluginById.get(capabilityId);
       if (!plugin) {
         throw new Error(
@@ -450,6 +389,7 @@ export async function applyPlan(
       progress.advance(`Applied ${capabilityLabel(capabilityId)}`);
       applied.push(...operations);
     }
+    interruption.throwIfInterrupted();
     progress.stop(
       `Applied ${capabilityCount} ${
         capabilityCount === 1 ? "capability" : "capabilities"
@@ -457,41 +397,85 @@ export async function applyPlan(
     );
   } catch (error) {
     progress.stop();
-    const snapshotOutcome = await restoreRollbackSnapshots(
-      ctx,
-      rollbackSnapshots,
-    );
-    const revertOutcome = await revertTouchedCapabilities(
+    return rollBackInProcess(
       ctx,
       pluginById,
-      touchedCapabilityOrder,
-      ledgerActionIdsBeforeRun,
-    );
-    const manualCleanup = [
-      ...snapshotOutcome.manualCleanup,
-      ...revertOutcome.manualCleanup,
-    ];
-    try {
-      await ctx.manifest.removeActionsAddedSince(ledgerActionIdsBeforeRun);
-    } catch (ledgerError) {
-      manualCleanup.push(`ledger: ${errorMessage(ledgerError)}`);
-    }
-    ctx.ui.fail(
-      `apply rolled back — repo left as it started (${errorMessage(error)})`,
-    );
-    for (const detail of manualCleanup) {
-      ctx.ui.fail(`manual cleanup needed: ${detail}`);
-    }
-    throw new ApplyRollbackError(
-      {
-        message: errorMessage(error),
-        restored: snapshotOutcome.restored,
-        reverted: revertOutcome.reverted,
-        manualCleanup,
-      },
-      error,
+      journalPath,
+      journal,
+      interruption.causeOf(error),
     );
   }
 
-  return { applied };
+  await deleteJournalAfterSuccess(ctx, journalPath);
+  return applied;
+}
+
+async function applyApprovedOperations(
+  ctx: Context,
+  allPlugins: AgemonPlugin[],
+  input: ApplyPlanInput,
+): Promise<ApplyPlanResult> {
+  const pluginById = new Map(
+    allPlugins.map((plugin) => [plugin.id, plugin] as const),
+  );
+  const approvedByCapability = groupApprovedByCapability(
+    input.plan,
+    input.approved,
+  );
+
+  await assertPlanIsFresh(ctx, input.plan.id, input.approved);
+  await enforceWorkspaceIsolation(ctx, input);
+  await writePlan(ctx.cwd, input.plan);
+
+  const stagedByCapability = await stageApprovedFiles(
+    ctx,
+    pluginById,
+    input.plan.id,
+    approvedByCapability,
+  );
+  const snapshots = await captureRollbackSnapshots(
+    ctx,
+    input.approved,
+    stagedByCapability,
+  );
+
+  const interruption = watchForInterruption(() => {
+    ctx.progress?.stop();
+    ctx.ui.fail(INTERRUPTED_MESSAGE);
+  }, input.exitProcess ?? process.exit);
+  try {
+    const storedJournal = await writeJournal(ctx.cwd, {
+      planId: input.plan.id,
+      startedAt: new Date().toISOString(),
+      capabilityOrder: [...approvedByCapability.keys()],
+      ledgerBefore: structuredClone(ctx.manifest.getActions()),
+      snapshots,
+    });
+    const applied = await runJournalledCapabilities(
+      ctx,
+      pluginById,
+      approvedByCapability,
+      stagedByCapability,
+      interruption,
+      storedJournal,
+    );
+    return { applied };
+  } finally {
+    interruption.dispose();
+  }
+}
+
+export async function applyPlan(
+  ctx: Context,
+  allPlugins: AgemonPlugin[],
+  input: ApplyPlanInput,
+): Promise<ApplyPlanResult> {
+  ctx.manifest.setRecordingAgemonVersion(input.plan.agemonVersion);
+  ctx.manifest.setRecordingPlanId(input.plan.id);
+  try {
+    return await applyApprovedOperations(ctx, allPlugins, input);
+  } finally {
+    ctx.manifest.setRecordingAgemonVersion(null);
+    ctx.manifest.setRecordingPlanId(null);
+  }
 }

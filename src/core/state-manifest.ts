@@ -209,6 +209,13 @@ function normalizeLedgerEntry(value: LedgerEntry): LedgerEntry {
   };
 }
 
+export function parseLedgerEntries(value: unknown): LedgerEntry[] | null {
+  if (!Array.isArray(value) || !value.every((entry) => isLedgerEntry(entry))) {
+    return null;
+  }
+  return value.map(normalizeLedgerEntry);
+}
+
 function migrateLegacyActionToLedgerEntry(
   action: LegacyManifestAction,
 ): LedgerEntry {
@@ -261,7 +268,8 @@ function interpretManifestContents(parsed: unknown): LoadedManifest {
   }
 
   if (parsed.version === LEDGER_VERSION || parsed.version === 2) {
-    if (!parsed.actions.every((entry) => isLedgerEntry(entry))) {
+    const actions = parseLedgerEntries(parsed.actions);
+    if (actions === null) {
       throw new Error("State manifest has an invalid schema");
     }
     return {
@@ -270,7 +278,7 @@ function interpretManifestContents(parsed: unknown): LoadedManifest {
         createdAt: parsed.createdAt,
         updatedAt: parsed.updatedAt,
         os: "linux",
-        actions: (parsed.actions as LedgerEntry[]).map(normalizeLedgerEntry),
+        actions,
       },
       migratedFromVersion: parsed.version === LEDGER_VERSION ? null : 2,
     };
@@ -313,6 +321,7 @@ function parseManifestJson(rawContents: string): unknown {
 
 export class StateManifest {
   private recordingAgemonVersion: string | null = null;
+  private recordingPlanId: string | null = null;
 
   private constructor(
     private readonly repoRoot: string,
@@ -322,6 +331,10 @@ export class StateManifest {
 
   setRecordingAgemonVersion(version: string | null): void {
     this.recordingAgemonVersion = version;
+  }
+
+  setRecordingPlanId(planId: string | null): void {
+    this.recordingPlanId = planId;
   }
 
   static async load(cwd: string): Promise<StateManifest> {
@@ -382,7 +395,7 @@ export class StateManifest {
       target: input.target,
       preExisting: input.preExisting,
       createdAt: new Date().toISOString(),
-      planId: input.planId ?? null,
+      planId: input.planId ?? this.recordingPlanId,
       resourceId: input.resourceId ?? null,
       ownershipMode: input.ownershipMode ?? null,
       agemonVersion: input.agemonVersion ?? this.recordingAgemonVersion,
@@ -434,16 +447,14 @@ export class StateManifest {
     await this.persist();
   }
 
-  async removeActionsAddedSince(
-    knownActionIds: ReadonlySet<string>,
-  ): Promise<void> {
-    const nextActions = this.state.actions.filter((action) =>
-      knownActionIds.has(action.id),
-    );
-    if (nextActions.length === this.state.actions.length) {
+  async restoreActions(entries: LedgerEntry[]): Promise<void> {
+    const restoredActions = entries.map(normalizeLedgerEntry);
+    if (
+      JSON.stringify(restoredActions) === JSON.stringify(this.state.actions)
+    ) {
       return;
     }
-    this.state.actions = nextActions;
+    this.state.actions = restoredActions;
     await this.persist();
   }
 

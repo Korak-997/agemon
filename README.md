@@ -193,6 +193,13 @@ Reverse managed changes:
 agemon nuke [options]
 ```
 
+Restore the files an interrupted apply changed (see
+[Interrupted applies](#interrupted-applies)):
+
+```bash
+agemon recover [--yes] [--dry-run]
+```
+
 ### Global Options
 
 - `--dry-run`: narrate actions without making changes.
@@ -266,7 +273,7 @@ its usual health/drift output.
 	symlink, a special file or a read-only file. A symlinked rule file (for example
 	`CLAUDE.md -> AGENTS.md`) is reported as a conflict and left alone.
 - A failed apply rolls back every file it touched; anything it could not restore is listed,
-	with the path of an exact backup copy when one exists.
+	and the apply's journal is kept so `agemon recover` can retry.
 - `.agemon/` content (plans, the ledger, backups) is treated as untrusted, because it may
 	have been committed by someone else. `agemon apply --plan <id>` accepts only a valid
 	16-character plan id, refuses a malformed plan or one made by another agemon version, and
@@ -274,6 +281,29 @@ its usual health/drift output.
 	directory. agemon refuses to use `.agemon/` (or any directory in it) when it is a symlink.
 - `inspect`, `status` and `plan` never follow a symlinked or special file and never read a
 	file larger than 8 MiB; such a file is reported as present but unread.
+
+### Interrupted applies
+
+Before an apply changes anything, agemon writes a journal with the pre-apply contents of
+every file it will write and a copy of the ledger. The journal lives outside the
+repository, in `${XDG_STATE_HOME:-~/.local/state}/agemon/journals/` (directory mode `0700`,
+file mode `0600`), so repository contents cannot forge one. It is deleted when the apply
+succeeds or rolls back cleanly.
+
+- **Ctrl-C, `SIGTERM` or `SIGHUP` during an apply:** agemon finishes the current step, rolls
+	back, and exits `130`, `143` or `129`. Press Ctrl-C a second time to stop at once.
+- **The process was killed or the machine lost power:** the journal stays behind. Every
+	later `agemon`, `agemon apply` and `agemon nuke` in that repository refuses to start and
+	points to `agemon recover`.
+- **`agemon recover`** shows what it will restore, then asks (or proceeds with `--yes`;
+	`--dry-run` only shows). It restores files the apply wrote, reverts what the apply
+	recorded in the ledger, and restores the ledger. A file you edited after the interruption
+	is kept as is, with agemon's ledger entry for it, and its pre-apply contents are saved
+	beside it as `<file>.agemon-original`. A failed apply treats a file edited during the run
+	the same way.
+- **Limit:** work a capability had started but not yet recorded when the process died is not
+	undone; check `agemon status` afterwards. Interrupted writes can leave
+	`<file>.tmp-<pid>-<id>` files next to their targets; delete them if present.
 
 ## Managed Outputs
 

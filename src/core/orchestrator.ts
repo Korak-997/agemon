@@ -11,6 +11,7 @@ import {
   applyPlan,
   FILE_TARGETING_ACTIONS,
 } from "./apply.js";
+import { assertNoInterruptedApply } from "./apply-journal.js";
 import { resolveConfigPath, writeConfig } from "./config.js";
 import type { ConflictResolution } from "./consent.js";
 import { buildConsentGates } from "./consent.js";
@@ -253,6 +254,7 @@ export async function reconcile(
   allPlugins: AgemonPlugin[],
   options: ReconcileOptions,
 ): Promise<void> {
+  await assertNoInterruptedApply(ctx.cwd);
   const plugins = resolvePluginOrder(
     allPlugins,
     parseOnlyPluginIds(options.only),
@@ -391,6 +393,7 @@ export async function uninstallPlugins(
   allPlugins: AgemonPlugin[],
   options: OrchestratorOptions,
 ): Promise<void> {
+  await assertNoInterruptedApply(ctx.cwd);
   const onlyIds = parseOnlyPluginIds(options.only);
   const plugins = resolvePluginOrder(allPlugins, onlyIds).reverse();
 

@@ -13,16 +13,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplyRollbackError, applyPlan } from "../../../src/core/apply.js";
-import {
-  resolveImmutableBackupPath,
-  writeImmutableBackup,
-} from "../../../src/core/backups.js";
+import { readJournals } from "../../../src/core/apply-journal.js";
 import type { Context } from "../../../src/core/context.js";
 import * as files from "../../../src/core/files.js";
 import {
   fingerprintContent,
   sha256Hex,
 } from "../../../src/core/fingerprint.js";
+import { ApplyInterruptedError } from "../../../src/core/interruption.js";
+import { buildPlan } from "../../../src/core/orchestrator.js";
 import type { Plan } from "../../../src/core/plan-store.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
@@ -262,22 +261,7 @@ describe("applyPlan transaction protocol", () => {
       targetPath: "b.txt",
     });
 
-    const first = createFilePlugin({
-      id: "first",
-      onInstall: async (installCtx) => {
-        await writeFile(
-          join(installCtx.cwd, "a.txt"),
-          "written by first\n",
-          "utf8",
-        );
-        await installCtx.manifest.recordAction({
-          plugin: "first",
-          type: "created",
-          target: "a.txt",
-          preExisting: false,
-        });
-      },
-    });
+    const first = stagingWriter("first", "a.txt", "written by first\n");
     const second: AgemonPlugin = {
       ...createFilePlugin({ id: "second", onInstall: async () => {} }),
       async install() {
@@ -467,7 +451,7 @@ describe("applyPlan transaction protocol", () => {
     expect(ctx.manifest.getActions()).toEqual([]);
   });
 
-  it("reports manual cleanup when a capability's revert itself fails", async () => {
+  it("reports manual cleanup when a capability's revert itself fails, and keeps its entries for a retry", async () => {
     const ctx = await createSandboxContext();
     const failures: string[] = [];
     ctx.ui = { ...ctx.ui, fail: (message: string) => failures.push(message) };
@@ -535,7 +519,9 @@ describe("applyPlan transaction protocol", () => {
         ),
       ),
     ).toBe(true);
-    expect(ctx.manifest.getActions()).toEqual([]);
+    expect(ctx.manifest.getActions().map((entry) => entry.target)).toEqual([
+      "pkg",
+    ]);
   });
 
   it("returns the applied operations on success", async () => {
@@ -665,19 +651,24 @@ describe("applyPlan rollback hardening", () => {
 
     let writerReverted = false;
     const writer: AgemonPlugin = {
-      ...createFilePlugin({
-        id: "writer",
-        onInstall: async (installCtx) => {
-          await writeFile(join(installCtx.cwd, "a.txt"), "new a\n", "utf8");
-          await writeFile(join(installCtx.cwd, "b.txt"), "new b\n", "utf8");
-          await installCtx.manifest.recordAction({
-            plugin: "writer",
-            type: "created",
-            target: "a.txt",
-            preExisting: true,
-          });
-        },
-      }),
+      ...createFilePlugin({ id: "writer", onInstall: async () => {} }),
+      async materialize() {
+        return [
+          { targetPath: "a.txt", contents: "new a\n", kind: "text" },
+          { targetPath: "b.txt", contents: "new b\n", kind: "text" },
+        ];
+      },
+      async apply(applyCtx, _operations, staged) {
+        for (const file of staged ?? []) {
+          await writeFile(join(applyCtx.cwd, file.targetPath), file.contents);
+        }
+        await applyCtx.manifest.recordAction({
+          plugin: "writer",
+          type: "installed-binary",
+          target: "pkg",
+          preExisting: false,
+        });
+      },
       async revert() {
         writerReverted = true;
       },
@@ -713,7 +704,7 @@ describe("applyPlan rollback hardening", () => {
     expect(rollbackError.rollback.restored).toEqual(["restored b.txt"]);
     expect(rollbackError.rollback.manualCleanup).toEqual([
       expect.stringMatching(
-        /^a\.txt: could not restore its pre-apply contents \(disk went away\); no exact copy on disk$/,
+        /^a\.txt: could not restore its pre-apply contents \(disk went away\); run 'agemon recover' to retry\.$/,
       ),
     ]);
     expect(writerReverted).toBe(true);
@@ -773,7 +764,7 @@ describe("applyPlan rollback hardening", () => {
 
   it("reports a ledger cleanup failure as manual cleanup instead of masking the error", async () => {
     const ctx = await createSandboxContext();
-    ctx.manifest.removeActionsAddedSince = async () => {
+    ctx.manifest.restoreActions = async () => {
       throw new Error("state.json is read-only");
     };
     const op = operation();
@@ -792,45 +783,6 @@ describe("applyPlan rollback hardening", () => {
     expect(rollbackError.rollback.manualCleanup).toContain(
       "ledger: state.json is read-only",
     );
-  });
-
-  it("names an exact backup copy when a restore fails and one exists", async () => {
-    const ctx = await createSandboxContext();
-    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
-    await writeImmutableBackup(ctx.cwd, "file:a.txt", "original a\n");
-    const op = replaceOperation("writer", "a.txt", "original a\n");
-    const writer = createFilePlugin({
-      id: "writer",
-      onInstall: async (installCtx) => {
-        await writeFile(join(installCtx.cwd, "a.txt"), "new a\n", "utf8");
-        throw new Error("writer exploded");
-      },
-    });
-    const actualFiles = await vi.importActual<
-      typeof import("../../../src/core/files.js")
-    >("../../../src/core/files.js");
-    vi.mocked(files.writeFileAtomic).mockImplementation(
-      async (path, contents) => {
-        if (path === join(ctx.cwd, "a.txt")) {
-          throw new Error("disk went away");
-        }
-        await actualFiles.writeFileAtomic(path, contents);
-      },
-    );
-
-    const rollbackError = await captureRollbackError(
-      applyPlan(ctx, [writer], {
-        plan: planWith([op]),
-        approved: [op],
-        workspaceIsolationApproved: null,
-        isolationStatus: "ignored",
-        allowUnignoredState: false,
-      }),
-    );
-
-    expect(rollbackError.rollback.manualCleanup).toEqual([
-      `a.txt: could not restore its pre-apply contents (disk went away); they are in ${resolveImmutableBackupPath(ctx.cwd, "file:a.txt")} — copy it out before the next apply`,
-    ]);
   });
 
   it("captures snapshots without writing any backup", async () => {
@@ -1069,5 +1021,552 @@ describe("applyPlan with a symlinked .agemon/ component", () => {
       "# Our rules\n",
     );
     await expectOutsideUnchanged(outside);
+  });
+});
+
+const INTERRUPT_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+
+function signalListenerCounts(): number[] {
+  return INTERRUPT_SIGNALS.map((signal) => process.listenerCount(signal));
+}
+
+function stagingWriter(
+  id: string,
+  targetPath: string,
+  stagedContents: string,
+  afterWrite: (ctx: Context) => Promise<void> = async () => {},
+): AgemonPlugin {
+  return {
+    ...createFilePlugin({ id, onInstall: async () => {} }),
+    async materialize() {
+      return [{ targetPath, contents: stagedContents, kind: "text" }];
+    },
+    async apply(applyCtx, _operations, staged) {
+      for (const file of staged ?? []) {
+        await writeFile(join(applyCtx.cwd, file.targetPath), file.contents);
+      }
+      await applyCtx.manifest.recordAction({
+        plugin: id,
+        type: "managed-rule-file",
+        target: targetPath,
+        preExisting: true,
+      });
+      await afterWrite(applyCtx);
+    },
+  };
+}
+
+describe("applyPlan interruption journal", () => {
+  it("keeps a journal outside the repo while a capability runs, and deletes it on success", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    const op = replaceOperation("writer", "a.txt", "original a\n");
+    let journalsDuringRun: Awaited<ReturnType<typeof readJournals>> = [];
+    const writer = stagingWriter("writer", "a.txt", "new a\n", async () => {
+      journalsDuringRun = await readJournals(ctx.cwd);
+    });
+
+    await applyPlan(ctx, [writer], {
+      plan: planWith([op]),
+      approved: [op],
+      ...IGNORED_ISOLATION,
+    });
+
+    expect(journalsDuringRun).toHaveLength(1);
+    const [{ path, journal }] = journalsDuringRun;
+    expect(path.startsWith(ctx.cwd)).toBe(false);
+    expect(journal).toMatchObject({
+      planId: PLAN_ID,
+      capabilityOrder: ["writer"],
+      ledgerBefore: [],
+      snapshots: [
+        {
+          targetPath: "a.txt",
+          previousContents: "original a\n",
+          stagedFingerprint: fingerprintContent("new a\n"),
+        },
+      ],
+    });
+    await expect(
+      stat(join(ctx.cwd, ".agemon/plans", PLAN_ID, "journal.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readJournals(ctx.cwd)).resolves.toEqual([]);
+  });
+
+  it("deletes the journal after a clean rollback", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation();
+
+    await expect(
+      applyPlan(ctx, [failingPlugin("cap", "install failed")], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+      }),
+    ).rejects.toThrow(/install failed/);
+
+    await expect(readJournals(ctx.cwd)).resolves.toEqual([]);
+  });
+
+  it("keeps the journal when a restore fails", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    const op = replaceOperation("writer", "a.txt", "original a\n");
+    const writer = stagingWriter("writer", "a.txt", "new a\n", async () => {
+      throw new Error("writer exploded");
+    });
+    const actualFiles = await vi.importActual<
+      typeof import("../../../src/core/files.js")
+    >("../../../src/core/files.js");
+    vi.mocked(files.writeFileAtomic).mockImplementation(
+      async (path, contents, options) => {
+        if (path === join(ctx.cwd, "a.txt")) {
+          throw new Error("disk went away");
+        }
+        await actualFiles.writeFileAtomic(path, contents, options);
+      },
+    );
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [writer], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+      }),
+    );
+
+    expect(rollbackError.rollback.manualCleanup).toEqual([
+      "a.txt: could not restore its pre-apply contents (disk went away); run 'agemon recover' to retry.",
+    ]);
+    await expect(readJournals(ctx.cwd)).resolves.toHaveLength(1);
+  });
+
+  it("keeps the journal when a plugin revert fails", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation({ action: "install-package", targetPath: "pkg" });
+    const plugin: AgemonPlugin = {
+      ...createFilePlugin({
+        id: "cap",
+        onInstall: async (installCtx) => {
+          await installCtx.manifest.recordAction({
+            plugin: "cap",
+            type: "installed-binary",
+            target: "pkg",
+            preExisting: false,
+          });
+          throw new Error("install failed");
+        },
+      }),
+      async revert() {
+        throw new Error("uninstall failed");
+      },
+    };
+
+    await expect(
+      applyPlan(ctx, [plugin], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+      }),
+    ).rejects.toThrow(/install failed/);
+
+    await expect(readJournals(ctx.cwd)).resolves.toHaveLength(1);
+  });
+
+  it("keeps the journal when the ledger restore fails", async () => {
+    const ctx = await createSandboxContext();
+    ctx.manifest.restoreActions = async () => {
+      throw new Error("state.json is read-only");
+    };
+    const op = operation();
+
+    await expect(
+      applyPlan(ctx, [failingPlugin("cap", "install failed")], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+      }),
+    ).rejects.toThrow(/install failed/);
+
+    await expect(readJournals(ctx.cwd)).resolves.toHaveLength(1);
+  });
+
+  it("restores a ledger entry that the failed run edited in place", async () => {
+    const ctx = await createSandboxContext();
+    await ctx.manifest.recordAction({
+      plugin: "cap",
+      type: "managed-rule-file",
+      target: "a.txt",
+      preExisting: false,
+      resourceId: "res",
+      fingerprintAfter: "before-run",
+    });
+    const op = operation();
+    const plugin = createFilePlugin({
+      id: "cap",
+      onInstall: async (installCtx) => {
+        await installCtx.manifest.updateResourceEntry("res", {
+          fingerprintAfter: "during-run",
+        });
+        throw new Error("install failed");
+      },
+    });
+
+    await expect(
+      applyPlan(ctx, [plugin], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+      }),
+    ).rejects.toThrow(/install failed/);
+
+    expect(ctx.manifest.getActions()[0]?.fingerprintAfter).toBe("before-run");
+    const reloaded = await StateManifest.load(ctx.cwd);
+    expect(reloaded.getActions()[0]?.fingerprintAfter).toBe("before-run");
+  });
+
+  it("refuses an oversized journal before any planned target is written", async () => {
+    const ctx = await createSandboxContext();
+    const baseline = signalListenerCounts();
+    const halfCap = "x".repeat(files.MAX_READ_FILE_BYTES / 2 + 1);
+    await writeFile(join(ctx.cwd, "a.md"), halfCap, "utf8");
+    await writeFile(join(ctx.cwd, "b.md"), halfCap, "utf8");
+    const ops = [
+      replaceOperation("writer", "a.md", halfCap),
+      replaceOperation("writer", "b.md", halfCap),
+    ];
+    let installRan = false;
+
+    await expect(
+      applyPlan(
+        ctx,
+        [
+          createFilePlugin({
+            id: "writer",
+            onInstall: async () => {
+              installRan = true;
+            },
+          }),
+        ],
+        { plan: planWith(ops), approved: ops, ...IGNORED_ISOLATION },
+      ),
+    ).rejects.toThrow(/rollback journal would exceed 8 MiB \(2 rule files\)/);
+
+    expect(installRan).toBe(false);
+    await expect(readFile(join(ctx.cwd, "a.md"), "utf8")).resolves.toBe(
+      halfCap,
+    );
+    expect(signalListenerCounts()).toEqual(baseline);
+  });
+
+  it("records the plan id on new entries during the run only", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation({ action: "install-package", targetPath: "pkg" });
+    const plugin = createFilePlugin({
+      id: "cap",
+      onInstall: async (installCtx) => {
+        await installCtx.manifest.recordAction({
+          plugin: "cap",
+          type: "installed-binary",
+          target: "during",
+          preExisting: false,
+        });
+      },
+    });
+
+    await applyPlan(ctx, [plugin], {
+      plan: planWith([op]),
+      approved: [op],
+      ...IGNORED_ISOLATION,
+    });
+    const after = await ctx.manifest.recordAction({
+      plugin: "cap",
+      type: "installed-binary",
+      target: "after",
+      preExisting: false,
+    });
+
+    expect(ctx.manifest.getActions()[0]).toMatchObject({
+      target: "during",
+      planId: PLAN_ID,
+      agemonVersion: "9.9.9",
+    });
+    expect(after).toMatchObject({ planId: null, agemonVersion: null });
+  });
+});
+
+describe("applyPlan signal handling", () => {
+  it("rolls back and reports the signal when a step rejects after SIGINT, keeping the step error", async () => {
+    const ctx = await createSandboxContext();
+    const baseline = signalListenerCounts();
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    const op = replaceOperation("writer", "a.txt", "original a\n");
+    const writer = stagingWriter("writer", "a.txt", "new a\n", async () => {
+      process.emit("SIGINT", "SIGINT");
+      throw new Error("npm exited with signal SIGINT");
+    });
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [writer], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+      }),
+    );
+
+    expect(rollbackError.cause).toBeInstanceOf(ApplyInterruptedError);
+    expect((rollbackError.cause as ApplyInterruptedError).signal).toBe(
+      "SIGINT",
+    );
+    expect((rollbackError.cause as ApplyInterruptedError).exitCode).toBe(130);
+    expect(rollbackError.message).toBe(
+      "interrupted by SIGINT (npm exited with signal SIGINT)",
+    );
+    await expect(readFile(join(ctx.cwd, "a.txt"), "utf8")).resolves.toBe(
+      "original a\n",
+    );
+    expect(ctx.manifest.getActions()).toEqual([]);
+    await expect(readJournals(ctx.cwd)).resolves.toEqual([]);
+    expect(signalListenerCounts()).toEqual(baseline);
+  });
+
+  it("stops before the next capability when the step resolves after SIGTERM", async () => {
+    const ctx = await createSandboxContext();
+    const baseline = signalListenerCounts();
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    const writerOp = replaceOperation("writer", "a.txt", "original a\n");
+    const laterOp = operation({
+      id: "later:res:create",
+      capabilityId: "later",
+    });
+    let laterRan = false;
+    const writer = stagingWriter("writer", "a.txt", "new a\n", async () => {
+      process.emit("SIGTERM", "SIGTERM");
+    });
+    const later = createFilePlugin({
+      id: "later",
+      onInstall: async () => {
+        laterRan = true;
+      },
+    });
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [writer, later], {
+        plan: planWith([writerOp, laterOp]),
+        approved: [writerOp, laterOp],
+        ...IGNORED_ISOLATION,
+      }),
+    );
+
+    expect(laterRan).toBe(false);
+    expect(rollbackError.message).toBe("interrupted by SIGTERM");
+    expect((rollbackError.cause as ApplyInterruptedError).exitCode).toBe(143);
+    await expect(readFile(join(ctx.cwd, "a.txt"), "utf8")).resolves.toBe(
+      "original a\n",
+    );
+    expect(signalListenerCounts()).toEqual(baseline);
+  });
+
+  it("checks for a signal after the last capability", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation({ action: "install-package", targetPath: "pkg" });
+    const plugin = createFilePlugin({
+      id: "cap",
+      onInstall: async () => {
+        process.emit("SIGHUP", "SIGHUP");
+      },
+    });
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [plugin], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+      }),
+    );
+
+    expect((rollbackError.cause as ApplyInterruptedError).exitCode).toBe(129);
+  });
+
+  it("exits at once through the injected exitProcess on a second signal", async () => {
+    const ctx = await createSandboxContext();
+    const exitCodes: number[] = [];
+    const op = operation({ action: "install-package", targetPath: "pkg" });
+    const plugin = createFilePlugin({
+      id: "cap",
+      onInstall: async () => {
+        process.emit("SIGINT", "SIGINT");
+        process.emit("SIGINT", "SIGINT");
+      },
+    });
+
+    await expect(
+      applyPlan(ctx, [plugin], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+        exitProcess: (code) => {
+          exitCodes.push(code);
+        },
+      }),
+    ).rejects.toBeInstanceOf(ApplyRollbackError);
+
+    expect(exitCodes).toEqual([130]);
+  });
+
+  it("still rolls back when the terminal is gone and printing fails", async () => {
+    const ctx = await createSandboxContext();
+    ctx.ui = {
+      ...ctx.ui,
+      fail() {
+        throw Object.assign(new Error("write EIO"), { code: "EIO" });
+      },
+    };
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    const op = replaceOperation("writer", "a.txt", "original a\n");
+    const writer = stagingWriter("writer", "a.txt", "new a\n", async () => {
+      process.emit("SIGHUP", "SIGHUP");
+    });
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [writer], {
+        plan: planWith([op]),
+        approved: [op],
+        ...IGNORED_ISOLATION,
+      }),
+    );
+
+    expect((rollbackError.cause as ApplyInterruptedError).exitCode).toBe(129);
+    await expect(readFile(join(ctx.cwd, "a.txt"), "utf8")).resolves.toBe(
+      "original a\n",
+    );
+  });
+
+  it("keeps a file edited during the apply, saves its original beside it and keeps the journal", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    const slowOp = operation({
+      id: "slow:pkg:install",
+      capabilityId: "slow",
+      resourceId: "pkg",
+      targetPath: "pkg",
+      action: "install-package",
+    });
+    const writerOp = replaceOperation("writer", "a.txt", "original a\n");
+    const slow = createFilePlugin({
+      id: "slow",
+      onInstall: async (installCtx) => {
+        await writeFile(join(installCtx.cwd, "a.txt"), "user edit\n", "utf8");
+        throw new Error("npm install failed");
+      },
+    });
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [slow, stagingWriter("writer", "a.txt", "new a\n")], {
+        plan: planWith([slowOp, writerOp]),
+        approved: [slowOp, writerOp],
+        ...IGNORED_ISOLATION,
+      }),
+    );
+
+    await expect(readFile(join(ctx.cwd, "a.txt"), "utf8")).resolves.toBe(
+      "user edit\n",
+    );
+    await expect(
+      readFile(join(ctx.cwd, "a.txt.agemon-original"), "utf8"),
+    ).resolves.toBe("original a\n");
+    expect(rollbackError.rollback.manualCleanup).toEqual([
+      "a.txt: changed since the apply started — kept as is; its pre-apply contents are saved as a.txt.agemon-original",
+    ]);
+    await expect(readJournals(ctx.cwd)).resolves.toHaveLength(1);
+  });
+
+  it.skipIf(runningAsRoot)(
+    "still reports success when the journal cannot be deleted afterwards, and names it",
+    async () => {
+      const ctx = await createSandboxContext();
+      const failures: string[] = [];
+      ctx.ui = { ...ctx.ui, fail: (message: string) => failures.push(message) };
+      const op = operation({ action: "install-package", targetPath: "pkg" });
+      let journalDirectory = "";
+      const plugin = createFilePlugin({
+        id: "cap",
+        onInstall: async () => {
+          const [{ path }] = await readJournals(ctx.cwd);
+          journalDirectory = join(path, "..");
+          await chmod(journalDirectory, 0o500);
+        },
+      });
+
+      try {
+        await expect(
+          applyPlan(ctx, [plugin], {
+            plan: planWith([op]),
+            approved: [op],
+            ...IGNORED_ISOLATION,
+          }),
+        ).resolves.toEqual({ applied: [op] });
+      } finally {
+        await chmod(journalDirectory, 0o700);
+      }
+
+      expect(failures).toEqual([
+        expect.stringMatching(
+          /^Applied, but could not delete the rollback journal .*0123456789abcdef\.json .*do not run 'agemon recover'/,
+        ),
+      ]);
+    },
+  );
+});
+
+describe("applyPlan in-process rollback with the real master-prompt plugin", () => {
+  it("keeps the ledger entry of a rule file edited during the run, and reverts the rest", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, "AGENTS.md"), "# mine\n", "utf8");
+    const plan = await buildPlan(ctx, [masterPromptPlugin], {
+      agemonVersion: "9.9.9",
+    });
+    const fileOperations = plan.operations.filter(
+      (op) => op.action !== "conflict",
+    );
+    const laterOp = operation({
+      id: "later:pkg:install",
+      capabilityId: "later",
+      resourceId: "pkg",
+      targetPath: "pkg",
+      action: "install-package",
+    });
+    let editedAgents = "";
+    const later = createFilePlugin({
+      id: "later",
+      onInstall: async (installCtx) => {
+        const agentsPath = join(installCtx.cwd, "AGENTS.md");
+        editedAgents = `${await readFile(agentsPath, "utf8")}user line\n`;
+        await writeFile(agentsPath, editedAgents);
+        throw new Error("later failed");
+      },
+    });
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [masterPromptPlugin, later], {
+        plan: { ...plan, operations: [...fileOperations, laterOp] },
+        approved: [...fileOperations, laterOp],
+        ...IGNORED_ISOLATION,
+      }),
+    );
+
+    await expect(readFile(join(ctx.cwd, "AGENTS.md"), "utf8")).resolves.toBe(
+      editedAgents,
+    );
+    expect(
+      (await readdir(ctx.cwd)).filter((name) =>
+        name.startsWith("AGENTS.md.agemon-original"),
+      ),
+    ).toEqual(["AGENTS.md.agemon-original"]);
+    expect(ctx.manifest.getActions().map((entry) => entry.target)).toEqual([
+      "AGENTS.md",
+    ]);
+    expect(rollbackError.rollback.manualCleanup).toHaveLength(1);
+    await expect(readJournals(ctx.cwd)).resolves.toHaveLength(1);
   });
 });

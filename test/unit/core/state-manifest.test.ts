@@ -368,3 +368,50 @@ describe("StateManifest ledger v3", () => {
     );
   });
 });
+
+describe("StateManifest recording plan id and restoreActions", () => {
+  it("defaults new entries to the recording plan id until it is cleared", async () => {
+    const manifest = await StateManifest.load(await createSandbox());
+
+    manifest.setRecordingPlanId("0123456789abcdef");
+    const during = await manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-global-package",
+      target: "agnix",
+      preExisting: false,
+    });
+    manifest.setRecordingPlanId(null);
+    const after = await manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-global-package",
+      target: "other",
+      preExisting: false,
+    });
+
+    expect(during.planId).toBe("0123456789abcdef");
+    expect(after.planId).toBeNull();
+  });
+
+  it("replaces the ledger with the given entries and persists them", async () => {
+    const sandbox = await createSandbox();
+    const manifest = await StateManifest.load(sandbox);
+    const kept = await manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-global-package",
+      target: "kept",
+      preExisting: false,
+    });
+    const snapshot = structuredClone(manifest.getActions());
+    await manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-global-package",
+      target: "dropped",
+      preExisting: false,
+    });
+
+    await manifest.restoreActions(snapshot);
+
+    expect(manifest.getActions()).toEqual([kept]);
+    expect((await StateManifest.load(sandbox)).getActions()).toEqual([kept]);
+  });
+});

@@ -6,10 +6,10 @@ import {
 } from "../plugins/types.js";
 import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
 import { fingerprintJson } from "./fingerprint.js";
-import { resolveStateDirectory } from "./repo-paths.js";
+import { AGEMON_STATE_DIRECTORY, resolveStateDirectory } from "./repo-paths.js";
 import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
-const PLANS_DIRECTORY = ".agemon/plans";
+export const PLAN_SEGMENTS = ["plans"] as const;
 const PLAN_ID_LENGTH = 16;
 const PLAN_ID_PATTERN = /^[0-9a-f]{16}$/u;
 
@@ -52,14 +52,14 @@ export function assertValidPlanId(planId: string): void {
 
 export function resolvePlanPath(cwd: string, planId: string): string {
   assertValidPlanId(planId);
-  return join(cwd, PLANS_DIRECTORY, `${planId}.json`);
+  return join(cwd, AGEMON_STATE_DIRECTORY, ...PLAN_SEGMENTS, `${planId}.json`);
 }
 
 export async function writePlan(cwd: string, plan: Plan): Promise<string> {
   const planPath = resolvePlanPath(cwd, plan.id);
   const payload = `${JSON.stringify(plan, null, 2)}\n`;
 
-  await resolveStateDirectory(cwd, ["plans"], { create: true });
+  await resolveStateDirectory(cwd, [...PLAN_SEGMENTS], { create: true });
   await writeFileAtomic(planPath, payload);
   return planPath;
 }
@@ -162,7 +162,7 @@ function validatePlan(parsed: unknown, planId: string): Plan {
 
 export async function readPlan(cwd: string, planId: string): Promise<Plan> {
   const planPath = resolvePlanPath(cwd, planId);
-  const plansDirectory = await resolveStateDirectory(cwd, ["plans"], {
+  const plansDirectory = await resolveStateDirectory(cwd, [...PLAN_SEGMENTS], {
     create: false,
   });
   const contents =

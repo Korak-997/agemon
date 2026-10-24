@@ -1,13 +1,28 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  resolveJournalDirectory,
+  writeJournal,
+} from "../../../src/core/apply-journal.js";
 import type {
   ApprovedOperationSet,
   ConsentGate,
 } from "../../../src/core/consent.js";
 import type { Context } from "../../../src/core/context.js";
-import { buildPlan, reconcile } from "../../../src/core/orchestrator.js";
+import {
+  buildPlan,
+  reconcile,
+  uninstallPlugins,
+} from "../../../src/core/orchestrator.js";
 import {
   type Plan,
   readPlan,
@@ -432,5 +447,55 @@ describe("reconcile", () => {
         /Plan 0123456789abcdef asks alpha to create alpha\.txt, which it never does\./,
       );
     });
+  });
+});
+
+describe("an interrupted apply blocks reconcile and nuke", () => {
+  const journal = {
+    planId: "0123456789abcdef",
+    startedAt: "2026-10-24T00:00:00.000Z",
+    capabilityOrder: ["fake"],
+    ledgerBefore: [],
+    snapshots: [],
+  };
+
+  it.each(["reconcile", "uninstallPlugins"] as const)(
+    "%s refuses to start and points to 'agemon recover'",
+    async (entryPoint) => {
+      const ctx = await createTestContext(approveEveryGate);
+      ctx.dryRun = true;
+      const fake = createFakeCapability({ id: "fake", targetPath: "x.md" });
+      await writeJournal(ctx.cwd, journal);
+
+      const run =
+        entryPoint === "reconcile"
+          ? reconcile(ctx, [fake.plugin], {
+              agemonVersion: "9.9.9",
+              allowUnignoredState: false,
+            })
+          : uninstallPlugins(ctx, [fake.plugin], {});
+
+      await expect(run).rejects.toThrow(
+        "An earlier apply (plan 0123456789abcdef, started 2026-10-24T00:00:00.000Z) was interrupted. Run 'agemon recover' to restore the files it changed.",
+      );
+      expect(fake.planCallCount()).toBe(0);
+    },
+  );
+
+  it("names the path of an invalid journal", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    const directory = await resolveJournalDirectory(ctx.cwd);
+    await mkdir(directory, { recursive: true });
+    const journalPath = join(directory, "0123456789abcdef.json");
+    await writeFile(journalPath, "not json", "utf8");
+
+    await expect(
+      reconcile(ctx, [], {
+        agemonVersion: "9.9.9",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(
+      `The interrupted-apply journal ${journalPath} is invalid:`,
+    );
   });
 });

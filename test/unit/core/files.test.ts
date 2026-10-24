@@ -21,6 +21,7 @@ import {
   NotARegularFileError,
   RefusedFileError,
   readRegularFileIfExists,
+  saveVerifiedCopyBeside,
   writeFileAtomic,
 } from "../../../src/core/files.js";
 
@@ -202,5 +203,36 @@ describe("writeFileAtomic", () => {
 
     await expect(readFile(target, "utf8")).resolves.toBe("old\n");
     expect(await readdir(cwd)).toEqual(["AGENTS.md"]);
+  });
+});
+
+describe("writeFileAtomic newFileMode", () => {
+  it("applies the requested mode to a new file and keeps an existing file's mode", async () => {
+    const directory = await createSandbox();
+    const created = join(directory, "new.json");
+    const existing = join(directory, "existing.json");
+    await writeFile(existing, "old", { mode: 0o644 });
+
+    await writeFileAtomic(created, "new", { newFileMode: 0o600 });
+    await writeFileAtomic(existing, "new", { newFileMode: 0o600 });
+
+    expect((await stat(created)).mode & 0o777).toBe(0o600);
+    expect((await stat(existing)).mode & 0o777).toBe(0o644);
+  });
+});
+
+describe("saveVerifiedCopyBeside", () => {
+  it("writes <target>.agemon-original, falling back to a timestamped name when taken", async () => {
+    const directory = await createSandbox();
+    const target = join(directory, "AGENTS.md");
+
+    const first = await saveVerifiedCopyBeside(target, "first\n");
+    const second = await saveVerifiedCopyBeside(target, "second\n");
+
+    expect(first).toBe(`${target}.agemon-original`);
+    expect(second).toMatch(/AGENTS\.md\.agemon-original\.\d+$/);
+    await expect(readFile(first, "utf8")).resolves.toBe("first\n");
+    await expect(readFile(second, "utf8")).resolves.toBe("second\n");
+    expect((await stat(first)).mode & 0o777).toBe(0o600);
   });
 });
