@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { detectAgents } from "../adapters/detect.js";
 import type { Context } from "../core/context.js";
+import { readFileIfExists } from "../core/files.js";
 import { fingerprintContent } from "../core/fingerprint.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
@@ -49,14 +49,6 @@ export interface StatusReport {
   trackedAgemonPaths: string[];
   agentsSummary: AgentsSummary;
   healthy: boolean;
-}
-
-async function readFileIfExists(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
 }
 
 function isFileBackedRuleEntry(entry: LedgerEntry): entry is LedgerEntry & {

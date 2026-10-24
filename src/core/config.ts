@@ -1,6 +1,7 @@
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse, stringify, TomlError } from "smol-toml";
+import { writeFileAtomic } from "./files.js";
 
 const CONFIG_FILE_NAME = "agemon.toml";
 
@@ -105,8 +106,6 @@ export async function writeConfig(
   }
   payload.conflict_decisions = config.conflictDecisions;
 
-  const tempPath = `${configPath}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tempPath, `${stringify(payload)}\n`, "utf8");
-  await rename(tempPath, configPath);
+  await writeFileAtomic(configPath, `${stringify(payload)}\n`);
   return configPath;
 }

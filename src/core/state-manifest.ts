@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { writeFileAtomic, writeNewFileWithFallback } from "./files.js";
 
 const MANIFEST_RELATIVE_PATH = ".agemon/state.json";
-const PRE_MIGRATION_BACKUP_FILE_NAME = "state.v1.bak";
 const LEDGER_VERSION = 3;
 
 export type OwnershipMode = "created" | "recorded-key" | "delimited-block";
@@ -228,6 +228,18 @@ function interpretManifestContents(parsed: unknown): LoadedManifest {
   );
 }
 
+function parseManifestJson(rawContents: string): unknown {
+  try {
+    return JSON.parse(rawContents);
+  } catch (error) {
+    throw new Error(
+      `${MANIFEST_RELATIVE_PATH} is not valid JSON (${(error as Error).message}). ` +
+        "It was left untouched. Fix it, or move it aside to start with an empty " +
+        "ledger (agemon then forgets what it installed in this repo).",
+    );
+  }
+}
+
 export class StateManifest {
   private recordingAgemonVersion: string | null = null;
 
@@ -257,12 +269,16 @@ export class StateManifest {
       );
     }
 
-    const parsed = JSON.parse(rawContents) as unknown;
-    const { state, migratedFromVersion } = interpretManifestContents(parsed);
+    const { state, migratedFromVersion } = interpretManifestContents(
+      parseManifestJson(rawContents),
+    );
     const manifest = new StateManifest(manifestPath, state);
 
     if (migratedFromVersion !== null) {
-      await manifest.persistPreMigrationBackup(rawContents);
+      await manifest.persistPreMigrationBackup(
+        rawContents,
+        migratedFromVersion,
+      );
       await manifest.persist();
     }
 
@@ -364,11 +380,17 @@ export class StateManifest {
     await rm(manifestDir, { recursive: true, force: true });
   }
 
-  private async persistPreMigrationBackup(rawContents: string): Promise<void> {
+  private async persistPreMigrationBackup(
+    rawContents: string,
+    fromVersion: number,
+  ): Promise<void> {
     const manifestDir = dirname(this.manifestPath);
-    const backupPath = join(manifestDir, PRE_MIGRATION_BACKUP_FILE_NAME);
     await mkdir(manifestDir, { recursive: true });
-    await writeFile(backupPath, rawContents, "utf8");
+    await writeNewFileWithFallback(
+      join(manifestDir, `state.v${fromVersion}.bak`),
+      join(manifestDir, `state.v${fromVersion}.${Date.now()}.bak`),
+      rawContents,
+    );
   }
 
   private async persist(): Promise<void> {
@@ -376,11 +398,7 @@ export class StateManifest {
     this.state.updatedAt = now;
 
     const payload = `${JSON.stringify(this.state, null, 2)}\n`;
-    const manifestDir = dirname(this.manifestPath);
-    const tempPath = `${this.manifestPath}.tmp-${process.pid}-${Date.now()}`;
-
-    await mkdir(manifestDir, { recursive: true });
-    await writeFile(tempPath, payload, "utf8");
-    await rename(tempPath, this.manifestPath);
+    await mkdir(dirname(this.manifestPath), { recursive: true });
+    await writeFileAtomic(this.manifestPath, payload);
   }
 }

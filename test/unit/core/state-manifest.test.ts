@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -137,14 +144,14 @@ describe("StateManifest ledger v3", () => {
     });
 
     const backup = JSON.parse(
-      await readFile(join(cwd, ".agemon", "state.v1.bak"), "utf8"),
+      await readFile(join(cwd, ".agemon", "state.v2.bak"), "utf8"),
     );
     expect(backup).toEqual(V2_MANIFEST);
 
-    await rm(join(cwd, ".agemon", "state.v1.bak"), { force: true });
+    await rm(join(cwd, ".agemon", "state.v2.bak"), { force: true });
     await StateManifest.load(cwd);
     await expect(
-      readFile(join(cwd, ".agemon", "state.v1.bak"), "utf8"),
+      readFile(join(cwd, ".agemon", "state.v2.bak"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -259,6 +266,42 @@ describe("StateManifest ledger v3", () => {
 
     await expect(StateManifest.load(cwd)).rejects.toThrow(
       /Unrecognised state manifest version/,
+    );
+  });
+  it("never overwrites an existing pre-migration backup", async () => {
+    const cwd = await createSandbox();
+    await writeV1Manifest(cwd);
+    await writeFile(
+      join(cwd, ".agemon", "state.v1.bak"),
+      "earlier backup\n",
+      "utf8",
+    );
+
+    await StateManifest.load(cwd);
+
+    await expect(
+      readFile(join(cwd, ".agemon", "state.v1.bak"), "utf8"),
+    ).resolves.toBe("earlier backup\n");
+    const backups = (await readdir(join(cwd, ".agemon"))).filter((name) =>
+      /^state\.v1\.\d+\.bak$/.test(name),
+    );
+    expect(backups).toHaveLength(1);
+    expect(
+      JSON.parse(await readFile(join(cwd, ".agemon", backups[0]), "utf8")),
+    ).toEqual(V1_MANIFEST);
+  });
+
+  it("explains a corrupt state.json and leaves it untouched", async () => {
+    const cwd = await createSandbox();
+    await mkdir(join(cwd, ".agemon"), { recursive: true });
+    const manifestPath = join(cwd, ".agemon", "state.json");
+    await writeFile(manifestPath, '{ "version": 3, ', "utf8");
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(
+      /\.agemon\/state\.json is not valid JSON .*left untouched/,
+    );
+    await expect(readFile(manifestPath, "utf8")).resolves.toBe(
+      '{ "version": 3, ',
     );
   });
 });

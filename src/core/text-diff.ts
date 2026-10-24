@@ -8,6 +8,8 @@ interface DiffLine {
 }
 
 const DEFAULT_CONTEXT = 3;
+const MAX_LCS_TABLE_CELLS = 1_000_000;
+const ELLIPSIS_LINE_PREFIX = "  ⋯";
 
 export interface RenderDiffOptions {
   color?: boolean;
@@ -26,7 +28,39 @@ function splitIntoLines(text: string): string[] {
   return lines;
 }
 
-function diffLineSequences(before: string[], after: string[]): DiffLine[] {
+function countCommonPrefix(before: string[], after: string[]): number {
+  const limit = Math.min(before.length, after.length);
+  let count = 0;
+  while (count < limit && before[count] === after[count]) {
+    count += 1;
+  }
+  return count;
+}
+
+function countCommonSuffix(
+  before: string[],
+  after: string[],
+  prefixLength: number,
+): number {
+  const limit = Math.min(before.length, after.length) - prefixLength;
+  let count = 0;
+  while (
+    count < limit &&
+    before[before.length - 1 - count] === after[after.length - 1 - count]
+  ) {
+    count += 1;
+  }
+  return count;
+}
+
+function contextLines(lines: string[]): DiffLine[] {
+  return lines.map((text) => ({ kind: " ", text }));
+}
+
+function diffWithLongestCommonSubsequence(
+  before: string[],
+  after: string[],
+): DiffLine[] {
   const beforeCount = before.length;
   const afterCount = after.length;
   const commonSuffixLengths: number[][] = Array.from(
@@ -76,6 +110,32 @@ function diffLineSequences(before: string[], after: string[]): DiffLine[] {
   return diff;
 }
 
+function diffChangedMiddle(before: string[], after: string[]): DiffLine[] {
+  const tableCells = (before.length + 1) * (after.length + 1);
+  if (tableCells > MAX_LCS_TABLE_CELLS) {
+    return [
+      {
+        kind: " ",
+        text: ` ⋯ too large to diff line by line: ${before.length} lines replaced by ${after.length} lines`,
+      },
+    ];
+  }
+  return diffWithLongestCommonSubsequence(before, after);
+}
+
+function diffLineSequences(before: string[], after: string[]): DiffLine[] {
+  const prefixLength = countCommonPrefix(before, after);
+  const suffixLength = countCommonSuffix(before, after, prefixLength);
+  return [
+    ...contextLines(before.slice(0, prefixLength)),
+    ...diffChangedMiddle(
+      before.slice(prefixLength, before.length - suffixLength),
+      after.slice(prefixLength, after.length - suffixLength),
+    ),
+    ...contextLines(before.slice(before.length - suffixLength)),
+  ];
+}
+
 function collapseUnchangedRuns(body: string[], context: number): string[] {
   const result: string[] = [];
   let unchangedRun: string[] = [];
@@ -93,7 +153,10 @@ function collapseUnchangedRuns(body: string[], context: number): string[] {
   };
 
   for (const line of body) {
-    if (line.startsWith(" ") || line === "") {
+    const isUnchangedLine =
+      (line.startsWith(" ") && !line.startsWith(ELLIPSIS_LINE_PREFIX)) ||
+      line === "";
+    if (isUnchangedLine) {
       unchangedRun.push(line);
     } else {
       flush();
@@ -103,12 +166,6 @@ function collapseUnchangedRuns(body: string[], context: number): string[] {
   flush();
   return result;
 }
-
-/**
- * Re-style an already-rendered unified diff string: colour the `+`/`-` lines,
- * dim the `---`/`+++` header, and collapse long unchanged runs. Operates on the
- * rendered form so callers holding only `operation.preview.text` can dress it.
- */
 export function styleUnifiedDiff(
   diffText: string,
   options: RenderDiffOptions = {},
@@ -141,7 +198,7 @@ export function styleUnifiedDiff(
     if (!useColor) return line;
     if (line.startsWith("+")) return theme.added(line);
     if (line.startsWith("-")) return theme.removed(line);
-    if (line.startsWith("  ⋯")) return theme.dim(line);
+    if (line.startsWith(ELLIPSIS_LINE_PREFIX)) return theme.dim(line);
     return line;
   };
 

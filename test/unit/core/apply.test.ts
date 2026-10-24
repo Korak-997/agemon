@@ -1,9 +1,18 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { applyPlan } from "../../../src/core/apply.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApplyRollbackError, applyPlan } from "../../../src/core/apply.js";
 import type { Context } from "../../../src/core/context.js";
+import * as files from "../../../src/core/files.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import type { Plan } from "../../../src/core/plan-store.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
@@ -13,9 +22,17 @@ import type {
   ProposedOperation,
 } from "../../../src/plugins/types.js";
 
+vi.mock("../../../src/core/files.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../src/core/files.js")>();
+  return { ...actual, writeFileAtomic: vi.fn(actual.writeFileAtomic) };
+});
+
+const runningAsRoot = process.getuid?.() === 0;
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.mocked(files.writeFileAtomic).mockReset();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
@@ -529,6 +546,256 @@ describe("applyPlan transaction protocol", () => {
     expect(result.applied).toEqual([op]);
     await expect(readFile(join(ctx.cwd, "res.txt"), "utf8")).resolves.toBe(
       "done\n",
+    );
+  });
+});
+
+async function captureRollbackError(
+  pending: Promise<unknown>,
+): Promise<ApplyRollbackError> {
+  try {
+    await pending;
+  } catch (error) {
+    if (error instanceof ApplyRollbackError) {
+      return error;
+    }
+    throw error;
+  }
+  throw new Error("expected applyPlan to roll back");
+}
+
+function failingPlugin(id: string, message: string): AgemonPlugin {
+  return {
+    ...createFilePlugin({ id, onInstall: async () => {} }),
+    async install() {
+      throw new Error(message);
+    },
+  };
+}
+
+function replaceOperation(
+  capabilityId: string,
+  targetPath: string,
+  currentContents: string,
+): ProposedOperation {
+  return operation({
+    id: `${capabilityId}:${targetPath}:replace`,
+    capabilityId,
+    resourceId: `file:${targetPath}`,
+    targetPath,
+    action: "replace",
+    expectedFingerprint: fingerprintContent(currentContents),
+  });
+}
+
+describe("applyPlan rollback hardening", () => {
+  it.skipIf(runningAsRoot)(
+    "fails before any user-file write when a target cannot be read, and keeps the file",
+    async () => {
+      const ctx = await createSandboxContext();
+      const target = join(ctx.cwd, "CLAUDE.md");
+      await writeFile(target, "root-owned rules\n", "utf8");
+      await chmod(target, 0o000);
+      const op = replaceOperation("cap", "CLAUDE.md", "root-owned rules\n");
+
+      let installRan = false;
+      await expect(
+        applyPlan(
+          ctx,
+          [
+            createFilePlugin({
+              id: "cap",
+              onInstall: async () => {
+                installRan = true;
+              },
+            }),
+          ],
+          {
+            plan: planWith([op]),
+            approved: [op],
+            workspaceIsolationApproved: null,
+            isolationStatus: "ignored",
+            allowUnignoredState: false,
+          },
+        ),
+      ).rejects.toMatchObject({ code: "EACCES" });
+
+      expect(installRan).toBe(false);
+      expect((await stat(target)).mode & 0o7777).toBe(0o000);
+      await chmod(target, 0o600);
+      await expect(readFile(target, "utf8")).resolves.toBe(
+        "root-owned rules\n",
+      );
+    },
+  );
+
+  it("keeps restoring and reverting when one snapshot restore fails, and reports the original error", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    await writeFile(join(ctx.cwd, "b.txt"), "original b\n", "utf8");
+    const writerOps = [
+      replaceOperation("writer", "a.txt", "original a\n"),
+      replaceOperation("writer", "b.txt", "original b\n"),
+    ];
+    const breakerOp = operation({
+      id: "breaker:pkg:install-package",
+      capabilityId: "breaker",
+      resourceId: "pkg",
+      targetPath: "pkg",
+      action: "install-package",
+    });
+
+    let writerReverted = false;
+    const writer: AgemonPlugin = {
+      ...createFilePlugin({
+        id: "writer",
+        onInstall: async (installCtx) => {
+          await writeFile(join(installCtx.cwd, "a.txt"), "new a\n", "utf8");
+          await writeFile(join(installCtx.cwd, "b.txt"), "new b\n", "utf8");
+          await installCtx.manifest.recordAction({
+            plugin: "writer",
+            type: "created",
+            target: "a.txt",
+            preExisting: true,
+          });
+        },
+      }),
+      async revert() {
+        writerReverted = true;
+      },
+    };
+    const restoreFailure = new Error("disk went away");
+    vi.mocked(files.writeFileAtomic).mockImplementation(
+      async (path, contents) => {
+        if (path === join(ctx.cwd, "a.txt")) {
+          throw restoreFailure;
+        }
+        const actual = await vi.importActual<
+          typeof import("../../../src/core/files.js")
+        >("../../../src/core/files.js");
+        await actual.writeFileAtomic(path, contents);
+      },
+    );
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [writer, failingPlugin("breaker", "breaker exploded")], {
+        plan: planWith([...writerOps, breakerOp]),
+        approved: [...writerOps, breakerOp],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    );
+
+    expect(rollbackError.message).toBe("breaker exploded");
+    expect((rollbackError.cause as Error).message).toBe("breaker exploded");
+    await expect(readFile(join(ctx.cwd, "b.txt"), "utf8")).resolves.toBe(
+      "original b\n",
+    );
+    expect(rollbackError.rollback.restored).toEqual(["restored b.txt"]);
+    expect(rollbackError.rollback.manualCleanup).toEqual([
+      expect.stringMatching(
+        /^a\.txt: could not restore its pre-apply contents \(disk went away\); they are in .*\.agemon\/backups\/.+\.bak$/,
+      ),
+    ]);
+    expect(writerReverted).toBe(true);
+    expect(ctx.manifest.getActions()).toEqual([]);
+  });
+
+  it("reverts the capability that threw, with only its own new entries", async () => {
+    const ctx = await createSandboxContext();
+    await ctx.manifest.recordAction({
+      plugin: "flaky",
+      type: "registered-service",
+      target: "from an earlier run",
+      preExisting: false,
+    });
+    const op = operation({
+      id: "flaky:unit:install",
+      capabilityId: "flaky",
+      resourceId: "unit",
+      targetPath: "unit",
+      action: "install-package",
+    });
+
+    let revertedTargets: string[] | null = null;
+    const flaky: AgemonPlugin = {
+      ...createFilePlugin({
+        id: "flaky",
+        onInstall: async (installCtx) => {
+          await installCtx.manifest.recordAction({
+            plugin: "flaky",
+            type: "registered-service",
+            target: "agemon-crg.service",
+            preExisting: false,
+          });
+          throw new Error("verify of the new unit failed");
+        },
+      }),
+      async revert(_revertCtx, entries) {
+        revertedTargets = entries.map((entry) => entry.target);
+      },
+    };
+
+    await expect(
+      applyPlan(ctx, [flaky], {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(/verify of the new unit failed/);
+
+    expect(revertedTargets).toEqual(["agemon-crg.service"]);
+    expect(ctx.manifest.getActions().map((entry) => entry.target)).toEqual([
+      "from an earlier run",
+    ]);
+  });
+
+  it("reports a ledger cleanup failure as manual cleanup instead of masking the error", async () => {
+    const ctx = await createSandboxContext();
+    ctx.manifest.removeActionsAddedSince = async () => {
+      throw new Error("state.json is read-only");
+    };
+    const op = operation();
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [failingPlugin("cap", "install failed")], {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    );
+
+    expect(rollbackError.message).toBe("install failed");
+    expect(rollbackError.rollback.manualCleanup).toContain(
+      "ledger: state.json is read-only",
+    );
+  });
+
+  it("removes the backups a rolled-back apply created", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    const op = replaceOperation("cap", "a.txt", "original a\n");
+
+    await expect(
+      applyPlan(ctx, [failingPlugin("cap", "install failed")], {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(/install failed/);
+
+    await expect(readFile(join(ctx.cwd, "a.txt"), "utf8")).resolves.toBe(
+      "original a\n",
+    );
+    await expect(readdir(join(ctx.cwd, ".agemon/backups"))).resolves.toEqual(
+      [],
     );
   });
 });

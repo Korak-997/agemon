@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Context } from "../core/context.js";
+import { readFileIfExists } from "../core/files.js";
 import { isDenylistedPath } from "./redact.js";
 
 const execFileAsync = promisify(execFile);
@@ -66,14 +67,6 @@ export interface DiscoveryResult {
   structuredConfigs: StructuredConfigResource[];
   binaries: BinaryResource[];
   isolation: WorkspaceIsolation;
-}
-
-async function readFileIfExists(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
 }
 
 async function discoverStructuredConfig(

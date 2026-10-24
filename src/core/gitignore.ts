@@ -1,5 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readFileIfExists, writeFileAtomic } from "./files.js";
 
 const GITIGNORE_FILENAME = ".gitignore";
 const AGEMON_ENTRY = "/.agemon/";
@@ -21,18 +21,10 @@ export async function ensureGitignoreEntry(
 ): Promise<void> {
   const gitignorePath = join(cwd, GITIGNORE_FILENAME);
 
-  let contents: string | null;
-  try {
-    contents = await readFile(gitignorePath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-    contents = null;
-  }
+  const contents = await readFileIfExists(gitignorePath);
 
   if (contents === null) {
-    await writeFile(gitignorePath, `${entry}\n`, "utf8");
+    await writeFileAtomic(gitignorePath, `${entry}\n`);
     return;
   }
 
@@ -43,10 +35,9 @@ export async function ensureGitignoreEntry(
   const newline = contents.includes("\r\n") ? "\r\n" : "\n";
   const separator =
     contents.length === 0 || contents.endsWith("\n") ? "" : newline;
-  await writeFile(
+  await writeFileAtomic(
     gitignorePath,
     `${contents}${separator}${entry}${newline}`,
-    "utf8",
   );
 }
 

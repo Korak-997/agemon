@@ -1,18 +1,38 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { applyPlan } from "../../../src/core/apply.js";
+import {
+  resolveImmutableBackupPath,
+  writeImmutableBackup,
+} from "../../../src/core/backups.js";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
-import type { ProposedOperation } from "../../../src/plugins/types.js";
+import type {
+  AgemonPlugin,
+  ProposedOperation,
+} from "../../../src/plugins/types.js";
 
+const runningAsRoot = process.getuid?.() === 0;
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
   for (const directoryPath of createdTempDirectories.splice(0)) {
+    await chmod(join(directoryPath, "CLAUDE.md"), 0o600).catch(() => undefined);
     await rm(directoryPath, { recursive: true, force: true });
   }
 });
@@ -241,9 +261,9 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
 
     await masterPromptPlugin.install(context);
 
-    const backupPath = join(
+    const backupPath = resolveImmutableBackupPath(
       context.cwd,
-      ".agemon/backups/rule-file_AGENTS.md.bak",
+      "rule-file:AGENTS.md",
     );
     expect(await readFile(backupPath, "utf8")).toBe(originalAgents);
 
@@ -256,4 +276,409 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
 
     expect(await readFile(backupPath, "utf8")).toBe(originalAgents);
   });
+});
+
+async function replaceWithPointer(
+  context: Context,
+  target: string,
+): Promise<void> {
+  const conflict = (await planFor(context)).find(
+    (operation) => operation.targetPath === target,
+  );
+  if (!conflict) {
+    throw new Error(`no planned operation for ${target}`);
+  }
+  await masterPromptPlugin.apply?.(context, [
+    { ...conflict, action: "replace" },
+  ]);
+}
+
+function recordedEntry(context: Context, target: string) {
+  const entry = context.manifest
+    .getActions()
+    .find(
+      (action) => action.plugin === "master-prompt" && action.target === target,
+    );
+  if (!entry) {
+    throw new Error(`no ledger entry for ${target}`);
+  }
+  return entry;
+}
+
+function collectInfo(context: Context): string[] {
+  const messages: string[] = [];
+  context.ui = { ...context.ui, info: (message) => messages.push(message) };
+  return messages;
+}
+
+async function readText(context: Context, target: string): Promise<string> {
+  return readFile(join(context.cwd, target), "utf8");
+}
+
+const HAND_WRITTEN_RULES =
+  "# Claude Local Rules\n\n- Prefer short variable names.\n- Skip tests when changes look simple.\n";
+
+describe("master-prompt revert — never loses user content", () => {
+  it("leaves exactly the pre-apply AGENTS.md after a rollback, even with an older backup on disk", async () => {
+    const context = await createTestContext();
+    await writeFile(join(context.cwd, "AGENTS.md"), "current rules\n", "utf8");
+    await writeImmutableBackup(
+      context.cwd,
+      "rule-file:AGENTS.md",
+      "ancient rules from a long-gone run\n",
+    );
+    const masterPromptOperations = await planFor(context);
+    const breakerOperation: ProposedOperation = {
+      ...masterPromptOperations[0],
+      id: "breaker:res:install",
+      capabilityId: "breaker",
+      resourceId: "res",
+      targetPath: "res",
+      action: "install-package",
+      expectedFingerprint: null,
+    };
+    const breaker: AgemonPlugin = {
+      id: "breaker",
+      async detect() {
+        return { present: false, preExisting: false };
+      },
+      async plan() {
+        return [];
+      },
+      async install() {
+        throw new Error("breaker exploded");
+      },
+      async verify() {
+        return { ok: true };
+      },
+      async uninstall() {},
+    };
+    const operations = [...masterPromptOperations, breakerOperation];
+
+    await expect(
+      applyPlan(context, [masterPromptPlugin, breaker], {
+        plan: {
+          id: "plan-under-test",
+          agemonVersion: "9.9.9",
+          desiredStateHash: "hash",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          operations,
+        },
+        approved: operations,
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(/breaker exploded/);
+
+    expect(await readText(context, "AGENTS.md")).toBe("current rules\n");
+    await expect(readText(context, "CLAUDE.md")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("restores the user's current file, not a stale backup left by an earlier run", async () => {
+    const context = await createTestContext();
+    await writeImmutableBackup(
+      context.cwd,
+      "rule-file:CLAUDE.md",
+      "stale pointer from an uninstalled run\n",
+    );
+    await writeFile(join(context.cwd, "CLAUDE.md"), HAND_WRITTEN_RULES, "utf8");
+
+    await replaceWithPointer(context, "CLAUDE.md");
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
+  });
+
+  it("keeps an AGENTS.md with broken markers and saves the original next to it", async () => {
+    const context = await createTestContext();
+    await writeFile(join(context.cwd, "AGENTS.md"), "# House rules\n", "utf8");
+    await masterPromptPlugin.install(context);
+    const brokenMarkers = (await readText(context, "AGENTS.md")).replace(
+      "<!-- agemon:end:agent-rules -->",
+      "",
+    );
+    await writeFile(join(context.cwd, "AGENTS.md"), brokenMarkers, "utf8");
+    const info = collectInfo(context);
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "AGENTS.md")).toBe(brokenMarkers);
+    expect(await readText(context, "AGENTS.md.agemon-original")).toBe(
+      "# House rules\n",
+    );
+    expect(context.manifest.hasActionForPlugin("master-prompt")).toBe(false);
+    expect(info).toContainEqual(
+      expect.stringMatching(
+        /^manual cleanup needed: AGENTS\.md changed since agemon wrote it — kept as is; earlier contents saved as AGENTS\.md\.agemon-original$/,
+      ),
+    );
+  });
+
+  it("keeps a user-edited pointer that replaced pre-existing rules and saves the original", async () => {
+    const context = await createTestContext();
+    await writeFile(join(context.cwd, "CLAUDE.md"), HAND_WRITTEN_RULES, "utf8");
+    await replaceWithPointer(context, "CLAUDE.md");
+    await writeFile(join(context.cwd, "CLAUDE.md"), "edited later\n", "utf8");
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "CLAUDE.md")).toBe("edited later\n");
+    expect(await readText(context, "CLAUDE.md.agemon-original")).toBe(
+      HAND_WRITTEN_RULES,
+    );
+  });
+
+  it("never deletes a created pointer the user has since edited", async () => {
+    const context = await createTestContext();
+    await masterPromptPlugin.install(context);
+    await writeFile(
+      join(context.cwd, "GEMINI.md"),
+      "my gemini notes\n",
+      "utf8",
+    );
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "GEMINI.md")).toBe("my gemini notes\n");
+    await expect(
+      readText(context, "GEMINI.md.agemon-original"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readText(context, "CLAUDE.md")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("keeps the user's text in a created AGENTS.md and removes only the block", async () => {
+    const context = await createTestContext();
+    await masterPromptPlugin.install(context);
+    const withUserText = `${await readText(context, "AGENTS.md")}\n## Mine\n\nkeep me\n`;
+    await writeFile(join(context.cwd, "AGENTS.md"), withUserText, "utf8");
+
+    await masterPromptPlugin.uninstall(context);
+
+    const remaining = await readText(context, "AGENTS.md");
+    expect(remaining).toContain("## Mine");
+    expect(remaining).not.toContain("agemon:start");
+  });
+
+  it("never overwrites an existing .agemon-original and keeps the original after .agemon is pruned", async () => {
+    const context = await createTestContext();
+    await writeFile(join(context.cwd, "CLAUDE.md"), HAND_WRITTEN_RULES, "utf8");
+    await replaceWithPointer(context, "CLAUDE.md");
+    await writeFile(join(context.cwd, "CLAUDE.md"), "edited later\n", "utf8");
+    await writeFile(
+      join(context.cwd, "CLAUDE.md.agemon-original"),
+      "from an earlier uninstall\n",
+      "utf8",
+    );
+
+    await masterPromptPlugin.uninstall(context);
+    await context.manifest.pruneIfEmpty();
+
+    expect(await readText(context, "CLAUDE.md.agemon-original")).toBe(
+      "from an earlier uninstall\n",
+    );
+    const timestampedCopies = (await readdir(context.cwd)).filter((name) =>
+      /^CLAUDE\.md\.agemon-original\.\d+$/.test(name),
+    );
+    expect(timestampedCopies).toHaveLength(1);
+    expect(await readText(context, timestampedCopies[0])).toBe(
+      HAND_WRITTEN_RULES,
+    );
+    await expect(readdir(join(context.cwd, ".agemon"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("preserves a v1-era file and copies its v1 backup out instead of restoring it", async () => {
+    const context = await createTestContext();
+    await mkdir(join(context.cwd, ".agemon/backups/master-prompt"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(context.cwd, ".agemon/backups/master-prompt/CLAUDE.md.bak"),
+      "original v1 rules\n",
+      "utf8",
+    );
+    await writeFile(join(context.cwd, "CLAUDE.md"), "v1 pointer\n", "utf8");
+    await writeFile(
+      join(context.cwd, ".agemon/state.json"),
+      JSON.stringify({
+        version: 1,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+        os: "linux",
+        actions: [
+          {
+            id: "v1-entry",
+            plugin: "master-prompt",
+            type: "managed-rule-file",
+            target: "CLAUDE.md",
+            preExisting: true,
+            createdAt: "2026-08-01T00:00:00.000Z",
+          },
+        ],
+      }),
+      "utf8",
+    );
+    context.manifest = await StateManifest.load(context.cwd);
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "CLAUDE.md")).toBe("v1 pointer\n");
+    expect(await readText(context, "CLAUDE.md.agemon-original")).toBe(
+      "original v1 rules\n",
+    );
+  });
+
+  it("falls back to the current backup name when the recorded path is gone", async () => {
+    const context = await createTestContext();
+    await writeFile(join(context.cwd, "CLAUDE.md"), HAND_WRITTEN_RULES, "utf8");
+    await replaceWithPointer(context, "CLAUDE.md");
+    const entry = recordedEntry(context, "CLAUDE.md");
+    entry.backup = {
+      path: join(context.cwd, ".agemon/backups/missing.bak"),
+      checksum: entry.backup?.checksum ?? "",
+    };
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
+  });
+
+  it("ignores a recorded backup path outside .agemon/backups and never touches it", async () => {
+    const context = await createTestContext();
+    const outside = await mkdtemp(join(tmpdir(), "agemon-outside-"));
+    createdTempDirectories.push(outside);
+    const foreignFile = join(outside, "not-a-backup.txt");
+    await writeFile(foreignFile, "someone else's file\n", "utf8");
+    await writeFile(join(context.cwd, "CLAUDE.md"), HAND_WRITTEN_RULES, "utf8");
+    await replaceWithPointer(context, "CLAUDE.md");
+    const entry = recordedEntry(context, "CLAUDE.md");
+    entry.backup = { path: foreignFile, checksum: "irrelevant" };
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
+    await expect(readFile(foreignFile, "utf8")).resolves.toBe(
+      "someone else's file\n",
+    );
+  });
+
+  it("reverts every other entry when one fails, then names the failure", async () => {
+    const context = await createTestContext();
+    await masterPromptPlugin.install(context);
+    await rm(join(context.cwd, "CLAUDE.md"));
+    await mkdir(join(context.cwd, "CLAUDE.md"));
+
+    await expect(masterPromptPlugin.uninstall(context)).rejects.toThrow(
+      /CLAUDE\.md/,
+    );
+
+    await expect(readText(context, "GEMINI.md")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readText(context, "AGENTS.md")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("restores from a legacy-named backup only after its checksum matches", async () => {
+    const context = await createTestContext();
+    await writeFile(join(context.cwd, "CLAUDE.md"), HAND_WRITTEN_RULES, "utf8");
+    await replaceWithPointer(context, "CLAUDE.md");
+    const entry = recordedEntry(context, "CLAUDE.md");
+    entry.backup = null;
+    await rename(
+      resolveImmutableBackupPath(context.cwd, "rule-file:CLAUDE.md"),
+      join(context.cwd, ".agemon/backups/rule-file_CLAUDE.md.bak"),
+    );
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "CLAUDE.md")).toBe(HAND_WRITTEN_RULES);
+  });
+
+  it("skips a backup candidate that is a symlink and never copies it out", async () => {
+    const context = await createTestContext();
+    const outside = await mkdtemp(join(tmpdir(), "agemon-outside-"));
+    createdTempDirectories.push(outside);
+    await writeFile(join(outside, "id_rsa"), "private key\n", "utf8");
+    await writeFile(join(context.cwd, "CLAUDE.md"), HAND_WRITTEN_RULES, "utf8");
+    await replaceWithPointer(context, "CLAUDE.md");
+    const pointerContents = await readText(context, "CLAUDE.md");
+    recordedEntry(context, "CLAUDE.md").backup = null;
+    await rm(resolveImmutableBackupPath(context.cwd, "rule-file:CLAUDE.md"));
+    await symlink(
+      join(outside, "id_rsa"),
+      join(context.cwd, ".agemon/backups/rule-file_CLAUDE.md.bak"),
+    );
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "CLAUDE.md")).toBe(pointerContents);
+    const copies = (await readdir(context.cwd)).filter((name) =>
+      name.includes("agemon-original"),
+    );
+    expect(copies).toEqual([]);
+  });
+
+  it("excises the block from an untouched AGENTS.md whose backup no longer matches", async () => {
+    const context = await createTestContext();
+    await writeFile(join(context.cwd, "AGENTS.md"), "# House rules\n", "utf8");
+    await masterPromptPlugin.install(context);
+    await writeFile(
+      resolveImmutableBackupPath(context.cwd, "rule-file:AGENTS.md"),
+      "tampered backup\n",
+      "utf8",
+    );
+
+    await masterPromptPlugin.uninstall(context);
+
+    expect(await readText(context, "AGENTS.md")).toBe("# House rules\n");
+    await expect(
+      readText(context, "AGENTS.md.agemon-original"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("master-prompt planning — symlinks and unreadable files", () => {
+  it.skipIf(runningAsRoot)(
+    "plans a symlinked CLAUDE.md as a conflict without reading its target",
+    async () => {
+      const context = await createTestContext();
+      const outside = await mkdtemp(join(tmpdir(), "agemon-outside-"));
+      createdTempDirectories.push(outside);
+      const unreadableTarget = join(outside, "secret.md");
+      await writeFile(unreadableTarget, "secret\n", "utf8");
+      await chmod(unreadableTarget, 0o000);
+      await symlink(unreadableTarget, join(context.cwd, "CLAUDE.md"));
+
+      const claudeOperation = (await planFor(context)).find(
+        (operation) => operation.targetPath === "CLAUDE.md",
+      );
+
+      await chmod(unreadableTarget, 0o600);
+      expect(claudeOperation?.action).toBe("conflict");
+      expect(claudeOperation?.preview.text).toMatch(/symlink or special file/);
+    },
+  );
+
+  it.skipIf(runningAsRoot)(
+    "fails planning on an unreadable CLAUDE.md instead of treating it as absent",
+    async () => {
+      const context = await createTestContext();
+      const target = join(context.cwd, "CLAUDE.md");
+      await writeFile(target, "root-owned rules\n", "utf8");
+      await chmod(target, 0o000);
+
+      await expect(planFor(context)).rejects.toMatchObject({ code: "EACCES" });
+
+      await chmod(target, 0o600);
+      expect(await readFile(target, "utf8")).toBe("root-owned rules\n");
+    },
+  );
 });

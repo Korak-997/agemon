@@ -308,7 +308,7 @@ describe("phase 5 — block-level revert without a backup dependency", () => {
     });
   });
 
-  it("falls back to backup restore when the managed block markers are unbalanced", async () => {
+  it("keeps an AGENTS.md with unbalanced markers and saves the original beside it", async () => {
     await withFixtureRepo("messy-agent-rules", async (repoDirectory) => {
       const agentsPath = join(repoDirectory, "AGENTS.md");
       const originalAgents = await readFile(agentsPath, "utf8");
@@ -316,11 +316,11 @@ describe("phase 5 — block-level revert without a backup dependency", () => {
       expect(await runCli(["--yes"])).toBe(0);
 
       const merged = await readFile(agentsPath, "utf8");
-      await writeFile(
-        agentsPath,
-        merged.replace("<!-- agemon:end:agent-rules -->", ""),
-        "utf8",
+      const brokenMarkers = merged.replace(
+        "<!-- agemon:end:agent-rules -->",
+        "",
       );
+      await writeFile(agentsPath, brokenMarkers, "utf8");
 
       const printed: string[] = [];
       const originalLog = console.log;
@@ -333,8 +333,13 @@ describe("phase 5 — block-level revert without a backup dependency", () => {
         console.log = originalLog;
       }
 
-      expect(await readFile(agentsPath, "utf8")).toBe(originalAgents);
-      expect(printed.join("\n")).toContain("restoring from backup");
+      expect(await readFile(agentsPath, "utf8")).toBe(brokenMarkers);
+      expect(await readFile(`${agentsPath}.agemon-original`, "utf8")).toBe(
+        originalAgents,
+      );
+      expect(printed.join("\n")).toContain(
+        "manual cleanup needed: AGENTS.md changed since agemon wrote it",
+      );
     });
   });
 });

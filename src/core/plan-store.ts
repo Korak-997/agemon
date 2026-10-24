@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ProposedOperation } from "../plugins/types.js";
+import { writeFileAtomic } from "./files.js";
 import { fingerprintJson } from "./fingerprint.js";
 
 const PLANS_DIRECTORY = ".agemon/plans";
@@ -42,11 +43,9 @@ export function resolvePlanPath(cwd: string, planId: string): string {
 export async function writePlan(cwd: string, plan: Plan): Promise<string> {
   const planPath = resolvePlanPath(cwd, plan.id);
   const payload = `${JSON.stringify(plan, null, 2)}\n`;
-  const tempPath = `${planPath}.tmp-${process.pid}-${Date.now()}`;
 
   await mkdir(dirname(planPath), { recursive: true });
-  await writeFile(tempPath, payload, "utf8");
-  await rename(tempPath, planPath);
+  await writeFileAtomic(planPath, payload);
   return planPath;
 }
 

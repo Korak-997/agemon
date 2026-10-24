@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { IsolationStatus } from "../inspect/discover.js";
 import type {
@@ -8,8 +8,9 @@ import type {
 } from "../plugins/types.js";
 import { capabilityLabel } from "../ui/labels.js";
 import { SILENT_PROGRESS } from "../ui/progress.js";
-import { writeImmutableBackup } from "./backups.js";
+import { type WrittenBackup, writeImmutableBackup } from "./backups.js";
 import type { Context } from "./context.js";
+import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
 import { fingerprintContent } from "./fingerprint.js";
 import { writeAgemonGitignoreEntry } from "./gitignore.js";
 import { type Plan, writePlan } from "./plan-store.js";
@@ -40,8 +41,8 @@ export interface RollbackDetail {
 export class ApplyRollbackError extends Error {
   readonly rollback: RollbackDetail;
 
-  constructor(rollback: RollbackDetail) {
-    super(rollback.message);
+  constructor(rollback: RollbackDetail, cause: unknown) {
+    super(rollback.message, { cause });
     this.name = "ApplyRollbackError";
     this.rollback = rollback;
   }
@@ -50,14 +51,12 @@ export class ApplyRollbackError extends Error {
 interface FileRollbackSnapshot {
   targetPath: string;
   previousContents: string | null;
+  backup: WrittenBackup | null;
 }
 
-async function readFileIfExists(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
+interface SnapshotRestoreOutcome {
+  restored: string[];
+  manualCleanup: string[];
 }
 
 function errorMessage(error: unknown): string {
@@ -162,10 +161,10 @@ async function stageApprovedFiles(
   return stagedByCapability;
 }
 
-async function revertCommittedCapabilities(
+async function revertTouchedCapabilities(
   ctx: Context,
   pluginById: Map<string, AgemonPlugin>,
-  appliedCapabilityOrder: string[],
+  touchedCapabilityOrder: string[],
   ledgerActionIdsBeforeRun: ReadonlySet<string>,
 ): Promise<{ reverted: string[]; manualCleanup: string[] }> {
   const newEntriesByCapability = new Map<string, LedgerEntry[]>();
@@ -183,7 +182,7 @@ async function revertCommittedCapabilities(
 
   const manualCleanup: string[] = [];
   const reverted: string[] = [];
-  for (const capabilityId of [...appliedCapabilityOrder].reverse()) {
+  for (const capabilityId of [...touchedCapabilityOrder].reverse()) {
     const plugin = pluginById.get(capabilityId);
     const newEntries = newEntriesByCapability.get(capabilityId) ?? [];
     if (!plugin?.revert || newEntries.length === 0) {
@@ -238,7 +237,7 @@ async function assertPlanIsFresh(
   operations: ProposedOperation[],
 ): Promise<void> {
   for (const operation of fileTargetingOperations(operations)) {
-    const currentContents = await readFileIfExists(
+    const currentContents = await readRegularFileIfExists(
       join(ctx.cwd, operation.targetPath),
     );
     const actualFingerprint =
@@ -257,33 +256,87 @@ async function captureRollbackSnapshots(
 ): Promise<FileRollbackSnapshot[]> {
   const snapshots: FileRollbackSnapshot[] = [];
   for (const operation of fileTargetingOperations(operations)) {
-    const previousContents = await readFileIfExists(
+    const previousContents = await readRegularFileIfExists(
       join(ctx.cwd, operation.targetPath),
     );
-    snapshots.push({ targetPath: operation.targetPath, previousContents });
-    if (previousContents !== null) {
-      await writeImmutableBackup(
-        ctx.cwd,
-        operation.resourceId,
-        previousContents,
-      );
-    }
+    const backup =
+      previousContents === null
+        ? null
+        : await writeImmutableBackup(
+            ctx.cwd,
+            operation.resourceId,
+            previousContents,
+          );
+    snapshots.push({
+      targetPath: operation.targetPath,
+      previousContents,
+      backup,
+    });
   }
   return snapshots;
+}
+
+function describeFailedRestore(
+  snapshot: FileRollbackSnapshot,
+  error: unknown,
+): string {
+  if (snapshot.previousContents === null) {
+    return `${snapshot.targetPath}: could not remove it (${errorMessage(error)})`;
+  }
+  const failure = `${snapshot.targetPath}: could not restore its pre-apply contents (${errorMessage(error)})`;
+  if (
+    snapshot.backup?.checksum === fingerprintContent(snapshot.previousContents)
+  ) {
+    return `${failure}; they are in ${snapshot.backup.path}`;
+  }
+  return `${failure}; no exact copy on disk (the backup at ${snapshot.backup?.path} is from an earlier run)`;
+}
+
+async function restoreSnapshot(
+  ctx: Context,
+  snapshot: FileRollbackSnapshot,
+): Promise<string> {
+  const absolutePath = join(ctx.cwd, snapshot.targetPath);
+  if (snapshot.previousContents === null) {
+    await rm(absolutePath, { force: true });
+    return `removed ${snapshot.targetPath}`;
+  }
+  await writeFileAtomic(absolutePath, snapshot.previousContents);
+  return `restored ${snapshot.targetPath}`;
+}
+
+async function removeBackupCreatedByThisRun(
+  snapshot: FileRollbackSnapshot,
+): Promise<string | null> {
+  if (!snapshot.backup?.created) {
+    return null;
+  }
+  try {
+    await rm(snapshot.backup.path, { force: true });
+    return null;
+  } catch (error) {
+    return `${snapshot.backup.path}: could not remove the backup this apply created (${errorMessage(error)})`;
+  }
 }
 
 async function restoreRollbackSnapshots(
   ctx: Context,
   snapshots: FileRollbackSnapshot[],
-): Promise<void> {
+): Promise<SnapshotRestoreOutcome> {
+  const outcome: SnapshotRestoreOutcome = { restored: [], manualCleanup: [] };
   for (const snapshot of [...snapshots].reverse()) {
-    const absolutePath = join(ctx.cwd, snapshot.targetPath);
-    if (snapshot.previousContents === null) {
-      await rm(absolutePath, { force: true });
-    } else {
-      await writeFile(absolutePath, snapshot.previousContents, "utf8");
+    try {
+      outcome.restored.push(await restoreSnapshot(ctx, snapshot));
+    } catch (error) {
+      outcome.manualCleanup.push(describeFailedRestore(snapshot, error));
+      continue;
+    }
+    const backupCleanupFailure = await removeBackupCreatedByThisRun(snapshot);
+    if (backupCleanupFailure !== null) {
+      outcome.manualCleanup.push(backupCleanupFailure);
     }
   }
+  return outcome;
 }
 
 function groupApprovedByCapability(
@@ -372,10 +425,11 @@ export async function applyPlan(
   const progress = ctx.progress ?? SILENT_PROGRESS;
   const capabilityCount = approvedByCapability.size;
   const applied: ProposedOperation[] = [];
-  const appliedCapabilityOrder: string[] = [];
+  const touchedCapabilityOrder: string[] = [];
   progress.start("Applying capabilities", capabilityCount);
   try {
     for (const [capabilityId, operations] of approvedByCapability) {
+      touchedCapabilityOrder.push(capabilityId);
       const plugin = pluginById.get(capabilityId);
       if (!plugin) {
         throw new Error(
@@ -389,7 +443,6 @@ export async function applyPlan(
         stagedByCapability.get(capabilityId),
       );
       progress.advance(`Applied ${capabilityLabel(capabilityId)}`);
-      appliedCapabilityOrder.push(capabilityId);
       applied.push(...operations);
     }
     progress.stop(
@@ -399,30 +452,40 @@ export async function applyPlan(
     );
   } catch (error) {
     progress.stop();
-    await restoreRollbackSnapshots(ctx, rollbackSnapshots);
-    const { reverted, manualCleanup } = await revertCommittedCapabilities(
+    const snapshotOutcome = await restoreRollbackSnapshots(
+      ctx,
+      rollbackSnapshots,
+    );
+    const revertOutcome = await revertTouchedCapabilities(
       ctx,
       pluginById,
-      appliedCapabilityOrder,
+      touchedCapabilityOrder,
       ledgerActionIdsBeforeRun,
     );
-    await ctx.manifest.removeActionsAddedSince(ledgerActionIdsBeforeRun);
+    const manualCleanup = [
+      ...snapshotOutcome.manualCleanup,
+      ...revertOutcome.manualCleanup,
+    ];
+    try {
+      await ctx.manifest.removeActionsAddedSince(ledgerActionIdsBeforeRun);
+    } catch (ledgerError) {
+      manualCleanup.push(`ledger: ${errorMessage(ledgerError)}`);
+    }
     ctx.ui.fail(
       `apply rolled back — repo left as it started (${errorMessage(error)})`,
     );
     for (const detail of manualCleanup) {
       ctx.ui.fail(`manual cleanup needed: ${detail}`);
     }
-    throw new ApplyRollbackError({
-      message: errorMessage(error),
-      restored: rollbackSnapshots.map((snapshot) =>
-        snapshot.previousContents === null
-          ? `removed ${snapshot.targetPath}`
-          : `restored ${snapshot.targetPath}`,
-      ),
-      reverted,
-      manualCleanup,
-    });
+    throw new ApplyRollbackError(
+      {
+        message: errorMessage(error),
+        restored: snapshotOutcome.restored,
+        reverted: revertOutcome.reverted,
+        manualCleanup,
+      },
+      error,
+    );
   }
 
   return { applied };
