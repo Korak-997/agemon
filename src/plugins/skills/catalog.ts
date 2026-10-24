@@ -2,7 +2,7 @@ import { resolveVendoredSkillPath } from "./vendored-path.js";
 
 export interface SkillBundleEntry {
   id: string;
-  source: string;
+  readonly source: string;
   skillName: string;
   agent: string;
 }
@@ -11,7 +11,6 @@ export interface SkillGroup {
   id: string;
   label: string;
   description: string;
-  /** True only for the group installed unconditionally, with no prompt. */
   defaultSelected: boolean;
   skills: SkillBundleEntry[];
 }
@@ -19,7 +18,9 @@ export interface SkillGroup {
 function vendoredSkill(groupId: string, skillId: string): SkillBundleEntry {
   return {
     id: skillId,
-    source: resolveVendoredSkillPath(groupId, skillId),
+    get source() {
+      return resolveVendoredSkillPath(groupId, skillId);
+    },
     skillName: skillId,
     agent: "claude-code",
   };

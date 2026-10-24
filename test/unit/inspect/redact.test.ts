@@ -16,6 +16,18 @@ describe("isDenylistedPath", () => {
       ".netrc",
       ".git-credentials",
       ".claude/settings.local.json",
+      "id_ed25519",
+      ".ssh/id_ecdsa",
+      "certs/server.key",
+      "certs/client.p12",
+      "certs/client.pfx",
+      "certs/SERVER.KEY",
+      "config/SERVICE.PEM",
+      "ID_RSA",
+      ".pypirc",
+      ".aws/credentials",
+      "home/.aws/credentials",
+      ".docker/config.json",
     ]) {
       expect(isDenylistedPath(path), path).toBe(true);
     }
@@ -77,6 +89,19 @@ describe("redactJsonValue", () => {
       endpoint: "<redacted:url-credentials>",
       blob: "<redacted:high-entropy>",
     });
+  });
+
+  it("redacts array elements under a credential-shaped key", () => {
+    const { value, redactedPaths } = redactJsonValue({
+      tokens: ["first", "second"],
+      auth: [["nested"]],
+    });
+
+    expect(value).toEqual({
+      tokens: ["<redacted:credential-key>", "<redacted:credential-key>"],
+      auth: [["<redacted:credential-key>"]],
+    });
+    expect(redactedPaths).toEqual(["tokens[0]", "tokens[1]", "auth[0][0]"]);
   });
 
   it("leaves ordinary values untouched", () => {

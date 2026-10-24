@@ -1,7 +1,13 @@
 const DENYLISTED_FILE_PATTERNS: RegExp[] = [
   /(^|\/)\.env(\.[^/]*)?$/,
-  /\.pem$/,
-  /(^|\/)id_rsa/,
+  /\.pem$/i,
+  /(^|\/)id_(?:rsa|ed25519|ecdsa|dsa)/i,
+  /\.key$/i,
+  /\.p12$/i,
+  /\.pfx$/i,
+  /(^|\/)\.pypirc$/,
+  /(^|\/)\.aws\/credentials$/,
+  /(^|\/)\.docker\/config\.json$/,
   /(^|\/)\.npmrc$/,
   /(^|\/)\.netrc$/,
   /(^|\/)\.git-credentials$/,
@@ -100,7 +106,7 @@ export function redactJsonValue(input: unknown): JsonRedactionResult {
 
     if (Array.isArray(value)) {
       return value.map((entry, index) =>
-        walk(entry, `${path}[${index}]`, null),
+        walk(entry, `${path}[${index}]`, keyName),
       );
     }
 

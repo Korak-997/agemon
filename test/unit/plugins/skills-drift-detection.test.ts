@@ -16,11 +16,9 @@ vi.mock("@clack/prompts", () => ({
 }));
 
 import type { Context } from "../../../src/core/context.js";
+import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
-import {
-  resetFakeSubprocessState,
-  runSubprocess,
-} from "../../../src/core/subprocess-runner.js";
+import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
