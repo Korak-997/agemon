@@ -11,6 +11,7 @@ import {
   isInteractiveTerminal,
 } from "./prompt.js";
 import { styleUnifiedDiff } from "./text-diff.js";
+import { printable } from "./untrusted-text.js";
 
 export type ConsentGateId =
   | "workspace-isolation"
@@ -372,8 +373,11 @@ function printOperationPreviews(
     log.log(`--- ${operation.targetPath || operation.resourceId}`);
     log.log(
       operation.preview.kind === "diff"
-        ? styleUnifiedDiff(operation.preview.text, { color: true, context: 3 })
-        : operation.preview.text,
+        ? styleUnifiedDiff(printable(operation.preview.text), {
+            color: true,
+            context: 3,
+          })
+        : printable(operation.preview.text),
     );
   }
 }

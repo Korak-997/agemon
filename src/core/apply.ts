@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { IsolationStatus } from "../inspect/discover.js";
 import type {
@@ -8,16 +8,23 @@ import type {
 } from "../plugins/types.js";
 import { capabilityLabel } from "../ui/labels.js";
 import { SILENT_PROGRESS } from "../ui/progress.js";
-import { type WrittenBackup, writeImmutableBackup } from "./backups.js";
+import {
+  readFirstExistingBackup,
+  resolveImmutableBackupPath,
+} from "./backups.js";
 import type { Context } from "./context.js";
 import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
-import { fingerprintContent } from "./fingerprint.js";
+import { fingerprintContent, sha256Hex } from "./fingerprint.js";
 import { writeAgemonGitignoreEntry } from "./gitignore.js";
 import { type Plan, writePlan } from "./plan-store.js";
+import { resolveInsideRepo, resolveStateDirectory } from "./repo-paths.js";
 import type { LedgerEntry } from "./state-manifest.js";
 
-const FILE_TARGETING_ACTIONS: ReadonlySet<ProposedOperation["action"]> =
+export const FILE_TARGETING_ACTIONS: ReadonlySet<ProposedOperation["action"]> =
   new Set(["create", "replace", "merge-block", "merge-key", "adopt"]);
+
+const STAGED_FILE_NAME_LENGTH = 16;
+const STAGED_MANIFEST_FILE = "manifest.json";
 
 export interface ApplyPlanInput {
   plan: Plan;
@@ -50,8 +57,8 @@ export class ApplyRollbackError extends Error {
 
 interface FileRollbackSnapshot {
   targetPath: string;
+  resourceId: string;
   previousContents: string | null;
-  backup: WrittenBackup | null;
 }
 
 interface SnapshotRestoreOutcome {
@@ -63,8 +70,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function encodeStagedFileName(targetPath: string): string {
-  return encodeURIComponent(targetPath);
+function stagedFileName(targetPath: string): string {
+  return sha256Hex(targetPath).slice(0, STAGED_FILE_NAME_LENGTH);
 }
 
 function validateManagedMarkerBalance(staged: StagedFile): string | null {
@@ -122,8 +129,8 @@ async function stageApprovedFiles(
   approvedByCapability: Map<string, ProposedOperation[]>,
 ): Promise<Map<string, StagedFile[]>> {
   const stagedByCapability = new Map<string, StagedFile[]>();
-  const stagedRoot = join(ctx.cwd, ".agemon", "plans", planId, "staged");
-  let stagedRootCreated = false;
+  const stagedTargetsByFileName: Record<string, string> = {};
+  let stagedRoot: string | null = null;
 
   for (const [capabilityId, operations] of approvedByCapability) {
     const plugin = pluginById.get(capabilityId);
@@ -136,17 +143,16 @@ async function stageApprovedFiles(
       continue;
     }
 
-    if (!stagedRootCreated) {
-      await mkdir(stagedRoot, { recursive: true });
-      stagedRootCreated = true;
-    }
+    stagedRoot ??= await resolveStateDirectory(
+      ctx.cwd,
+      ["plans", planId, "staged"],
+      { create: true },
+    );
 
     for (const staged of stagedFiles) {
-      await writeFile(
-        join(stagedRoot, encodeStagedFileName(staged.targetPath)),
-        staged.contents,
-        "utf8",
-      );
+      const fileName = stagedFileName(staged.targetPath);
+      stagedTargetsByFileName[fileName] = staged.targetPath;
+      await writeFileAtomic(join(stagedRoot, fileName), staged.contents);
       const problem = validateStagedFile(staged);
       if (problem !== null) {
         throw new Error(
@@ -158,6 +164,12 @@ async function stageApprovedFiles(
     stagedByCapability.set(capabilityId, stagedFiles);
   }
 
+  if (stagedRoot !== null) {
+    await writeFileAtomic(
+      join(stagedRoot, STAGED_MANIFEST_FILE),
+      `${JSON.stringify(stagedTargetsByFileName, null, 2)}\n`,
+    );
+  }
   return stagedByCapability;
 }
 
@@ -238,7 +250,7 @@ async function assertPlanIsFresh(
 ): Promise<void> {
   for (const operation of fileTargetingOperations(operations)) {
     const currentContents = await readRegularFileIfExists(
-      join(ctx.cwd, operation.targetPath),
+      await resolveInsideRepo(ctx.cwd, operation.targetPath),
     );
     const actualFingerprint =
       currentContents === null ? null : fingerprintContent(currentContents);
@@ -257,66 +269,62 @@ async function captureRollbackSnapshots(
   const snapshots: FileRollbackSnapshot[] = [];
   for (const operation of fileTargetingOperations(operations)) {
     const previousContents = await readRegularFileIfExists(
-      join(ctx.cwd, operation.targetPath),
+      await resolveInsideRepo(ctx.cwd, operation.targetPath),
     );
-    const backup =
-      previousContents === null
-        ? null
-        : await writeImmutableBackup(
-            ctx.cwd,
-            operation.resourceId,
-            previousContents,
-          );
     snapshots.push({
       targetPath: operation.targetPath,
+      resourceId: operation.resourceId,
       previousContents,
-      backup,
     });
   }
   return snapshots;
 }
 
-function describeFailedRestore(
+async function findExactBackupCopy(
+  ctx: Context,
+  resourceId: string,
+  previousContents: string,
+): Promise<string | null> {
+  try {
+    const backup = await readFirstExistingBackup(ctx.cwd, [
+      resolveImmutableBackupPath(ctx.cwd, resourceId),
+    ]);
+    return backup?.contents === previousContents ? backup.path : null;
+  } catch {
+    return null;
+  }
+}
+
+async function describeFailedRestore(
+  ctx: Context,
   snapshot: FileRollbackSnapshot,
   error: unknown,
-): string {
+): Promise<string> {
   if (snapshot.previousContents === null) {
     return `${snapshot.targetPath}: could not remove it (${errorMessage(error)})`;
   }
   const failure = `${snapshot.targetPath}: could not restore its pre-apply contents (${errorMessage(error)})`;
-  if (
-    snapshot.backup?.checksum === fingerprintContent(snapshot.previousContents)
-  ) {
-    return `${failure}; they are in ${snapshot.backup.path}`;
-  }
-  return `${failure}; no exact copy on disk (the backup at ${snapshot.backup?.path} is from an earlier run)`;
+  const exactCopyPath = await findExactBackupCopy(
+    ctx,
+    snapshot.resourceId,
+    snapshot.previousContents,
+  );
+  return exactCopyPath === null
+    ? `${failure}; no exact copy on disk`
+    : `${failure}; they are in ${exactCopyPath} — copy it out before the next apply`;
 }
 
 async function restoreSnapshot(
   ctx: Context,
   snapshot: FileRollbackSnapshot,
 ): Promise<string> {
-  const absolutePath = join(ctx.cwd, snapshot.targetPath);
+  const absolutePath = await resolveInsideRepo(ctx.cwd, snapshot.targetPath);
   if (snapshot.previousContents === null) {
     await rm(absolutePath, { force: true });
     return `removed ${snapshot.targetPath}`;
   }
   await writeFileAtomic(absolutePath, snapshot.previousContents);
   return `restored ${snapshot.targetPath}`;
-}
-
-async function removeBackupCreatedByThisRun(
-  snapshot: FileRollbackSnapshot,
-): Promise<string | null> {
-  if (!snapshot.backup?.created) {
-    return null;
-  }
-  try {
-    await rm(snapshot.backup.path, { force: true });
-    return null;
-  } catch (error) {
-    return `${snapshot.backup.path}: could not remove the backup this apply created (${errorMessage(error)})`;
-  }
 }
 
 async function restoreRollbackSnapshots(
@@ -328,12 +336,9 @@ async function restoreRollbackSnapshots(
     try {
       outcome.restored.push(await restoreSnapshot(ctx, snapshot));
     } catch (error) {
-      outcome.manualCleanup.push(describeFailedRestore(snapshot, error));
-      continue;
-    }
-    const backupCleanupFailure = await removeBackupCreatedByThisRun(snapshot);
-    if (backupCleanupFailure !== null) {
-      outcome.manualCleanup.push(backupCleanupFailure);
+      outcome.manualCleanup.push(
+        await describeFailedRestore(ctx, snapshot, error),
+      );
     }
   }
   return outcome;
@@ -406,9 +411,9 @@ export async function applyPlan(
 
   ctx.manifest.setRecordingAgemonVersion(input.plan.agemonVersion);
 
+  await assertPlanIsFresh(ctx, input.plan.id, input.approved);
   await enforceWorkspaceIsolation(ctx, input);
   await writePlan(ctx.cwd, input.plan);
-  await assertPlanIsFresh(ctx, input.plan.id, input.approved);
 
   const stagedByCapability = await stageApprovedFiles(
     ctx,

@@ -1,5 +1,6 @@
 import type { Plan } from "../core/plan-store.js";
 import { styleUnifiedDiff } from "../core/text-diff.js";
+import { printable } from "../core/untrusted-text.js";
 import type {
   ProposedOperation,
   ProposedOperationAction,
@@ -56,13 +57,14 @@ function groupByCapability(
 }
 
 function renderPreview(operation: ProposedOperation): string {
+  const previewText = printable(operation.preview.text);
   if (operation.preview.kind === "diff") {
     return indent(
-      styleUnifiedDiff(operation.preview.text, { color: true, context: 3 }),
+      styleUnifiedDiff(previewText, { color: true, context: 3 }),
       7,
     );
   }
-  return indent(theme.dim(operation.preview.text), 7);
+  return indent(theme.dim(previewText), 7);
 }
 
 function renderOperation(operation: ProposedOperation): string {

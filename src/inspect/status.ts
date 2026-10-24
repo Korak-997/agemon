@@ -1,18 +1,20 @@
-import { join } from "node:path";
 import { detectAgents } from "../adapters/detect.js";
 import type { Context } from "../core/context.js";
-import { readFileIfExists } from "../core/files.js";
+import { RefusedFileError, readRegularFileIfExists } from "../core/files.js";
 import { fingerprintContent } from "../core/fingerprint.js";
+import { resolveInsideRepo } from "../core/repo-paths.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
+import { printable } from "../core/untrusted-text.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
 import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
 import { renderStatusReport } from "../ui/status-view.js";
 import { collectCapabilityStates } from "./capabilities.js";
 import { TEMPLATE_DRIFT_DETAIL, USER_DRIFT_DETAIL } from "./classify.js";
-import { discoverRepository } from "./discover.js";
+import { discoverRepository, ROOT_RULE_FILES } from "./discover.js";
 import { detectDuplication, type OverlapFinding } from "./duplication.js";
 
 const RULE_FILE_RESOURCE_PREFIX = "rule-file:";
+const MANAGED_RULE_FILE_TARGETS: ReadonlySet<string> = new Set(ROOT_RULE_FILES);
 
 export type ManagedResourceHealth =
   | "managed-current"
@@ -61,11 +63,35 @@ function isFileBackedRuleEntry(entry: LedgerEntry): entry is LedgerEntry & {
   );
 }
 
+type ManagedTargetRead =
+  | { contents: string | null; refused: false }
+  | { contents: null; refused: true };
+
+async function readManagedTarget(
+  ctx: Context,
+  target: string,
+): Promise<ManagedTargetRead> {
+  try {
+    return {
+      contents: await readRegularFileIfExists(
+        await resolveInsideRepo(ctx.cwd, target),
+      ),
+      refused: false,
+    };
+  } catch (error) {
+    if (!(error instanceof RefusedFileError)) {
+      throw error;
+    }
+    return { contents: null, refused: true };
+  }
+}
+
 export async function checkManagedResources(
   ctx: Context,
   plugins: AgemonPlugin[] = [],
 ): Promise<ManagedResourceStatus[]> {
   const seenResourceIds = new Set<string>();
+  const readsByTarget = new Map<string, Promise<ManagedTargetRead>>();
   const results: ManagedResourceStatus[] = [];
 
   for (const entry of ctx.manifest.getActions()) {
@@ -76,8 +102,35 @@ export async function checkManagedResources(
       continue;
     }
     seenResourceIds.add(entry.resourceId);
+    const displayTarget = printable(entry.target);
+    const reportDrift = (detail: string) =>
+      results.push({
+        resourceId: entry.resourceId,
+        target: displayTarget,
+        ownershipMode: entry.ownershipMode,
+        health: "managed-drifted",
+        detail,
+      });
 
-    const contents = await readFileIfExists(join(ctx.cwd, entry.target));
+    if (!MANAGED_RULE_FILE_TARGETS.has(entry.target)) {
+      reportDrift(
+        `ignoring ledger entry for ${displayTarget}: master-prompt does not manage that file`,
+      );
+      continue;
+    }
+
+    let pendingRead = readsByTarget.get(entry.target);
+    if (pendingRead === undefined) {
+      pendingRead = readManagedTarget(ctx, entry.target);
+      readsByTarget.set(entry.target, pendingRead);
+    }
+    const targetRead = await pendingRead;
+    if (targetRead.refused) {
+      reportDrift(USER_DRIFT_DETAIL);
+      continue;
+    }
+
+    const { contents } = targetRead;
     let health: ManagedResourceHealth;
     let detail: string | null = null;
     if (contents === null) {
@@ -106,7 +159,7 @@ export async function checkManagedResources(
 
     results.push({
       resourceId: entry.resourceId,
-      target: entry.target,
+      target: displayTarget,
       ownershipMode: entry.ownershipMode,
       health,
       detail,
@@ -127,12 +180,16 @@ export async function verifyManagedState(
       problems.push(
         `${managed.target} is recorded in the ledger but missing on disk`,
       );
-    } else if (managed.health === "managed-drifted") {
+    } else if (managed.detail === TEMPLATE_DRIFT_DETAIL) {
       problems.push(
-        managed.detail === TEMPLATE_DRIFT_DETAIL
-          ? `${managed.target} is behind agemon's current template; re-run to refresh`
-          : `${managed.target} no longer matches its ledger fingerprint`,
+        `${managed.target} is behind agemon's current template; re-run to refresh`,
       );
+    } else if (managed.detail === USER_DRIFT_DETAIL) {
+      problems.push(
+        `${managed.target} no longer matches its ledger fingerprint`,
+      );
+    } else if (managed.detail !== null) {
+      problems.push(managed.detail);
     }
   }
 

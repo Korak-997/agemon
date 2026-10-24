@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { readFileIfExists, writeFileAtomic } from "./files.js";
+import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
 
 const GITIGNORE_FILENAME = ".gitignore";
 const AGEMON_ENTRY = "/.agemon/";
@@ -21,7 +21,7 @@ export async function ensureGitignoreEntry(
 ): Promise<void> {
   const gitignorePath = join(cwd, GITIGNORE_FILENAME);
 
-  const contents = await readFileIfExists(gitignorePath);
+  const contents = await readRegularFileIfExists(gitignorePath);
 
   if (contents === null) {
     await writeFileAtomic(gitignorePath, `${entry}\n`);

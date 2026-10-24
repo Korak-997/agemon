@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -60,12 +60,6 @@ function createFakeServiceManager(
 }
 
 const DEFAULT_CRG_EXECUTABLE_PATH = "/home/dani/.local/bin/code-review-graph";
-
-/** Fakes the `git rev-parse --show-toplevel` call the daemon plugin makes to
- * name its unit, and the `which code-review-graph` call it makes to resolve
- * an absolute ExecStart path; anything else is unexpected in these tests.
- * `crgExecutablePath: undefined` here means "not resolvable" (a failed
- * `which`), not "use the default" — callers must pass it explicitly. */
 function createGitAwareRun(
   gitToplevel: string | undefined,
   crgExecutablePath: string | undefined,
@@ -84,9 +78,6 @@ function createGitAwareRun(
     throw new Error(`Unexpected command in test: ${command} ${args.join(" ")}`);
   };
 }
-
-/** `crgExecutablePath` is omitted to get the default resolvable path, or
- * `null` to simulate `which code-review-graph` failing to resolve. */
 async function createTestContext(options: {
   cwd: string;
   gitToplevel?: string;
@@ -123,7 +114,9 @@ async function createTestContext(options: {
 async function createSandboxDirectory(name: string): Promise<string> {
   const sandboxDirectory = await mkdtemp(join(tmpdir(), "agemon-daemon-test-"));
   createdTempDirectories.push(sandboxDirectory);
-  return join(sandboxDirectory, name);
+  const repoDirectory = join(sandboxDirectory, name);
+  await mkdir(repoDirectory);
+  return repoDirectory;
 }
 
 describe("daemon plugin unit naming", () => {
@@ -190,8 +183,6 @@ describe("daemon plugin unit naming", () => {
       "agemon-crg-daemon-repo-a.service",
       "agemon-crg-daemon-repo-b.service",
     ]);
-
-    // Registering repo-b must not have torn down repo-a's daemon.
     expect(await daemonPlugin.verify(repoAContext)).toEqual({
       ok: true,
       detail: "agemon-crg-daemon-repo-a.service active",

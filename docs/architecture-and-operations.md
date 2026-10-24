@@ -104,8 +104,14 @@ Current bundle (`src/plugins/cli-tool/catalog.ts`):
   - `GEMINI.md`
   - `.cursorrules`
   - `.windsurfrules`
-- Backs up pre-existing files into `.agemon/backups/master-prompt/`.
-- Restores backups on uninstall.
+- Backs up pre-existing files into `.agemon/backups/<resource>-<hash>.bak` (older installs:
+  `<resource>.bak`, or `master-prompt/<file>.bak` from 1.x).
+- On uninstall, restores a backup only when its checksum matches the recorded pre-install
+  fingerprint and the file is unchanged since agemon wrote it; otherwise removes just the
+  managed block, or keeps the file and saves the backup beside it as
+  `<file>.agemon-original`.
+- Never reads or writes a rule file through a symlink; such a file is planned as a
+  conflict.
 
 ## Orchestrator Behavior
 
@@ -143,6 +149,23 @@ Role:
 - Prevents removing user-preexisting dependencies/files.
 - Enables precise `nuke` behavior.
 - Keeps install/uninstall idempotent and auditable.
+
+### Untrusted state
+
+`.agemon/` can be committed, so its plans, ledger and backups are treated as attacker
+input:
+
+- Every `.agemon/` directory is resolved with `resolveStateDirectory`
+  (`src/core/repo-paths.ts`); a symlinked or non-directory component is refused.
+- Every path that comes from a plan or a ledger entry goes through `resolveInsideRepo`: no
+  absolute paths, no `..` escape, nothing inside `.git/` or `.agemon/`, and no symlinked
+  parent directory.
+- `readPlan` validates the plan id and every plan field; `reconcile` refuses a plan from
+  another agemon version, one naming an unknown capability, or one asking a capability for
+  a file action it never performs.
+- Plugins act only on their own ledger targets: master-prompt on its five rule files,
+  cli-tool on its bundle. Other entries are reported and dropped.
+- `readRegularFileIfExists` refuses symlinks and special files and caps reads at 8 MiB.
 
 ## UI/Output Layer
 

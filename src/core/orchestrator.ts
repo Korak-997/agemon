@@ -6,7 +6,11 @@ import { CORE_CAPABILITY_IDS } from "../plugins/index.js";
 import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
 import { renderPlan } from "../ui/plan-view.js";
 import { renderRunSummary } from "../ui/summary.js";
-import { ApplyRollbackError, applyPlan } from "./apply.js";
+import {
+  ApplyRollbackError,
+  applyPlan,
+  FILE_TARGETING_ACTIONS,
+} from "./apply.js";
 import { resolveConfigPath, writeConfig } from "./config.js";
 import type { ConflictResolution } from "./consent.js";
 import { buildConsentGates } from "./consent.js";
@@ -18,6 +22,7 @@ import {
   writePlan,
 } from "./plan-store.js";
 import { isInteractiveTerminal } from "./prompt.js";
+import { printable } from "./untrusted-text.js";
 
 type ConflictDecisionMap = Record<string, "keep" | "replace" | "skip">;
 
@@ -206,6 +211,43 @@ async function previewAndStop(ctx: Context, plan: Plan): Promise<void> {
   }
 }
 
+function assertPlanIsCompatible(
+  plan: Plan,
+  allPlugins: AgemonPlugin[],
+  agemonVersion: string,
+): void {
+  if (plan.agemonVersion !== agemonVersion) {
+    throw new Error(
+      `Plan ${plan.id} was made by agemon ${printable(plan.agemonVersion)}; this is agemon ${agemonVersion}. Re-run 'agemon plan'.`,
+    );
+  }
+
+  const pluginById = new Map(allPlugins.map((plugin) => [plugin.id, plugin]));
+  const unknownCapabilityIds = [
+    ...new Set(
+      plan.operations
+        .map((operation) => operation.capabilityId)
+        .filter((capabilityId) => !pluginById.has(capabilityId)),
+    ),
+  ];
+  if (unknownCapabilityIds.length > 0) {
+    throw new Error(
+      `Plan ${plan.id} references unknown capabilities: ${unknownCapabilityIds.map(printable).join(", ")}.`,
+    );
+  }
+
+  const fileActionForNonWriter = plan.operations.find(
+    (operation) =>
+      FILE_TARGETING_ACTIONS.has(operation.action) &&
+      !pluginById.get(operation.capabilityId)?.materialize,
+  );
+  if (fileActionForNonWriter) {
+    throw new Error(
+      `Plan ${plan.id} asks ${fileActionForNonWriter.capabilityId} to ${fileActionForNonWriter.action} ${printable(fileActionForNonWriter.targetPath)}, which it never does.`,
+    );
+  }
+}
+
 export async function reconcile(
   ctx: Context,
   allPlugins: AgemonPlugin[],
@@ -219,6 +261,10 @@ export async function reconcile(
   if (plugins.length === 0) {
     ctx.ui.info("Nothing to do — no capabilities selected.");
     return;
+  }
+
+  if (options.plan) {
+    assertPlanIsCompatible(options.plan, allPlugins, options.agemonVersion);
   }
 
   const plan =

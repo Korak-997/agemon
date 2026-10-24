@@ -138,4 +138,29 @@ describe("cli-tool plugin", () => {
       .filter((action) => action.plugin === "cli-tool");
     expect(actionsAfterUninstall).toEqual([]);
   });
+
+  it("never uninstalls a package whose ledger target is not a bundle tool", async () => {
+    const context = await createTestContext();
+    const commands: string[][] = [];
+    context.run = async (command, args) => {
+      commands.push([command, ...args]);
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const messages: string[] = [];
+    context.ui = { ...context.ui, info: (message) => messages.push(message) };
+    await context.manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-cli-tool",
+      target: "typescript",
+      preExisting: false,
+    });
+
+    await cliToolPlugin.uninstall(context);
+
+    expect(commands).toEqual([]);
+    expect(messages).toContain(
+      "ignoring ledger entry for typescript: cli-tool does not manage that package",
+    );
+    expect(context.manifest.getActions()).toEqual([]);
+  });
 });

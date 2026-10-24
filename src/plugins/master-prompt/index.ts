@@ -5,19 +5,22 @@ import {
   immutableBackupCandidates,
   readFirstExistingBackup,
   replaceStaleBackup,
-  sanitizeForFileName,
+  resolveV1RuleFileBackupPath,
   writeImmutableBackup,
 } from "../../core/backups.js";
 import type { Context } from "../../core/context.js";
 import {
-  NotARegularFileError,
+  MAX_READ_FILE_LABEL,
+  RefusedFileError,
   readRegularFileIfExists,
   writeFileAtomic,
   writeNewFileWithFallback,
 } from "../../core/files.js";
 import { fingerprintContent, fingerprintJson } from "../../core/fingerprint.js";
+import { resolveInsideRepo } from "../../core/repo-paths.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { renderUnifiedDiff } from "../../core/text-diff.js";
+import { printable } from "../../core/untrusted-text.js";
 import { detectDuplication } from "../../inspect/duplication.js";
 import {
   removeManagedMarkdownBlock,
@@ -29,6 +32,7 @@ import type {
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
+  ProposedOperationAction,
   StagedFile,
 } from "../types.js";
 
@@ -39,10 +43,10 @@ const AGENT_RULES_START_MARKER = `<!-- agemon:start:${AGENT_RULES_BLOCK_ID} -->`
 
 const ACTION_TYPE_MANAGED_RULE_FILE = "managed-rule-file";
 const ACTION_TYPE_ADOPTED_POINTER = "adopted-pointer";
-const V1_BACKUP_DIRECTORY = ".agemon/backups/master-prompt";
 const PRESERVED_ORIGINAL_SUFFIX = ".agemon-original";
 
 const POINTER_MAX_NORMALIZED_LENGTH = 800;
+const UNREADABLE_RULE_FILE = Symbol("unreadable rule file");
 
 interface PointerTarget {
   target: string;
@@ -55,6 +59,14 @@ const POINTER_TARGETS: PointerTarget[] = [
   { target: ".cursorrules", toolName: "Cursor" },
   { target: ".windsurfrules", toolName: "Windsurf" },
 ];
+
+const ALLOWED_ACTIONS_BY_KIND: Record<
+  ClassifiedRuleFile["kind"],
+  readonly ProposedOperationAction[]
+> = {
+  agents: ["create", "merge-block", "conflict"],
+  pointer: ["create", "replace", "adopt", "conflict"],
+};
 
 type RuleFileState =
   | "not-a-regular-file"
@@ -133,6 +145,27 @@ function pointerContentsFor(target: string): string {
     throw new Error(`No pointer definition for '${target}'.`);
   }
   return buildPointerFileContents(pointer.toolName, pointer.target);
+}
+
+function ruleFileKind(target: string): ClassifiedRuleFile["kind"] | null {
+  if (target === AGENTS_FILE) {
+    return "agents";
+  }
+  return POINTER_TARGETS.some((pointer) => pointer.target === target)
+    ? "pointer"
+    : null;
+}
+
+function assertMasterPromptPerforms(operation: ProposedOperation): void {
+  const kind = ruleFileKind(operation.targetPath);
+  if (
+    kind === null ||
+    !ALLOWED_ACTIONS_BY_KIND[kind].includes(operation.action)
+  ) {
+    throw new Error(
+      `Plan operation ${printable(operation.id)} is not something master-prompt does (${operation.action} ${printable(operation.targetPath)}).`,
+    );
+  }
 }
 
 function ruleFileResourceId(target: string): string {
@@ -248,7 +281,7 @@ async function classifyRuleFile(
   try {
     contents = await readRegularFileIfExists(join(ctx.cwd, target));
   } catch (error) {
-    if (error instanceof NotARegularFileError) {
+    if (error instanceof RefusedFileError) {
       return {
         target,
         kind,
@@ -301,11 +334,12 @@ async function materializeMasterPrompt(
 ): Promise<StagedFile[]> {
   const staged: StagedFile[] = [];
   for (const operation of operations) {
+    assertMasterPromptPerforms(operation);
     if (!operationWritesRuleFile(operation)) {
       continue;
     }
     const contentsBefore = await readRegularFileIfExists(
-      join(ctx.cwd, operation.targetPath),
+      await resolveInsideRepo(ctx.cwd, operation.targetPath),
     );
     staged.push({
       targetPath: operation.targetPath,
@@ -339,7 +373,7 @@ function operationForClassifiedFile(
       expectedFingerprint,
       preview: {
         kind: "note",
-        text: `${entry.target} is a symlink or special file; agemon leaves it alone.`,
+        text: `${entry.target} is a symlink, special file or larger than ${MAX_READ_FILE_LABEL}; agemon leaves it alone.`,
       },
     });
   }
@@ -468,7 +502,7 @@ async function applyRuleFileOperation(
   operation: ProposedOperation,
   stagedContents: string | undefined,
 ): Promise<void> {
-  const targetPath = join(ctx.cwd, operation.targetPath);
+  const targetPath = await resolveInsideRepo(ctx.cwd, operation.targetPath);
   const contentsBefore = await readRegularFileIfExists(targetPath);
 
   if (operation.action === "adopt") {
@@ -523,6 +557,7 @@ async function applyMasterPrompt(
     (staged ?? []).map((file) => [file.targetPath, file.contents] as const),
   );
   for (const operation of operations) {
+    assertMasterPromptPerforms(operation);
     if (operation.action === "conflict") {
       continue;
     }
@@ -575,26 +610,43 @@ async function verifyMasterPrompt(
   }
 
   const problems: string[] = [];
+  const readForVerification = async (
+    target: string,
+  ): Promise<string | null | typeof UNREADABLE_RULE_FILE> => {
+    try {
+      return await readRegularFileIfExists(join(ctx.cwd, target));
+    } catch (error) {
+      if (!(error instanceof RefusedFileError)) {
+        throw error;
+      }
+      problems.push(error.message);
+      return UNREADABLE_RULE_FILE;
+    }
+  };
 
-  const agentsContents = await readRegularFileIfExists(
-    join(ctx.cwd, AGENTS_FILE),
-  );
-  if (agentsContents === null || agentsFileNeedsBlock(agentsContents)) {
-    problems.push(`${AGENTS_FILE} is missing agemon's managed block`);
-  } else if (agentsBlockIsDrifted(agentsContents)) {
-    problems.push(`${AGENTS_FILE} managed block drifted from its template`);
+  const agentsContents = await readForVerification(AGENTS_FILE);
+  if (agentsContents !== UNREADABLE_RULE_FILE) {
+    if (agentsContents === null || agentsFileNeedsBlock(agentsContents)) {
+      problems.push(`${AGENTS_FILE} is missing agemon's managed block`);
+    } else if (agentsBlockIsDrifted(agentsContents)) {
+      problems.push(`${AGENTS_FILE} managed block drifted from its template`);
+    }
   }
 
   const managedRuleFiles: { path: string; contents: string | null }[] = [
-    { path: AGENTS_FILE, contents: agentsContents },
+    {
+      path: AGENTS_FILE,
+      contents: agentsContents === UNREADABLE_RULE_FILE ? null : agentsContents,
+    },
   ];
   for (const pointer of POINTER_TARGETS) {
     if (!hasActionForTarget(ctx, pointer.target)) {
       continue;
     }
-    const contents = await readRegularFileIfExists(
-      join(ctx.cwd, pointer.target),
-    );
+    const contents = await readForVerification(pointer.target);
+    if (contents === UNREADABLE_RULE_FILE) {
+      continue;
+    }
     if (contents === null) {
       problems.push(`${pointer.target} is recorded in the ledger but missing`);
       continue;
@@ -625,9 +677,19 @@ async function revertMasterPrompt(
   ctx: Context,
   entries: LedgerEntry[],
 ): Promise<void> {
-  const managedActions = entries.filter(
+  const ruleFileActions = entries.filter(
     (entry) => entry.type === ACTION_TYPE_MANAGED_RULE_FILE,
   );
+  const managedActions = ruleFileActions.filter(
+    (entry) => ruleFileKind(entry.target) !== null,
+  );
+  for (const unmanaged of ruleFileActions) {
+    if (ruleFileKind(unmanaged.target) === null) {
+      ctx.ui.info(
+        `ignoring ledger entry for ${printable(unmanaged.target)}: master-prompt does not manage that file`,
+      );
+    }
+  }
 
   if (ctx.dryRun) {
     if (managedActions.length === 0) {
@@ -646,7 +708,7 @@ async function revertMasterPrompt(
       await revertManagedRuleFile(ctx, action);
     } catch (error) {
       failures.push(
-        `${action.target}: ${error instanceof Error ? error.message : String(error)}`,
+        `${printable(action.target)}: ${printable(error instanceof Error ? error.message : String(error))}`,
       );
     }
   }
@@ -662,12 +724,26 @@ function backupCandidatesFor(ctx: Context, action: LedgerEntry): string[] {
       ruleFileResourceId(action.target),
       action.backup?.path ?? null,
     ),
-    join(
-      ctx.cwd,
-      V1_BACKUP_DIRECTORY,
-      `${sanitizeForFileName(action.target)}.bak`,
-    ),
+    resolveV1RuleFileBackupPath(ctx.cwd, action.target),
   ];
+}
+
+async function findPreferredBackup(
+  ctx: Context,
+  action: LedgerEntry,
+): Promise<FoundBackup | null> {
+  let firstExisting: FoundBackup | null = null;
+  for (const candidatePath of backupCandidatesFor(ctx, action)) {
+    const candidate = await readFirstExistingBackup(ctx.cwd, [candidatePath]);
+    if (candidate === null) {
+      continue;
+    }
+    if (fingerprintContent(candidate.contents) === action.fingerprintBefore) {
+      return candidate;
+    }
+    firstExisting ??= candidate;
+  }
+  return firstExisting;
 }
 
 function exciseAgentRulesBlock(contents: string): string | null {
@@ -679,9 +755,26 @@ function exciseAgentRulesBlock(contents: string): string | null {
   }
 }
 
-async function removeBackup(backup: FoundBackup | null): Promise<void> {
-  if (backup !== null) {
-    await rm(backup.path, { force: true });
+async function removeRedundantBackups(
+  ctx: Context,
+  action: LedgerEntry,
+  resolvedBackup: FoundBackup | null,
+  contentsKeptElsewhere: string | null,
+): Promise<void> {
+  for (const candidatePath of backupCandidatesFor(ctx, action)) {
+    const candidate = await readFirstExistingBackup(ctx.cwd, [candidatePath]);
+    if (candidate === null) {
+      continue;
+    }
+    const isVerifiedResolvedBackup =
+      candidate.path === resolvedBackup?.path &&
+      fingerprintContent(candidate.contents) === action.fingerprintBefore;
+    if (
+      isVerifiedResolvedBackup ||
+      candidate.contents === contentsKeptElsewhere
+    ) {
+      await rm(candidate.path, { force: true });
+    }
   }
 }
 
@@ -689,13 +782,11 @@ async function revertManagedRuleFile(
   ctx: Context,
   action: LedgerEntry,
 ): Promise<void> {
-  const targetPath = join(ctx.cwd, action.target);
+  const targetPath = await resolveInsideRepo(ctx.cwd, action.target);
   const currentContents = await readRegularFileIfExists(targetPath);
   const currentFingerprint =
     currentContents === null ? null : fingerprintContent(currentContents);
-  const backup = await readFirstExistingBackup(
-    backupCandidatesFor(ctx, action),
-  );
+  const backup = await findPreferredBackup(ctx, action);
   const backupIsVerified =
     backup !== null &&
     fingerprintContent(backup.contents) === action.fingerprintBefore;
@@ -704,7 +795,7 @@ async function revertManagedRuleFile(
     currentFingerprint !== null &&
     currentFingerprint === action.fingerprintBefore
   ) {
-    await removeBackup(backup);
+    await removeRedundantBackups(ctx, action, backup, currentContents);
     return;
   }
 
@@ -716,7 +807,7 @@ async function revertManagedRuleFile(
   }
   if (untouchedSinceAgemonWrote && backupIsVerified) {
     await writeFileAtomic(targetPath, backup.contents);
-    await removeBackup(backup);
+    await removeRedundantBackups(ctx, action, backup, backup.contents);
     return;
   }
 
@@ -728,7 +819,7 @@ async function revertManagedRuleFile(
     } else {
       await writeFileAtomic(targetPath, excised);
     }
-    await removeBackup(backup);
+    await removeRedundantBackups(ctx, action, backup, null);
     return;
   }
 
@@ -767,10 +858,10 @@ async function preserveChangedRuleFile(
     return;
   }
   const savedPath = await saveBackupBesideTarget(
-    join(ctx.cwd, action.target),
+    await resolveInsideRepo(ctx.cwd, action.target),
     backup,
   );
-  await removeBackup(backup);
+  await removeRedundantBackups(ctx, action, backup, backup.contents);
   ctx.ui.info(
     `manual cleanup needed: ${what}; earlier contents saved as ${relative(ctx.cwd, savedPath)}`,
   );

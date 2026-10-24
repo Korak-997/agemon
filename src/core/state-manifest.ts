@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { writeFileAtomic, writeNewFileWithFallback } from "./files.js";
+import {
+  readRegularFileIfExists,
+  writeFileAtomic,
+  writeNewFileWithFallback,
+} from "./files.js";
+import { resolveStateDirectory } from "./repo-paths.js";
+import { printable } from "./untrusted-text.js";
 
 const MANIFEST_RELATIVE_PATH = ".agemon/state.json";
 const LEDGER_VERSION = 3;
@@ -114,8 +120,64 @@ function isLegacyManifestAction(value: unknown): value is LegacyManifestAction {
   );
 }
 
+const OWNERSHIP_MODES: readonly OwnershipMode[] = [
+  "created",
+  "recorded-key",
+  "delimited-block",
+];
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function isOptionalOwnershipMode(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    OWNERSHIP_MODES.includes(value as OwnershipMode)
+  );
+}
+
+function isOptionalRecord(
+  value: unknown,
+  isValidRecord: (record: Record<string, unknown>) => boolean,
+): boolean {
+  if (value === undefined || value === null) {
+    return true;
+  }
+  return (
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    isValidRecord(value as Record<string, unknown>)
+  );
+}
+
 function isLedgerEntry(value: unknown): value is LedgerEntry {
-  return isLegacyManifestAction(value);
+  if (!isLegacyManifestAction(value)) {
+    return false;
+  }
+  const typed = value as unknown as Record<string, unknown>;
+  return (
+    isOptionalString(typed.planId) &&
+    isOptionalString(typed.resourceId) &&
+    isOptionalOwnershipMode(typed.ownershipMode) &&
+    isOptionalString(typed.agemonVersion) &&
+    isOptionalString(typed.fingerprintBefore) &&
+    isOptionalString(typed.fingerprintAfter) &&
+    isOptionalString(typed.desiredRevision) &&
+    isOptionalRecord(
+      typed.validation,
+      (validation) =>
+        typeof validation.ok === "boolean" &&
+        (validation.detail === undefined ||
+          typeof validation.detail === "string"),
+    ) &&
+    isOptionalRecord(
+      typed.backup,
+      (backup) =>
+        typeof backup.path === "string" && typeof backup.checksum === "string",
+    )
+  );
 }
 
 function normalizeLedgerEntry(value: LedgerEntry): LedgerEntry {
@@ -133,8 +195,17 @@ function normalizeLedgerEntry(value: LedgerEntry): LedgerEntry {
     fingerprintBefore: value.fingerprintBefore ?? null,
     fingerprintAfter: value.fingerprintAfter ?? null,
     desiredRevision: value.desiredRevision ?? null,
-    validation: value.validation ?? null,
-    backup: value.backup ?? null,
+    validation: value.validation
+      ? {
+          ok: value.validation.ok,
+          ...(value.validation.detail === undefined
+            ? {}
+            : { detail: value.validation.detail }),
+        }
+      : null,
+    backup: value.backup
+      ? { path: value.backup.path, checksum: value.backup.checksum }
+      : null,
   };
 }
 
@@ -233,7 +304,7 @@ function parseManifestJson(rawContents: string): unknown {
     return JSON.parse(rawContents);
   } catch (error) {
     throw new Error(
-      `${MANIFEST_RELATIVE_PATH} is not valid JSON (${(error as Error).message}). ` +
+      `${MANIFEST_RELATIVE_PATH} is not valid JSON (${printable((error as Error).message)}). ` +
         "It was left untouched. Fix it, or move it aside to start with an empty " +
         "ledger (agemon then forgets what it installed in this repo).",
     );
@@ -244,6 +315,7 @@ export class StateManifest {
   private recordingAgemonVersion: string | null = null;
 
   private constructor(
+    private readonly repoRoot: string,
     private readonly manifestPath: string,
     private state: StateManifestData,
   ) {}
@@ -256,23 +328,28 @@ export class StateManifest {
     const manifestPath = join(cwd, MANIFEST_RELATIVE_PATH);
     const now = new Date().toISOString();
 
-    let rawContents: string;
+    const stateDirectory = await resolveStateDirectory(cwd, [], {
+      create: false,
+    });
+    let rawContents: string | null;
     try {
-      rawContents = await readFile(manifestPath, "utf8");
+      rawContents =
+        stateDirectory === null
+          ? null
+          : await readRegularFileIfExists(manifestPath);
     } catch (error) {
-      const errno = error as NodeJS.ErrnoException;
-      if (errno.code === "ENOENT") {
-        return new StateManifest(manifestPath, createDefaultState(now));
-      }
       throw new Error(
         `Unable to load manifest at ${manifestPath}: ${String(error)}`,
       );
+    }
+    if (rawContents === null) {
+      return new StateManifest(cwd, manifestPath, createDefaultState(now));
     }
 
     const { state, migratedFromVersion } = interpretManifestContents(
       parseManifestJson(rawContents),
     );
-    const manifest = new StateManifest(manifestPath, state);
+    const manifest = new StateManifest(cwd, manifestPath, state);
 
     if (migratedFromVersion !== null) {
       await manifest.persistPreMigrationBackup(
@@ -385,7 +462,7 @@ export class StateManifest {
     fromVersion: number,
   ): Promise<void> {
     const manifestDir = dirname(this.manifestPath);
-    await mkdir(manifestDir, { recursive: true });
+    await resolveStateDirectory(this.repoRoot, [], { create: true });
     await writeNewFileWithFallback(
       join(manifestDir, `state.v${fromVersion}.bak`),
       join(manifestDir, `state.v${fromVersion}.${Date.now()}.bak`),
@@ -398,7 +475,7 @@ export class StateManifest {
     this.state.updatedAt = now;
 
     const payload = `${JSON.stringify(this.state, null, 2)}\n`;
-    await mkdir(dirname(this.manifestPath), { recursive: true });
+    await resolveStateDirectory(this.repoRoot, [], { create: true });
     await writeFileAtomic(this.manifestPath, payload);
   }
 }

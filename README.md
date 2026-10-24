@@ -150,8 +150,11 @@ agemon
   nothing against an attacker who can replace both.
 - **Attestations** (opt-in, above): prove the tarball was built by this repository's release
   workflow, so they catch a tampered or swapped asset.
-- **Neither** helps if the release workflow itself or the maintainer's account is
-  compromised.
+- **Neither** helps if the release workflow itself, a dependency it builds with, or the
+  maintainer's account is compromised: a tarball built from a poisoned dependency is still
+  correctly checksummed and attested.
+- The CLI's self-update checks `install.sh` against `SHA256SUMS`; it verifies attestations
+  only if you export `AGEMON_VERIFY_ATTESTATION=1`, which the installer it runs honours.
 
 ### Uninstalling agemon itself
 
@@ -254,15 +257,31 @@ its usual health/drift output.
 
 - `nuke` removes only agemon-managed artifacts tracked in `.agemon/state.json`.
 - Pre-existing tools/files are detected and preserved.
-- Master-prompt file edits are backed up in `.agemon/backups/master-prompt/` and restored
-	on uninstall.
+- Master-prompt file edits are backed up in `.agemon/backups/` and restored on uninstall,
+	but only when the backup provably matches the file agemon found (checksum check).
+- A managed file you edited after agemon wrote it is never overwritten or deleted: agemon
+	removes only its own block, or leaves the file as is, saves the earlier contents beside it
+	as `<file>.agemon-original`, and prints `manual cleanup needed: …`.
+- agemon writes files atomically, keeps their permissions, and refuses to write through a
+	symlink, a special file or a read-only file. A symlinked rule file (for example
+	`CLAUDE.md -> AGENTS.md`) is reported as a conflict and left alone.
+- A failed apply rolls back every file it touched; anything it could not restore is listed,
+	with the path of an exact backup copy when one exists.
+- `.agemon/` content (plans, the ledger, backups) is treated as untrusted, because it may
+	have been committed by someone else. `agemon apply --plan <id>` accepts only a valid
+	16-character plan id, refuses a malformed plan or one made by another agemon version, and
+	never touches a path outside the repository, inside `.git/`, or under a symlinked
+	directory. agemon refuses to use `.agemon/` (or any directory in it) when it is a symlink.
+- `inspect`, `status` and `plan` never follow a symlinked or special file and never read a
+	file larger than 8 MiB; such a file is reported as present but unread.
 
 ## Managed Outputs
 
 By default, agemon may manage these paths:
 
 - `.agemon/state.json`
-- `.agemon/backups/master-prompt/*.bak`
+- `.agemon/backups/*.bak`
+- `<rule file>.agemon-original` (only when an edited file is preserved on uninstall)
 - `AGENTS.md`
 - `CLAUDE.md`
 - `GEMINI.md`

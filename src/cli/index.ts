@@ -11,8 +11,9 @@ import {
   reconcile,
   uninstallPlugins,
 } from "../core/orchestrator.js";
-import { readPlan, writePlan } from "../core/plan-store.js";
+import { assertValidPlanId, readPlan, writePlan } from "../core/plan-store.js";
 import { isInteractiveTerminal } from "../core/prompt.js";
+import { printable } from "../core/untrusted-text.js";
 import { checkForUpdate } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { runStatus } from "../inspect/status.js";
@@ -103,9 +104,14 @@ const ERROR_HINTS: { match: RegExp; hint: string }[] = [
     match: /not git-ignored|isolation/i,
     hint: "add /.agemon/ to .gitignore, or re-run interactively or with --yes.",
   },
+  {
+    match: /\.gitignore: it is not a regular file/,
+    hint: "replace the .gitignore symlink with a regular file, or pass --allow-unignored-state.",
+  },
 ];
 
-function renderCliError(message: string): string {
+function renderCliError(untrustedMessage: string): string {
+  const message = printable(untrustedMessage);
   const hint = ERROR_HINTS.find((entry) => entry.match.test(message))?.hint;
   const lines = [
     `${symbol("fail")} ${message}`,
@@ -237,6 +243,9 @@ async function runInstall(options: CliOptions): Promise<void> {
 }
 
 async function runApply(options: CliOptions): Promise<void> {
+  if (options.plan) {
+    assertValidPlanId(options.plan);
+  }
   const updateOutcome = await checkForUpdate({
     currentVersion: VERSION,
     dryRun: false,

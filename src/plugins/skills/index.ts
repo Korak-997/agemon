@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Context } from "../../core/context.js";
 import { ensureGitignoreEntry } from "../../core/gitignore.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
+import { printable } from "../../core/untrusted-text.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -505,7 +506,7 @@ async function revertSkills(
       return;
     }
     for (const action of managedActions) {
-      ctx.ui.info(`Would remove skill ${action.target}`);
+      ctx.ui.info(`Would remove skill ${printable(action.target)}`);
     }
     if (shouldRemoveManagedSkillsLock) {
       ctx.ui.info(`Would remove ${SKILLS_LOCK_FILE}`);
@@ -528,7 +529,8 @@ async function revertSkills(
     );
     if (removeResult.code !== 0) {
       throw new Error(
-        removeResult.stderr || `npx skills remove failed for ${action.target}`,
+        removeResult.stderr ||
+          `npx skills remove failed for ${printable(action.target)}`,
       );
     }
   }

@@ -7,8 +7,12 @@ import type {
   ConsentGate,
 } from "../../../src/core/consent.js";
 import type { Context } from "../../../src/core/context.js";
-import { reconcile } from "../../../src/core/orchestrator.js";
-import type { Plan } from "../../../src/core/plan-store.js";
+import { buildPlan, reconcile } from "../../../src/core/orchestrator.js";
+import {
+  type Plan,
+  readPlan,
+  writePlan,
+} from "../../../src/core/plan-store.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
@@ -109,6 +113,9 @@ function createFakeCapability(options: FakeCapabilityOptions): {
             preview: { kind: "note", text: `create ${options.targetPath}` },
           }),
         ];
+      },
+      async materialize() {
+        return [];
       },
       async install(ctx) {
         installCalls += 1;
@@ -291,7 +298,7 @@ describe("reconcile", () => {
     });
 
     const suppliedPlan: Plan = {
-      id: "supplied-plan",
+      id: "0123456789abcdef",
       agemonVersion: "9.9.9",
       desiredStateHash: "hash",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -316,7 +323,114 @@ describe("reconcile", () => {
     expect(planCallCount()).toBe(0);
     expect(installCallCount()).toBe(1);
     await expect(
-      readFile(join(context.cwd, ".agemon/plans/supplied-plan.json"), "utf8"),
-    ).resolves.toContain("supplied-plan");
+      readFile(
+        join(context.cwd, ".agemon/plans/0123456789abcdef.json"),
+        "utf8",
+      ),
+    ).resolves.toContain("0123456789abcdef");
+  });
+
+  describe("with a supplied plan", () => {
+    function suppliedPlan(overrides: Partial<Plan> = {}): Plan {
+      return {
+        id: "0123456789abcdef",
+        agemonVersion: "9.9.9",
+        desiredStateHash: "hash",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        operations: [
+          describeOperation({
+            capabilityId: "alpha",
+            resourceId: "file:alpha.txt",
+            targetPath: "alpha.txt",
+            action: "create",
+            riskClass: "writes-config",
+            requiresConsent: true,
+            preview: { kind: "note", text: "create alpha.txt" },
+          }),
+        ],
+        ...overrides,
+      };
+    }
+
+    async function expectRefusedBeforeAnyWrite(
+      plan: Plan,
+      plugins: AgemonPlugin[],
+      message: RegExp,
+    ): Promise<void> {
+      let consentAsked = false;
+      const context = await createTestContext((gates) => {
+        consentAsked = true;
+        return approveEveryGate(gates);
+      });
+
+      await expect(
+        reconcile(context, plugins, { ...RECONCILE_OPTIONS, plan }),
+      ).rejects.toThrow(message);
+
+      expect(consentAsked).toBe(false);
+      await expect(readdir(context.cwd)).resolves.toEqual([".gitignore"]);
+    }
+
+    it("applies a stored plan whose preview carries CRLF from the user's AGENTS.md", async () => {
+      const context = await createTestContext(approveEveryGate);
+      await writeFile(
+        join(context.cwd, "AGENTS.md"),
+        "# Our rules\r\n- be kind\r\n",
+        "utf8",
+      );
+      const built = await buildPlan(context, [masterPromptPlugin], {
+        agemonVersion: "9.9.9",
+      });
+      await writePlan(context.cwd, built);
+
+      await reconcile(context, [masterPromptPlugin], {
+        ...RECONCILE_OPTIONS,
+        plan: await readPlan(context.cwd, built.id),
+      });
+
+      await expect(
+        readFile(join(context.cwd, "AGENTS.md"), "utf8"),
+      ).resolves.toContain("<!-- agemon:start:agent-rules -->");
+    });
+
+    it("refuses a plan made by another agemon version", async () => {
+      const { plugin } = createFakeCapability({
+        id: "alpha",
+        targetPath: "alpha.txt",
+      });
+
+      await expectRefusedBeforeAnyWrite(
+        suppliedPlan({ agemonVersion: "1.0.0" }),
+        [plugin],
+        /Plan 0123456789abcdef was made by agemon 1\.0\.0; this is agemon 9\.9\.9\. Re-run 'agemon plan'\./,
+      );
+    });
+
+    it("refuses a plan that references an unknown capability", async () => {
+      const { plugin } = createFakeCapability({
+        id: "beta",
+        targetPath: "beta.txt",
+      });
+
+      await expectRefusedBeforeAnyWrite(
+        suppliedPlan(),
+        [plugin],
+        /Plan 0123456789abcdef references unknown capabilities: alpha\./,
+      );
+    });
+
+    it("refuses a file action for a capability that never writes files", async () => {
+      const { plugin } = createFakeCapability({
+        id: "alpha",
+        targetPath: "alpha.txt",
+      });
+      const { materialize: _unused, ...packageOnlyPlugin } = plugin;
+
+      await expectRefusedBeforeAnyWrite(
+        suppliedPlan(),
+        [packageOnlyPlugin],
+        /Plan 0123456789abcdef asks alpha to create alpha\.txt, which it never does\./,
+      );
+    });
   });
 });

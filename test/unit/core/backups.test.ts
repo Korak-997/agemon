@@ -40,7 +40,6 @@ describe("writeImmutableBackup", () => {
       resolveImmutableBackupPath(cwd, "rule-file:AGENTS.md"),
     );
     expect(backup.checksum).toBe(sha256Hex("original\n"));
-    expect(backup.created).toBe(true);
     await expect(readFile(backup.path, "utf8")).resolves.toBe("original\n");
   });
 
@@ -55,7 +54,6 @@ describe("writeImmutableBackup", () => {
     );
 
     expect(secondBackup.checksum).toBe(sha256Hex("original\n"));
-    expect(secondBackup.created).toBe(false);
     await expect(readFile(secondBackup.path, "utf8")).resolves.toBe(
       "original\n",
     );
@@ -86,7 +84,6 @@ describe("backup file names", () => {
       "current\n",
     );
 
-    expect(backup.created).toBe(true);
     await expect(readFile(backup.path, "utf8")).resolves.toBe("current\n");
   });
 });
@@ -109,22 +106,34 @@ describe("replaceStaleBackup", () => {
       "rule-file:CLAUDE.md",
       "current\n",
     );
-    expect(kept.created).toBe(false);
+    expect(kept).toEqual(replaced);
   });
 });
 
 describe("immutableBackupCandidates", () => {
-  it("lists a confined recorded path first, then the new and legacy names", async () => {
+  it("lists the new and legacy names, and keeps a recorded path only when it is one of them", async () => {
     const cwd = await createSandbox();
-    const recorded = join(cwd, ".agemon/backups/recorded.bak");
+    const legacy = join(cwd, ".agemon/backups/rule-file_AGENTS.md.bak");
 
     expect(
-      immutableBackupCandidates(cwd, "rule-file:AGENTS.md", recorded),
-    ).toEqual([
-      recorded,
-      resolveImmutableBackupPath(cwd, "rule-file:AGENTS.md"),
-      join(cwd, ".agemon/backups/rule-file_AGENTS.md.bak"),
-    ]);
+      immutableBackupCandidates(cwd, "rule-file:AGENTS.md", legacy),
+    ).toEqual([legacy, resolveImmutableBackupPath(cwd, "rule-file:AGENTS.md")]);
+  });
+
+  it("ignores a recorded path that names another resource's backup", async () => {
+    const cwd = await createSandbox();
+    const otherResourceBackup = resolveImmutableBackupPath(
+      cwd,
+      "rule-file:CLAUDE.md",
+    );
+
+    expect(
+      immutableBackupCandidates(
+        cwd,
+        "rule-file:AGENTS.md",
+        otherResourceBackup,
+      ),
+    ).not.toContain(otherResourceBackup);
   });
 
   it("ignores a recorded path that is not directly in .agemon/backups", async () => {

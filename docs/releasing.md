@@ -93,10 +93,17 @@ It runs in three jobs:
    `CHANGELOG.md` entry from the commit subjects since the last tag, then commits and tags
    (`npm run deploy -- … --no-push`). It hands the commit and tag to the next job as a
    `git bundle`.
-2. **`push`** (`contents: write`) runs only `git`, in a fresh repository. It refuses the
-   bundle unless it holds exactly one commit on top of the current `master`, the tag points
-   at that commit, and the commit changes nothing but `package.json`, `package-lock.json`
-   and `CHANGELOG.md`. Then it pushes both.
+2. **`push`** (`contents: write`) runs only `git` and `jq`, in a fresh repository. It
+   refuses the bundle unless all of these hold:
+   - it is a valid bundle with exactly one single-parent commit on top of the current
+     `master`, and the tag points at that commit;
+   - the commit modifies only `package.json`, `package-lock.json` and `CHANGELOG.md`, all
+     still regular files;
+   - the two manifests are identical apart from their `version` fields, and the version
+     matches the tag;
+   - `CHANGELOG.md` only gains lines.
+
+   Then it pushes the commit and the tag.
 3. **`publish`** chains into the `Release` workflow to build, verify, and publish the
    GitHub Release.
 

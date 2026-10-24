@@ -5,7 +5,6 @@ import {
   type FileHandle,
   lstat,
   open,
-  readFile,
   rename,
   rm,
 } from "node:fs/promises";
@@ -13,12 +12,20 @@ import {
 const OWNER_ONLY_MODE = 0o600;
 const DEFAULT_NEW_FILE_MODE = 0o666;
 const PERMISSION_BITS = 0o777;
+const READ_CHUNK_BYTES = 64 * 1024;
+
+const BYTES_PER_MEBIBYTE = 1024 * 1024;
+
+export const MAX_READ_FILE_BYTES = 8 * BYTES_PER_MEBIBYTE;
+export const MAX_READ_FILE_LABEL = `${MAX_READ_FILE_BYTES / BYTES_PER_MEBIBYTE} MiB`;
 
 function isMissingFileError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-export class NotARegularFileError extends Error {
+export class RefusedFileError extends Error {}
+
+export class NotARegularFileError extends RefusedFileError {
   constructor(action: "read" | "write", filePath: string) {
     super(
       `Refusing to ${action} ${filePath}: it is not a regular file (agemon does not ${action} through symlinks or special files).`,
@@ -27,16 +34,40 @@ export class NotARegularFileError extends Error {
   }
 }
 
-export async function readFileIfExists(
+export class FileTooLargeError extends RefusedFileError {
+  constructor(filePath: string) {
+    super(
+      `Refusing to read ${filePath}: it is larger than ${MAX_READ_FILE_LABEL}.`,
+    );
+    this.name = "FileTooLargeError";
+  }
+}
+
+export class RefusedPathError extends RefusedFileError {
+  constructor(message: string) {
+    super(message);
+    this.name = "RefusedPathError";
+  }
+}
+
+async function readAtMostCap(
+  handle: FileHandle,
   filePath: string,
-): Promise<string | null> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return null;
+): Promise<string> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for (;;) {
+    const { bytesRead, buffer } = await handle.read({
+      buffer: Buffer.alloc(READ_CHUNK_BYTES),
+    });
+    if (bytesRead === 0) {
+      return Buffer.concat(chunks, totalBytes).toString("utf8");
     }
-    throw error;
+    totalBytes += bytesRead;
+    if (totalBytes > MAX_READ_FILE_BYTES) {
+      throw new FileTooLargeError(filePath);
+    }
+    chunks.push(buffer.subarray(0, bytesRead));
   }
 }
 
@@ -63,7 +94,7 @@ export async function readRegularFileIfExists(
     if (!(await handle.stat()).isFile()) {
       throw new NotARegularFileError("read", filePath);
     }
-    return await handle.readFile("utf8");
+    return await readAtMostCap(handle, filePath);
   } finally {
     await handle.close();
   }

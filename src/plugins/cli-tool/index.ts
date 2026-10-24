@@ -1,5 +1,6 @@
 import type { Context } from "../../core/context.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
+import { printable } from "../../core/untrusted-text.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -226,33 +227,37 @@ async function revertCliTools(
   ctx: Context,
   entries: LedgerEntry[],
 ): Promise<void> {
-  const managedActions = entries.filter(
+  const installedByAgemon = entries.filter(
     (action) =>
       action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
       action.preExisting === false,
   );
+  const managedPackageNames: string[] = [];
+  for (const action of installedByAgemon) {
+    const bundleEntry = CLI_TOOL_BUNDLE.find(
+      (entry) => entry.id === action.target,
+    );
+    if (bundleEntry) {
+      managedPackageNames.push(bundleEntry.packageName);
+    } else {
+      ctx.ui.info(
+        `ignoring ledger entry for ${printable(action.target)}: cli-tool does not manage that package`,
+      );
+    }
+  }
 
   if (ctx.dryRun) {
-    if (managedActions.length === 0) {
+    if (managedPackageNames.length === 0) {
       ctx.ui.info("Would keep pre-existing CLI tools untouched");
       return;
     }
-    for (const action of managedActions) {
-      const bundleEntry = CLI_TOOL_BUNDLE.find(
-        (entry) => entry.id === action.target,
-      );
-      const packageName = bundleEntry?.packageName ?? action.target;
+    for (const packageName of managedPackageNames) {
       ctx.ui.info(`Would uninstall global npm package ${packageName}`);
     }
     return;
   }
 
-  for (const action of managedActions) {
-    const bundleEntry = CLI_TOOL_BUNDLE.find(
-      (entry) => entry.id === action.target,
-    );
-    const packageName = bundleEntry?.packageName ?? action.target;
-
+  for (const packageName of managedPackageNames) {
     const uninstallResult = await ctx.run(
       "npm",
       ["uninstall", "--global", packageName],

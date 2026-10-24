@@ -3,7 +3,6 @@ import * as fsPromises from "node:fs/promises";
 import {
   chmod,
   lstat,
-  mkdir,
   mkdtemp,
   readdir,
   readFile,
@@ -17,7 +16,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  readFileIfExists,
+  FileTooLargeError,
+  MAX_READ_FILE_BYTES,
+  NotARegularFileError,
+  RefusedFileError,
   readRegularFileIfExists,
   writeFileAtomic,
 } from "../../../src/core/files.js";
@@ -50,36 +52,6 @@ function currentUmask(): number {
   );
 }
 
-describe("readFileIfExists", () => {
-  it("returns null only when the file does not exist", async () => {
-    const cwd = await createSandbox();
-    await expect(readFileIfExists(join(cwd, "missing.md"))).resolves.toBe(null);
-  });
-
-  it.skipIf(runningAsRoot)(
-    "throws EACCES for an unreadable file instead of treating it as absent",
-    async () => {
-      const cwd = await createSandbox();
-      const unreadable = join(cwd, "CLAUDE.md");
-      await writeFile(unreadable, "secret\n", "utf8");
-      await chmod(unreadable, 0o000);
-
-      await expect(readFileIfExists(unreadable)).rejects.toMatchObject({
-        code: "EACCES",
-      });
-    },
-  );
-
-  it("throws EISDIR for a directory", async () => {
-    const cwd = await createSandbox();
-    await mkdir(join(cwd, "AGENTS.md"));
-
-    await expect(
-      readFileIfExists(join(cwd, "AGENTS.md")),
-    ).rejects.toMatchObject({ code: "EISDIR" });
-  });
-});
-
 describe("readRegularFileIfExists", () => {
   it("reads a regular file and returns null for a missing one", async () => {
     const cwd = await createSandbox();
@@ -101,6 +73,48 @@ describe("readRegularFileIfExists", () => {
     await expect(
       readRegularFileIfExists(join(cwd, "CLAUDE.md")),
     ).rejects.toThrow(/not a regular file/);
+  });
+
+  it.skipIf(runningAsRoot)(
+    "throws EACCES for an unreadable file instead of treating it as absent",
+    async () => {
+      const cwd = await createSandbox();
+      const unreadable = join(cwd, "CLAUDE.md");
+      await writeFile(unreadable, "secret\n", "utf8");
+      await chmod(unreadable, 0o000);
+
+      await expect(readRegularFileIfExists(unreadable)).rejects.toMatchObject({
+        code: "EACCES",
+      });
+    },
+  );
+
+  it("refuses a file larger than the read cap", async () => {
+    const cwd = await createSandbox();
+    await writeFile(
+      join(cwd, "AGENTS.md"),
+      "x".repeat(MAX_READ_FILE_BYTES + 1),
+    );
+
+    await expect(
+      readRegularFileIfExists(join(cwd, "AGENTS.md")),
+    ).rejects.toThrow(FileTooLargeError);
+  });
+
+  it("reads a file of exactly the read cap", async () => {
+    const cwd = await createSandbox();
+    await writeFile(join(cwd, "AGENTS.md"), "x".repeat(MAX_READ_FILE_BYTES));
+
+    await expect(
+      readRegularFileIfExists(join(cwd, "AGENTS.md")),
+    ).resolves.toHaveLength(MAX_READ_FILE_BYTES);
+  });
+
+  it("groups every refusal under RefusedFileError", () => {
+    expect(new NotARegularFileError("read", "/x")).toBeInstanceOf(
+      RefusedFileError,
+    );
+    expect(new FileTooLargeError("/x")).toBeInstanceOf(RefusedFileError);
   });
 
   it("refuses a FIFO without blocking", async () => {

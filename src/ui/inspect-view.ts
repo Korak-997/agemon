@@ -1,4 +1,5 @@
 import type { AgentDetectionRow } from "../adapters/types.js";
+import { printable } from "../core/untrusted-text.js";
 import type { ClassifiedResource, ResourceState } from "../inspect/classify.js";
 import { describeOverlap } from "../inspect/duplication.js";
 import type { InspectReport } from "../inspect/index.js";
@@ -40,7 +41,7 @@ const CAPABILITY_STATE_TONE: Record<
 
 function resourceRow(resource: ClassifiedResource): string[] {
   return [
-    resource.path,
+    printable(resource.path),
     badge(resource.state, RESOURCE_STATE_TONE[resource.state]),
     resource.detail ?? "",
   ];

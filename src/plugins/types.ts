@@ -11,22 +11,29 @@ export interface PluginVerificationResult {
   detail?: string;
 }
 
-export type RiskClass =
-  | "inert"
-  | "writes-config"
-  | "executes"
-  | "credential-adjacent";
+export const RISK_CLASSES = [
+  "inert",
+  "writes-config",
+  "executes",
+  "credential-adjacent",
+] as const;
+
+export type RiskClass = (typeof RISK_CLASSES)[number];
+
+export const PROPOSED_OPERATION_ACTIONS = [
+  "create",
+  "merge-block",
+  "merge-key",
+  "adopt",
+  "replace",
+  "install-package",
+  "register-service",
+  "conflict",
+  "skip",
+] as const;
 
 export type ProposedOperationAction =
-  | "create"
-  | "merge-block"
-  | "merge-key"
-  | "adopt"
-  | "replace"
-  | "install-package"
-  | "register-service"
-  | "conflict"
-  | "skip";
+  (typeof PROPOSED_OPERATION_ACTIONS)[number];
 
 export interface ProposedOperation {
   id: string;

@@ -4,6 +4,7 @@ import {
   readdir,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -302,6 +303,68 @@ describe("StateManifest ledger v3", () => {
     );
     await expect(readFile(manifestPath, "utf8")).resolves.toBe(
       '{ "version": 3, ',
+    );
+  });
+
+  it("refuses a ledger entry whose backup path is not a string", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, {
+      ...V2_MANIFEST,
+      version: 3,
+      actions: [
+        { ...V2_MANIFEST.actions[0], backup: { path: 42, checksum: "x" } },
+      ],
+    });
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(/invalid schema/);
+  });
+
+  it("drops unknown keys from ledger entries and their nested objects", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, {
+      ...V2_MANIFEST,
+      version: 3,
+      actions: [
+        {
+          ...V2_MANIFEST.actions[0],
+          injected: "dropped",
+          backup: { path: "/r/.agemon/backups/a.bak", checksum: "c", x: 1 },
+          validation: { ok: true, extra: "dropped" },
+        },
+      ],
+    });
+
+    const [entry] = (await StateManifest.load(cwd)).getActions();
+
+    expect(entry).not.toHaveProperty("injected");
+    expect(entry.backup).toEqual({
+      path: "/r/.agemon/backups/a.bak",
+      checksum: "c",
+    });
+    expect(entry.validation).toEqual({ ok: true });
+  });
+
+  it("never echoes raw control characters from an unparsable state.json", async () => {
+    const cwd = await createSandbox();
+    await mkdir(join(cwd, ".agemon"), { recursive: true });
+    await writeFile(join(cwd, ".agemon", "state.json"), "\u001b[2J", "utf8");
+
+    const error = await StateManifest.load(cwd).catch(
+      (caught: Error) => caught,
+    );
+
+    expect((error as Error).message).toMatch(/is not valid JSON/);
+    expect((error as Error).message).not.toContain("\u001b");
+  });
+
+  it("refuses a symlinked .agemon directory", async () => {
+    const cwd = await createSandbox();
+    const outside = await createSandbox();
+    await writeManifest(outside, V2_MANIFEST);
+    await symlink(join(outside, ".agemon"), join(cwd, ".agemon"));
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(
+      /symlink or not a directory.*replace it with a real directory/,
     );
   });
 });

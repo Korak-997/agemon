@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -80,5 +80,27 @@ describe("agemon.toml config", () => {
     await writeFile(join(cwd, "agemon.toml"), "capabilities = 3\n", "utf8");
 
     await expect(loadConfig(cwd)).rejects.toThrow(/capabilities/);
+  });
+
+  it("refuses an agemon.toml that links to /dev/zero instead of hanging", async () => {
+    const cwd = await createSandbox();
+    await symlink("/dev/zero", join(cwd, "agemon.toml"));
+
+    await expect(loadConfig(cwd)).rejects.toThrow(
+      /agemon\.toml is invalid: .*not a regular file/,
+    );
+  }, 2000);
+
+  it("prints control characters in a conflict decision key safely", async () => {
+    const cwd = await createSandbox();
+    await writeFile(
+      join(cwd, "agemon.toml"),
+      'capabilities = ["crg"]\n\n[conflict_decisions]\n"rule\\u001b[2J" = "overwrite"\n',
+      "utf8",
+    );
+
+    await expect(loadConfig(cwd)).rejects.toThrow(
+      /'conflict_decisions\.rule\?\[2J' must be/,
+    );
   });
 });

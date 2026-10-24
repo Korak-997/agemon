@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Context } from "../core/context.js";
-import { readFileIfExists } from "../core/files.js";
+import { RefusedFileError, readRegularFileIfExists } from "../core/files.js";
+import { resolveInsideRepo, resolveRepoDirectory } from "../core/repo-paths.js";
+import { printable } from "../core/untrusted-text.js";
 import { isDenylistedPath } from "./redact.js";
 
 const execFileAsync = promisify(execFile);
@@ -69,18 +70,53 @@ export interface DiscoveryResult {
   isolation: WorkspaceIsolation;
 }
 
+type RepoFileRead =
+  | { exists: false; contents: null; refusal: null }
+  | { exists: true; contents: string; refusal: null }
+  | { exists: true; contents: null; refusal: string };
+
+async function readRepoFile(
+  cwd: string,
+  relativePath: string,
+): Promise<RepoFileRead> {
+  try {
+    const contents = await readRegularFileIfExists(
+      await resolveInsideRepo(cwd, relativePath),
+    );
+    return contents === null
+      ? { exists: false, contents: null, refusal: null }
+      : { exists: true, contents, refusal: null };
+  } catch (error) {
+    if (error instanceof RefusedFileError) {
+      return { exists: true, contents: null, refusal: error.message };
+    }
+    throw error;
+  }
+}
+
 async function discoverStructuredConfig(
   cwd: string,
   relativePath: string,
 ): Promise<StructuredConfigResource> {
-  const contents = await readFileIfExists(join(cwd, relativePath));
-  if (contents === null) {
+  const { exists, contents, refusal } = await readRepoFile(cwd, relativePath);
+  if (!exists) {
     return {
       kind: "structured-config",
       path: relativePath,
       exists: false,
       parsed: null,
       parseError: null,
+      denylisted: false,
+    };
+  }
+
+  if (refusal !== null) {
+    return {
+      kind: "structured-config",
+      path: relativePath,
+      exists: true,
+      parsed: null,
+      parseError: `not read: ${printable(refusal)}`,
       denylisted: false,
     };
   }
@@ -122,7 +158,14 @@ async function discoverScopedCopilotInstructions(
 ): Promise<CopilotInstructionResource[]> {
   let entries: string[];
   try {
-    entries = await readdir(join(cwd, SCOPED_COPILOT_INSTRUCTION_DIRECTORY));
+    const instructionDirectory = await resolveRepoDirectory(
+      cwd,
+      SCOPED_COPILOT_INSTRUCTION_DIRECTORY,
+    );
+    if (instructionDirectory === null) {
+      return [];
+    }
+    entries = await readdir(instructionDirectory);
   } catch {
     return [];
   }
@@ -142,9 +185,7 @@ async function discoverCopilotInstructions(
 ): Promise<CopilotInstructionResource[]> {
   const instructions: CopilotInstructionResource[] = [];
 
-  if (
-    (await readFileIfExists(join(cwd, ROOT_COPILOT_INSTRUCTION_FILE))) !== null
-  ) {
+  if ((await readRepoFile(cwd, ROOT_COPILOT_INSTRUCTION_FILE)).exists) {
     instructions.push({
       kind: "copilot-instruction",
       path: ROOT_COPILOT_INSTRUCTION_FILE,
@@ -157,9 +198,12 @@ async function discoverCopilotInstructions(
 }
 
 async function readIsolationStatus(cwd: string): Promise<IsolationStatus> {
-  const contents = await readFileIfExists(join(cwd, ".gitignore"));
-  if (contents === null) {
+  const { exists, contents } = await readRepoFile(cwd, ".gitignore");
+  if (!exists) {
     return "no-gitignore-file";
+  }
+  if (contents === null) {
+    return "not-ignored";
   }
 
   const normalizedEntries = contents
@@ -189,11 +233,11 @@ export async function discoverRepository(
 ): Promise<DiscoveryResult> {
   const ruleFiles = await Promise.all(
     ROOT_RULE_FILES.map(async (relativePath) => {
-      const contents = await readFileIfExists(join(ctx.cwd, relativePath));
+      const { exists, contents } = await readRepoFile(ctx.cwd, relativePath);
       return {
         kind: "rule-file" as const,
         path: relativePath,
-        exists: contents !== null,
+        exists,
         contents,
       };
     }),

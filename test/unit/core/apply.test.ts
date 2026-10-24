@@ -1,22 +1,32 @@
 import {
   chmod,
+  mkdir,
   mkdtemp,
   readdir,
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplyRollbackError, applyPlan } from "../../../src/core/apply.js";
+import {
+  resolveImmutableBackupPath,
+  writeImmutableBackup,
+} from "../../../src/core/backups.js";
 import type { Context } from "../../../src/core/context.js";
 import * as files from "../../../src/core/files.js";
-import { fingerprintContent } from "../../../src/core/fingerprint.js";
+import {
+  fingerprintContent,
+  sha256Hex,
+} from "../../../src/core/fingerprint.js";
 import type { Plan } from "../../../src/core/plan-store.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import type {
   AgemonPlugin,
   ProposedOperation,
@@ -95,9 +105,11 @@ function operation(
   };
 }
 
+const PLAN_ID = "0123456789abcdef";
+
 function planWith(operations: ProposedOperation[]): Plan {
   return {
-    id: "plan-under-test",
+    id: PLAN_ID,
     agemonVersion: "9.9.9",
     desiredStateHash: "hash",
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -325,7 +337,13 @@ describe("applyPlan transaction protocol", () => {
 
     await expect(
       readFile(
-        join(ctx.cwd, ".agemon/plans/plan-under-test/staged/AGENTS.md"),
+        join(
+          ctx.cwd,
+          ".agemon/plans",
+          PLAN_ID,
+          "staged",
+          sha256Hex("AGENTS.md").slice(0, 16),
+        ),
         "utf8",
       ),
     ).resolves.toBe(stagedContents);
@@ -695,7 +713,7 @@ describe("applyPlan rollback hardening", () => {
     expect(rollbackError.rollback.restored).toEqual(["restored b.txt"]);
     expect(rollbackError.rollback.manualCleanup).toEqual([
       expect.stringMatching(
-        /^a\.txt: could not restore its pre-apply contents \(disk went away\); they are in .*\.agemon\/backups\/.+\.bak$/,
+        /^a\.txt: could not restore its pre-apply contents \(disk went away\); no exact copy on disk$/,
       ),
     ]);
     expect(writerReverted).toBe(true);
@@ -776,7 +794,46 @@ describe("applyPlan rollback hardening", () => {
     );
   });
 
-  it("removes the backups a rolled-back apply created", async () => {
+  it("names an exact backup copy when a restore fails and one exists", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
+    await writeImmutableBackup(ctx.cwd, "file:a.txt", "original a\n");
+    const op = replaceOperation("writer", "a.txt", "original a\n");
+    const writer = createFilePlugin({
+      id: "writer",
+      onInstall: async (installCtx) => {
+        await writeFile(join(installCtx.cwd, "a.txt"), "new a\n", "utf8");
+        throw new Error("writer exploded");
+      },
+    });
+    const actualFiles = await vi.importActual<
+      typeof import("../../../src/core/files.js")
+    >("../../../src/core/files.js");
+    vi.mocked(files.writeFileAtomic).mockImplementation(
+      async (path, contents) => {
+        if (path === join(ctx.cwd, "a.txt")) {
+          throw new Error("disk went away");
+        }
+        await actualFiles.writeFileAtomic(path, contents);
+      },
+    );
+
+    const rollbackError = await captureRollbackError(
+      applyPlan(ctx, [writer], {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    );
+
+    expect(rollbackError.rollback.manualCleanup).toEqual([
+      `a.txt: could not restore its pre-apply contents (disk went away); they are in ${resolveImmutableBackupPath(ctx.cwd, "file:a.txt")} — copy it out before the next apply`,
+    ]);
+  });
+
+  it("captures snapshots without writing any backup", async () => {
     const ctx = await createSandboxContext();
     await writeFile(join(ctx.cwd, "a.txt"), "original a\n", "utf8");
     const op = replaceOperation("cap", "a.txt", "original a\n");
@@ -794,8 +851,223 @@ describe("applyPlan rollback hardening", () => {
     await expect(readFile(join(ctx.cwd, "a.txt"), "utf8")).resolves.toBe(
       "original a\n",
     );
-    await expect(readdir(join(ctx.cwd, ".agemon/backups"))).resolves.toEqual(
-      [],
+    await expect(
+      readdir(join(ctx.cwd, ".agemon/backups")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+const IGNORED_ISOLATION = {
+  workspaceIsolationApproved: null,
+  isolationStatus: "ignored",
+  allowUnignoredState: false,
+} as const;
+
+async function createOutsideDirectory(): Promise<string> {
+  const outside = await mkdtemp(join(tmpdir(), "agemon-apply-outside-"));
+  createdTempDirectories.push(outside);
+  await writeFile(join(outside, "x"), "outside\n", "utf8");
+  return outside;
+}
+
+async function expectOutsideUnchanged(outside: string): Promise<void> {
+  await expect(readdir(outside)).resolves.toEqual(["x"]);
+  await expect(readFile(join(outside, "x"), "utf8")).resolves.toBe("outside\n");
+}
+
+describe("applyPlan path confinement", () => {
+  it.each(["../outside", "/etc/x", ".git/config"])(
+    "refuses the plan target %j before running any capability",
+    async (targetPath) => {
+      const ctx = await createSandboxContext();
+      const op = operation({ action: "replace", targetPath });
+      let installRan = false;
+
+      await expect(
+        applyPlan(
+          ctx,
+          [
+            createFilePlugin({
+              id: "cap",
+              onInstall: async () => {
+                installRan = true;
+              },
+            }),
+          ],
+          { plan: planWith([op]), approved: [op], ...IGNORED_ISOLATION },
+        ),
+      ).rejects.toThrow(/agemon only touches files inside the repository/);
+
+      expect(installRan).toBe(false);
+    },
+  );
+
+  it("refuses a target under a symlinked parent and writes nothing outside", async () => {
+    const ctx = await createSandboxContext();
+    const outside = await createOutsideDirectory();
+    await symlink(outside, join(ctx.cwd, "docs"));
+    const op = operation({ action: "create", targetPath: "docs/new.md" });
+
+    await expect(
+      applyPlan(
+        ctx,
+        [
+          createFilePlugin({
+            id: "cap",
+            onInstall: async (installCtx) => {
+              await writeFile(join(installCtx.cwd, "docs/new.md"), "x", "utf8");
+            },
+          }),
+        ],
+        { plan: planWith([op]), approved: [op], ...IGNORED_ISOLATION },
+      ),
+    ).rejects.toThrow(/symlink or not a directory/);
+
+    await expectOutsideUnchanged(outside);
+  });
+
+  it.each([
+    ["a non-file action", "skip"],
+    ["a file action", "create"],
+  ] as const)(
+    "refuses a forged master-prompt operation with %s on src/index.ts",
+    async (_label, action) => {
+      const ctx = await createSandboxContext();
+      await mkdir(join(ctx.cwd, "src"));
+      await writeFile(join(ctx.cwd, "src/index.ts"), "user code\n", "utf8");
+      const op = operation({
+        id: `master-prompt:rule-file:src/index.ts:${action}`,
+        capabilityId: "master-prompt",
+        resourceId: "rule-file:src/index.ts",
+        targetPath: "src/index.ts",
+        action,
+        expectedFingerprint: fingerprintContent("user code\n"),
+      });
+
+      await expect(
+        applyPlan(ctx, [masterPromptPlugin], {
+          plan: planWith([op]),
+          approved: [op],
+          ...IGNORED_ISOLATION,
+        }),
+      ).rejects.toThrow(/is not something master-prompt does/);
+
+      await expect(
+        readFile(join(ctx.cwd, "src/index.ts"), "utf8"),
+      ).resolves.toBe("user code\n");
+      expect(ctx.manifest.getActions()).toEqual([]);
+    },
+  );
+
+  it("detects a stale plan before .gitignore or the plan file is written", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, "res.txt"), "user content\n", "utf8");
+    const op = operation({
+      action: "replace",
+      expectedFingerprint: fingerprintContent("planned content\n"),
+    });
+
+    await expect(
+      applyPlan(
+        ctx,
+        [createFilePlugin({ id: "cap", onInstall: async () => {} })],
+        {
+          plan: planWith([op]),
+          approved: [op],
+          workspaceIsolationApproved: true,
+          isolationStatus: "no-gitignore-file",
+          allowUnignoredState: false,
+        },
+      ),
+    ).rejects.toThrow(/stale/);
+
+    await expect(readdir(ctx.cwd)).resolves.toEqual(["res.txt"]);
+  });
+
+  it("stages a target whose encoded name would exceed 255 bytes, with a manifest", async () => {
+    const ctx = await createSandboxContext();
+    const targetPath = `${"a/".repeat(100)}x.md`;
+    const op = operation({ action: "create", targetPath });
+    const plugin: AgemonPlugin = {
+      ...createFilePlugin({ id: "cap", onInstall: async () => {} }),
+      async materialize() {
+        return [{ targetPath, contents: "staged\n", kind: "text" }];
+      },
+      async apply() {},
+    };
+
+    await applyPlan(ctx, [plugin], {
+      plan: planWith([op]),
+      approved: [op],
+      ...IGNORED_ISOLATION,
+    });
+
+    const stagedDirectory = join(ctx.cwd, ".agemon/plans", PLAN_ID, "staged");
+    const stagedName = sha256Hex(targetPath).slice(0, 16);
+    await expect(
+      readFile(join(stagedDirectory, stagedName), "utf8"),
+    ).resolves.toBe("staged\n");
+    expect(
+      JSON.parse(
+        await readFile(join(stagedDirectory, "manifest.json"), "utf8"),
+      ),
+    ).toEqual({ [stagedName]: targetPath });
+  });
+});
+
+describe("applyPlan with a symlinked .agemon/ component", () => {
+  it.each([".agemon", ".agemon/plans"])(
+    "fails before writing when %s is a symlink",
+    async (linkedPath) => {
+      const ctx = await createSandboxContext();
+      const outside = await createOutsideDirectory();
+      await mkdir(join(ctx.cwd, linkedPath, ".."), { recursive: true });
+      await symlink(outside, join(ctx.cwd, linkedPath));
+      const op = operation();
+      let installRan = false;
+
+      await expect(
+        applyPlan(
+          ctx,
+          [
+            createFilePlugin({
+              id: "cap",
+              onInstall: async () => {
+                installRan = true;
+              },
+            }),
+          ],
+          { plan: planWith([op]), approved: [op], ...IGNORED_ISOLATION },
+        ),
+      ).rejects.toThrow(/symlink or not a directory/);
+
+      expect(installRan).toBe(false);
+      await expectOutsideUnchanged(outside);
+    },
+  );
+
+  it("rolls back when master-prompt's backup directory is a symlink", async () => {
+    const ctx = await createSandboxContext();
+    const outside = await createOutsideDirectory();
+    await writeFile(join(ctx.cwd, "AGENTS.md"), "# Our rules\n", "utf8");
+    await mkdir(join(ctx.cwd, ".agemon"), { recursive: true });
+    await symlink(outside, join(ctx.cwd, ".agemon/backups"));
+    const operations = (await masterPromptPlugin.plan?.(ctx)) ?? [];
+    const mergeOperation = operations.filter(
+      (candidate) => candidate.targetPath === "AGENTS.md",
     );
+
+    await expect(
+      applyPlan(ctx, [masterPromptPlugin], {
+        plan: planWith(mergeOperation),
+        approved: mergeOperation,
+        ...IGNORED_ISOLATION,
+      }),
+    ).rejects.toThrow(/symlink or not a directory/);
+
+    await expect(readFile(join(ctx.cwd, "AGENTS.md"), "utf8")).resolves.toBe(
+      "# Our rules\n",
+    );
+    await expectOutsideUnchanged(outside);
   });
 });

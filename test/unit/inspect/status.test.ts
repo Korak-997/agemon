@@ -1,16 +1,26 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
+import { discoverRepository } from "../../../src/inspect/discover.js";
 import {
   buildStatusReport,
   checkManagedResources,
   verifyManagedState,
 } from "../../../src/inspect/status.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
 
 const createdTempDirectories: string[] = [];
@@ -266,5 +276,116 @@ describe("status", () => {
     expect(await verifyManagedState(context)).toEqual([
       "duplicate guidance across managed files: AGENTS.md ~ CLAUDE.md",
     ]);
+  });
+});
+
+const HOSTILE_READ_TIMEOUT_MS = 2000;
+
+describe("status and discovery against hostile repo contents", () => {
+  async function plantHostileFiles(context: Context): Promise<void> {
+    const outside = await mkdtemp(join(tmpdir(), "agemon-status-outside-"));
+    createdTempDirectories.push(outside);
+    await writeFile(join(outside, "copilot-instructions.md"), "x\n", "utf8");
+    await symlink("/dev/zero", join(context.cwd, "CLAUDE.md"));
+    execFileSync("mkfifo", [join(context.cwd, "GEMINI.md")]);
+    await symlink(outside, join(context.cwd, ".github"));
+    await writeFile(
+      join(context.cwd, ".mcp.json"),
+      "x".repeat(9 * 1024 * 1024),
+      "utf8",
+    );
+  }
+
+  it(
+    "discovers symlinks, FIFOs and oversized files as present but unread",
+    async () => {
+      const context = await createStatusContext();
+      await plantHostileFiles(context);
+
+      const discovery = await discoverRepository(context);
+
+      const ruleFile = (path: string) =>
+        discovery.ruleFiles.find((file) => file.path === path);
+      expect(ruleFile("CLAUDE.md")).toMatchObject({
+        exists: true,
+        contents: null,
+      });
+      expect(ruleFile("GEMINI.md")).toMatchObject({
+        exists: true,
+        contents: null,
+      });
+      expect(
+        discovery.structuredConfigs.find((file) => file.path === ".mcp.json"),
+      ).toMatchObject({
+        exists: true,
+        parsed: null,
+        parseError: expect.stringMatching(/^not read: .*larger than 8 MiB/),
+      });
+      expect(discovery.copilotInstructions).toEqual([
+        {
+          kind: "copilot-instruction",
+          path: ".github/copilot-instructions.md",
+          exists: true,
+        },
+      ]);
+    },
+    HOSTILE_READ_TIMEOUT_MS,
+  );
+
+  it(
+    "finishes a status report with a symlinked managed AGENTS.md",
+    async () => {
+      const context = await createStatusContext();
+      await plantHostileFiles(context);
+      await mkdir(join(context.cwd, "real"));
+      await writeFile(join(context.cwd, "real/AGENTS.md"), "# rules\n", "utf8");
+      await symlink(
+        join(context.cwd, "real/AGENTS.md"),
+        join(context.cwd, "AGENTS.md"),
+      );
+      await recordManagedRuleFile(context, "AGENTS.md", "# rules\n");
+
+      const report = await buildStatusReport(context, [masterPromptPlugin]);
+
+      expect(report.managedResources[0]).toMatchObject({
+        target: "AGENTS.md",
+        health: "managed-drifted",
+      });
+      expect(report.healthy).toBe(false);
+    },
+    HOSTILE_READ_TIMEOUT_MS,
+  );
+
+  it("reports an unreadable forged ledger target as an escaped problem instead of aborting", async () => {
+    const context = await createStatusContext();
+    await recordManagedRuleFile(
+      context,
+      `\u001b]0;pwned\u0007${"x".repeat(300)}`,
+      "anything\n",
+    );
+
+    const problems = await verifyManagedState(context);
+
+    const report = problems.join("\n");
+    expect(report).not.toContain("\u001b");
+    expect(report).not.toContain("\u0007");
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^ignoring ledger entry for \?\]0;pwned\?x+/),
+      ]),
+    );
+  });
+
+  it("reports a ledger target outside the repo as a problem instead of throwing", async () => {
+    const context = await createStatusContext();
+    await recordManagedRuleFile(context, "../outside.md", "anything\n");
+
+    await expect(verifyManagedState(context)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^ignoring ledger entry for \.\.\/outside\.md: master-prompt does not manage that file$/,
+        ),
+      ]),
+    );
   });
 });

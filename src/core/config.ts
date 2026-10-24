@@ -1,7 +1,11 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse, stringify, TomlError } from "smol-toml";
-import { writeFileAtomic } from "./files.js";
+import {
+  RefusedFileError,
+  readRegularFileIfExists,
+  writeFileAtomic,
+} from "./files.js";
+import { printable } from "./untrusted-text.js";
 
 const CONFIG_FILE_NAME = "agemon.toml";
 
@@ -18,7 +22,7 @@ export function resolveConfigPath(cwd: string): string {
 }
 
 function fail(detail: string): never {
-  throw new Error(`${CONFIG_FILE_NAME} is invalid: ${detail}`);
+  throw new Error(`${CONFIG_FILE_NAME} is invalid: ${printable(detail)}`);
 }
 
 function validateCapabilities(value: unknown): string[] {
@@ -67,14 +71,17 @@ function validateConflictDecisions(
 }
 
 export async function loadConfig(cwd: string): Promise<AgemonConfig | null> {
-  let rawContents: string;
+  let rawContents: string | null;
   try {
-    rawContents = await readFile(resolveConfigPath(cwd), "utf8");
+    rawContents = await readRegularFileIfExists(resolveConfigPath(cwd));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
+    if (error instanceof RefusedFileError) {
+      fail(error.message);
     }
     throw new Error(`Unable to read ${CONFIG_FILE_NAME}: ${String(error)}`);
+  }
+  if (rawContents === null) {
+    return null;
   }
 
   let parsed: unknown;
