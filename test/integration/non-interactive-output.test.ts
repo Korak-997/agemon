@@ -34,7 +34,7 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph; build the code graph for this repository
+             pipx install code-review-graph==2.3.9; build the code graph for this repository
 
       daemon
         v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
@@ -42,7 +42,7 @@ describe("non-interactive output contract", () => {
 
       skills
         v  skill-groups:configured  [executes]
-             add the configured skill groups via 'npx skills add'
+             add the configured skill groups via 'skills add'
 
       cli-tool
         v  agnix                    [executes]
@@ -140,7 +140,7 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph; build the code graph for this repository
+             pipx install code-review-graph==2.3.9; build the code graph for this repository
 
       daemon
         v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
@@ -148,7 +148,7 @@ describe("non-interactive output contract", () => {
 
       skills
         v  skill-groups:configured  [executes]
-             add the configured skill groups via 'npx skills add'
+             add the configured skill groups via 'skills add'
 
       cli-tool
         v  agnix                    [executes]
@@ -287,7 +287,7 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph; build the code graph for this repository
+             pipx install code-review-graph==2.3.9; build the code graph for this repository
 
       daemon
         v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
@@ -295,7 +295,7 @@ describe("non-interactive output contract", () => {
 
       skills
         v  skill-groups:configured  [executes]
-             add the configured skill groups via 'npx skills add'
+             add the configured skill groups via 'skills add'
 
       cli-tool
         v  agnix                    [executes]

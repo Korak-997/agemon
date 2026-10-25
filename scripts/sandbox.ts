@@ -4,6 +4,7 @@ import { cp, mkdir, readFile, rm, watch } from "node:fs/promises";
 import { join } from "node:path";
 import { runCli } from "../src/cli/index.js";
 import {
+  type DiffLine,
   diffSnapshots,
   formatDiff,
   type Snapshot,
@@ -113,10 +114,6 @@ async function withCapturedOutput(
       typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     return true;
   };
-
-  // Force the non-TTY rendering path (src/ui/spinner.ts) so the captured
-  // output is plain lines rather than an animated spinner's raw ANSI frames
-  // — matching what a real user piping `agemon` to a file would see.
   process.stdout.write = capture as typeof process.stdout.write;
   process.stderr.write = capture as typeof process.stderr.write;
   process.stdout.isTTY = false;
@@ -220,6 +217,35 @@ async function cmdRun(fixture: string, flags: RunFlags): Promise<void> {
   }
 }
 
+const SKILLS_TOOLS_CACHE_DIRECTORY = "home/.local/state/agemon/tools/";
+const KEPT_MACHINE_CACHE_DIRECTORIES = [
+  SKILLS_TOOLS_CACHE_DIRECTORY,
+  "home/.local/state/agemon/skills-src/",
+];
+
+function isKeptMachineCacheFile(line: DiffLine): boolean {
+  return (
+    line.kind === "added" &&
+    KEPT_MACHINE_CACHE_DIRECTORIES.some((directory) =>
+      line.path.startsWith(directory),
+    )
+  );
+}
+
+function isSkillsToolsCacheFile(line: DiffLine): boolean {
+  return line.path.startsWith(SKILLS_TOOLS_CACHE_DIRECTORY);
+}
+
+function skillsPluginRan(flags: RunFlags): boolean {
+  return (
+    !flags.only ||
+    flags.only
+      .split(",")
+      .map((pluginId) => pluginId.trim())
+      .includes("skills")
+  );
+}
+
 async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
   const label = flags.label ?? defaultLabel();
   const { runDir, repoDir, homeDir } = await prepareRun(fixture, label);
@@ -251,9 +277,20 @@ async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
   }
 
   const afterNuke = await snapshotTree(runDir);
-  const diff = diffSnapshots(beforeInstall, afterNuke);
+  const fullDiff = diffSnapshots(beforeInstall, afterNuke);
+  const keptMachineCache = fullDiff.filter(isKeptMachineCacheFile);
+  const diff = fullDiff.filter((line) => !isKeptMachineCacheFile(line));
 
   console.log(`\nRoundtrip: ${label}`);
+  if (
+    !flags.real &&
+    skillsPluginRan(flags) &&
+    !keptMachineCache.some(isSkillsToolsCacheFile)
+  ) {
+    throw new Error(
+      "roundtrip failed — skills calls did not go through the pinned tools dir",
+    );
+  }
   if (diff.length === 0) {
     console.log("✔ byte-identical to pre-install state");
     return;

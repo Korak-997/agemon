@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import type { Context } from "../../core/context.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
+import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../pins.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -65,7 +66,7 @@ async function resolveCrgExecutablePath(ctx: Context): Promise<string> {
   if (which.code !== 0 || !resolvedPath) {
     throw new Error(
       `Unable to resolve an absolute path for '${CRG_COMMAND}' on PATH; ` +
-        "is it installed (e.g. via 'pipx install code-review-graph')?",
+        `is it installed (e.g. via 'pipx install ${CODE_REVIEW_GRAPH_PACKAGE_SPEC}')?`,
     );
   }
   return resolvedPath;

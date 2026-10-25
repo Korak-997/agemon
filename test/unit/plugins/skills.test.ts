@@ -3,10 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
+import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import {
+  ESSENTIALS_SKILLS_COMMIT,
+  ESSENTIALS_SKILLS_REPOSITORY_URL,
+} from "../../../src/plugins/pins.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 
@@ -120,7 +125,7 @@ describe("skills plugin", () => {
     const runWithoutLockSideEffect = context.run;
     context.run = async (command, args, options) => {
       const result = await runWithoutLockSideEffect(command, args, options);
-      if (command === "npx" && args[0] === "skills" && args[1] === "add") {
+      if (command === process.execPath && args[1] === "add") {
         await writeFile(skillsLockPath, "{}\n", "utf8");
       }
       return result;
@@ -212,6 +217,57 @@ describe("skills plugin", () => {
     expect(installedSkillNames.has("agemon-performance")).toBe(true);
   });
 
+  it("adds every skill through the pinned CLI, Essentials from the verified commit", async () => {
+    const context = await createTestContext();
+    resetFakeSubprocessState();
+    const calls: Array<[string, string[]]> = [];
+    const runAndRecord = context.run;
+    context.run = async (command, args, options) => {
+      calls.push([command, args]);
+      return runAndRecord(command, args, options);
+    };
+
+    await skillsPlugin.install(context);
+
+    const skillsCliCalls = calls.filter(
+      ([command]) => command === process.execPath,
+    );
+    expect(calls.some(([command]) => command === "npx")).toBe(false);
+    expect(skillsCliCalls.length).toBeGreaterThan(0);
+    for (const [, args] of skillsCliCalls) {
+      expect(args[0]).toMatch(
+        /\/agemon\/tools\/[0-9a-f]{16}\/node_modules\/skills\/bin\/cli\.mjs$/u,
+      );
+    }
+    const addedSources = skillsCliCalls
+      .filter(([, args]) => args[1] === "add")
+      .map(([, args]) => args[2]);
+    const pinnedSourceDirectory = join(
+      process.env.XDG_STATE_HOME ?? "",
+      "agemon",
+      "skills-src",
+      ESSENTIALS_SKILLS_COMMIT,
+    );
+    expect(addedSources).toEqual([
+      join(pinnedSourceDirectory, "skills", "web-design-guidelines"),
+      join(pinnedSourceDirectory, "skills", "writing-guidelines"),
+    ]);
+    expect(calls).toContainEqual([
+      "git",
+      [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        "fetch",
+        "--depth",
+        "1",
+        ESSENTIALS_SKILLS_REPOSITORY_URL,
+        ESSENTIALS_SKILLS_COMMIT,
+      ],
+    ]);
+  });
+
   it("rejects an unknown skill group id", async () => {
     const context = await createTestContext("not-a-real-group");
 
@@ -223,10 +279,6 @@ describe("skills plugin", () => {
   it("verification does not require groups outside the ones actually installed", async () => {
     const context = await createTestContext("architecture");
     await skillsPlugin.install(context);
-
-    // Regression guard: verify() must scope to recorded groups, not the full
-    // static catalog — installing only "essentials" + "architecture" must
-    // not fail verification just because "design" was never selected.
     const verification = await skillsPlugin.verify(context);
     expect(verification.ok).toBe(true);
     expect(verification.detail).toContain("2 skill group(s)");

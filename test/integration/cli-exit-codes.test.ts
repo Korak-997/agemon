@@ -334,7 +334,9 @@ describe("--verbose", () => {
       ]);
 
       expect(run.exitCode).toBe(0);
-      expect(run.stdout).toMatch(/^\s*\$ npx skills list --json \(exit 0\)$/m);
+      expect(run.stdout).toMatch(
+        /^\s*\$ \S+ \S+\/node_modules\/skills\/bin\/cli\.mjs list --json \(exit 0\)$/m,
+      );
       expect(run.stdout).toMatch(/^\s*│ /m);
     });
   });

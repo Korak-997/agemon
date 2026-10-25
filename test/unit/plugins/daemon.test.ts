@@ -7,6 +7,7 @@ import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { SubprocessResult } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
+import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -247,8 +248,15 @@ describe("daemon plugin ExecStart resolution", () => {
       serviceManager: createFakeServiceManager(state),
     });
 
-    await expect(daemonPlugin.install(context)).rejects.toThrow(
+    const installError = await daemonPlugin
+      .install(context)
+      .catch((error: unknown) => error);
+    expect(installError).toBeInstanceOf(Error);
+    expect((installError as Error).message).toMatch(
       /Unable to resolve an absolute path for 'code-review-graph'/,
+    );
+    expect((installError as Error).message).toContain(
+      `pipx install code-review-graph==${CODE_REVIEW_GRAPH_VERSION}`,
     );
   });
 });

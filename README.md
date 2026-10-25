@@ -13,7 +13,7 @@ Current v0.1 behavior is plugin-driven and runs in this order:
 2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user`, under a
    unit name derived from the current git repo (or plain directory, outside a repo) —
    see [Daemon naming](#daemon-naming).
-3. `skills`: installs bundled skills via `npx skills`. Always installs the `essentials` group;
+3. `skills`: installs bundled skills with a pinned copy of the `skills` CLI. Always installs the `essentials` group;
    additional groups (design, security, code quality, architecture, self-review, performance,
    team lead) are selected interactively, via `--skill-groups`, or skipped entirely in a
    non-interactive session — see [Skill Groups](#skill-groups).
@@ -72,8 +72,9 @@ this project and keep their `skill-*` names. See [Vendored Skills](#vendored-ski
 for sources and licenses.
 
 `essentials` is the one exception: `vercel-labs/agent-skills` carries no detected license, so
-agemon can't vendor (redistribute) a renamed copy of it — it's still fetched live from that repo
-under its original names, exactly as before this skill-groups feature existed.
+agemon can't vendor (redistribute) a renamed copy of it. agemon fetches the skills under their
+original names from one pinned commit of that repo, checks that the checkout really is that
+commit, and installs from it.
 
 ### Daemon naming
 
@@ -409,7 +410,15 @@ By default, agemon may manage these paths:
 - `.cursorrules`
 - `.windsurfrules`
 
-It also invokes external installers (`pipx`, `npm -g`, `npx skills`) when required.
+It also invokes external installers (`pipx`, `npm -g`, the pinned `skills` CLI) when required.
+Every third-party tool and source is pinned to an exact version or commit
+(`src/plugins/pins.ts`, `assets/tools/package-lock.json`).
+
+Machine-level caches outside the repo, under `${XDG_STATE_HOME:-~/.local/state}/agemon/`, are
+kept by `nuke` because every repo on the machine shares them:
+
+- `tools/<hash>/`: the `skills` CLI, installed from `assets/tools/package-lock.json`
+- `skills-src/<commit>/`: the pinned Essentials checkout that `skills add` installs from
 
 ## Local Development
 

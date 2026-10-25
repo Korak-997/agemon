@@ -46,6 +46,9 @@ jobs:
       - name: Audit (production + high-severity dev advisories)
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Audit the pinned skills CLI lockfile
+        run: npm audit --prefix assets/tools --audit-level=high
+
       - name: Lint
         run: npm run lint
 

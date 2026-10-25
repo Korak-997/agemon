@@ -22,6 +22,11 @@ import {
   resolveGroupsForFreshInstall,
   resolveNewlyOfferedGroups,
 } from "./group-selection.js";
+import {
+  fetchPinnedSkillsSource,
+  type PinnedSkillsRepository,
+} from "./pinned-source.js";
+import { runSkillsCli } from "./skills-cli.js";
 
 const PLUGIN_ID = "skills";
 
@@ -122,11 +127,13 @@ function hasManagedSkillsLockRecord(ctx: Context): boolean {
 }
 
 async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
-  const listResult = await ctx.run("npx", ["skills", "list", "--json"], {
-    timeoutMs: SKILLS_LIST_TIMEOUT_MS,
-  });
+  const listResult = await runSkillsCli(
+    ctx,
+    ["list", "--json"],
+    SKILLS_LIST_TIMEOUT_MS,
+  );
   if (listResult.code !== 0) {
-    throw new Error(listResult.stderr || "npx skills list failed");
+    throw new Error(listResult.stderr || "skills list failed");
   }
 
   let parsed: unknown;
@@ -136,11 +143,11 @@ async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
     const stderr = listResult.stderr.trim();
     const stdoutPreview = listResult.stdout.trim().slice(0, 200);
     const detail = stderr || stdoutPreview || "no command output";
-    throw new Error(`npx skills list returned invalid JSON: ${detail}`);
+    throw new Error(`skills list returned invalid JSON: ${detail}`);
   }
 
   if (!Array.isArray(parsed)) {
-    throw new Error("npx skills list returned non-array JSON");
+    throw new Error("skills list returned non-array JSON");
   }
 
   const installedSkillNames = new Set<string>();
@@ -231,7 +238,7 @@ async function describeSkillsState(
     installedSkillNames = await listInstalledSkillNames(ctx);
   } catch (error) {
     const detail =
-      error instanceof Error ? error.message : "npx skills list failed";
+      error instanceof Error ? error.message : "skills list failed";
     return reportableGroups.map((group) => ({
       capabilityId: PLUGIN_ID,
       resourceId: `skill-group:${group.id}`,
@@ -294,7 +301,7 @@ async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
   const previewText =
     recordedGroups.length > 0 && hasUnofferedGroups
       ? `new skill group(s) available: ${unofferedGroups.map((group) => group.label).join(", ")}`
-      : "add the configured skill groups via 'npx skills add'";
+      : "add the configured skill groups via 'skills add'";
 
   return [
     describeOperation({
@@ -365,6 +372,35 @@ function getGroupsActuallyOffered(
   return [];
 }
 
+function describeSkillSource(entry: SkillBundleEntry): string {
+  return entry.pinnedRepository
+    ? `${entry.pinnedRepository.url} at ${entry.pinnedRepository.commit}`
+    : entry.source;
+}
+
+async function fetchPinnedSources(
+  ctx: Context,
+  entries: SkillBundleEntry[],
+): Promise<void> {
+  const fetchesByCommit = new Map<
+    string,
+    { repository: PinnedSkillsRepository; skillNames: string[] }
+  >();
+  for (const { pinnedRepository, skillName } of entries) {
+    if (pinnedRepository) {
+      const pendingFetch = fetchesByCommit.get(pinnedRepository.commit) ?? {
+        repository: pinnedRepository,
+        skillNames: [],
+      };
+      pendingFetch.skillNames.push(skillName);
+      fetchesByCommit.set(pinnedRepository.commit, pendingFetch);
+    }
+  }
+  for (const { repository, skillNames } of fetchesByCommit.values()) {
+    await fetchPinnedSkillsSource(ctx, repository, skillNames);
+  }
+}
+
 async function installSkills(ctx: Context): Promise<void> {
   const isFreshInstall = getRecordedGroups(ctx).length === 0;
   const unofferedGroups = getUnofferedGroups(ctx);
@@ -385,30 +421,34 @@ async function installSkills(ctx: Context): Promise<void> {
 
   if (ctx.dryRun) {
     for (const entry of entriesToInstall) {
-      ctx.ui.info(`Would add skill ${entry.skillName} from ${entry.source}`);
+      ctx.ui.info(
+        `Would add skill ${entry.skillName} from ${describeSkillSource(entry)}`,
+      );
     }
     return;
   }
 
   const skillsLockPreviouslyExisted = existsSync(getSkillsLockPath(ctx.cwd));
   const installedSkillNames = await listInstalledSkillNames(ctx);
+  const entriesToAdd: SkillBundleEntry[] = [];
   for (const entry of entriesToInstall) {
-    if (installedSkillNames.has(entry.skillName)) {
-      if (!hasAnyRecordForSkill(ctx, entry.skillName)) {
-        await ctx.manifest.recordAction({
-          plugin: PLUGIN_ID,
-          type: ACTION_TYPE_PREEXISTING_SKILL,
-          target: entry.skillName,
-          preExisting: true,
-        });
-      }
-      continue;
+    if (!installedSkillNames.has(entry.skillName)) {
+      entriesToAdd.push(entry);
+    } else if (!hasAnyRecordForSkill(ctx, entry.skillName)) {
+      await ctx.manifest.recordAction({
+        plugin: PLUGIN_ID,
+        type: ACTION_TYPE_PREEXISTING_SKILL,
+        target: entry.skillName,
+        preExisting: true,
+      });
     }
+  }
 
-    const addResult = await ctx.run(
-      "npx",
+  await fetchPinnedSources(ctx, entriesToAdd);
+  for (const entry of entriesToAdd) {
+    const addResult = await runSkillsCli(
+      ctx,
       [
-        "skills",
         "add",
         entry.source,
         "--skill",
@@ -417,13 +457,11 @@ async function installSkills(ctx: Context): Promise<void> {
         entry.agent,
         "--yes",
       ],
-      {
-        timeoutMs: SKILLS_ADD_TIMEOUT_MS,
-      },
+      SKILLS_ADD_TIMEOUT_MS,
     );
     if (addResult.code !== 0) {
       throw new Error(
-        addResult.stderr || `npx skills add failed for ${entry.skillName}`,
+        addResult.stderr || `skills add failed for ${entry.skillName}`,
       );
     }
 
@@ -520,17 +558,15 @@ async function revertSkills(
       continue;
     }
 
-    const removeResult = await ctx.run(
-      "npx",
-      ["skills", "remove", action.target, "--yes"],
-      {
-        timeoutMs: SKILLS_REMOVE_TIMEOUT_MS,
-      },
+    const removeResult = await runSkillsCli(
+      ctx,
+      ["remove", action.target, "--yes"],
+      SKILLS_REMOVE_TIMEOUT_MS,
     );
     if (removeResult.code !== 0) {
       throw new Error(
         removeResult.stderr ||
-          `npx skills remove failed for ${printable(action.target)}`,
+          `skills remove failed for ${printable(action.target)}`,
       );
     }
   }

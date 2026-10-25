@@ -1,5 +1,6 @@
 import type { Context } from "../../core/context.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
+import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../pins.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -11,7 +12,12 @@ import type {
 
 const PLUGIN_ID = "crg";
 const PACKAGE_NAME = "code-review-graph";
-const PIPX_RUN_PREFIX = ["run", "--spec", PACKAGE_NAME, "code-review-graph"];
+const PIPX_RUN_PREFIX = [
+  "run",
+  "--spec",
+  CODE_REVIEW_GRAPH_PACKAGE_SPEC,
+  "code-review-graph",
+];
 
 const VERSION_CHECK_TIMEOUT_MS = 20_000;
 const INSTALL_TIMEOUT_MS = 180_000;
@@ -119,7 +125,7 @@ async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
       requiresConsent: true,
       preview: {
         kind: "note",
-        text: `pipx install ${PACKAGE_NAME}; build the code graph for this repository`,
+        text: `pipx install ${CODE_REVIEW_GRAPH_PACKAGE_SPEC}; build the code graph for this repository`,
       },
     }),
   ];
@@ -132,12 +138,15 @@ async function installCrg(ctx: Context): Promise<void> {
     return;
   }
 
-  const installResult = await ctx.run("pipx", ["install", PACKAGE_NAME], {
-    timeoutMs: INSTALL_TIMEOUT_MS,
-  });
+  const installResult = await ctx.run(
+    "pipx",
+    ["install", CODE_REVIEW_GRAPH_PACKAGE_SPEC],
+    { timeoutMs: INSTALL_TIMEOUT_MS },
+  );
   if (installResult.code !== 0) {
     throw new Error(
-      installResult.stderr || `pipx install failed for ${PACKAGE_NAME}`,
+      installResult.stderr ||
+        `pipx install failed for ${CODE_REVIEW_GRAPH_PACKAGE_SPEC}`,
     );
   }
 

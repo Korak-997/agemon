@@ -1,3 +1,11 @@
+import {
+  ESSENTIALS_SKILLS_COMMIT,
+  ESSENTIALS_SKILLS_REPOSITORY_URL,
+} from "../pins.js";
+import {
+  type PinnedSkillsRepository,
+  resolvePinnedSkillPath,
+} from "./pinned-source.js";
 import { resolveVendoredSkillPath } from "./vendored-path.js";
 
 export interface SkillBundleEntry {
@@ -5,7 +13,13 @@ export interface SkillBundleEntry {
   readonly source: string;
   skillName: string;
   agent: string;
+  pinnedRepository?: PinnedSkillsRepository;
 }
+
+const ESSENTIALS_REPOSITORY: PinnedSkillsRepository = {
+  url: ESSENTIALS_SKILLS_REPOSITORY_URL,
+  commit: ESSENTIALS_SKILLS_COMMIT,
+};
 
 export interface SkillGroup {
   id: string;
@@ -26,6 +40,21 @@ function vendoredSkill(groupId: string, skillId: string): SkillBundleEntry {
   };
 }
 
+function pinnedSkill(
+  repository: PinnedSkillsRepository,
+  skillId: string,
+): SkillBundleEntry {
+  return {
+    id: skillId,
+    get source() {
+      return resolvePinnedSkillPath(repository, skillId);
+    },
+    skillName: skillId,
+    agent: "claude-code",
+    pinnedRepository: repository,
+  };
+}
+
 export const SKILL_GROUPS: SkillGroup[] = [
   {
     id: "essentials",
@@ -33,18 +62,8 @@ export const SKILL_GROUPS: SkillGroup[] = [
     description: "Web design and writing guidelines from Vercel Labs.",
     defaultSelected: true,
     skills: [
-      {
-        id: "web-design-guidelines",
-        source: "vercel-labs/agent-skills",
-        skillName: "web-design-guidelines",
-        agent: "claude-code",
-      },
-      {
-        id: "writing-guidelines",
-        source: "vercel-labs/agent-skills",
-        skillName: "writing-guidelines",
-        agent: "claude-code",
-      },
+      pinnedSkill(ESSENTIALS_REPOSITORY, "web-design-guidelines"),
+      pinnedSkill(ESSENTIALS_REPOSITORY, "writing-guidelines"),
     ],
   },
   {

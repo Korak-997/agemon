@@ -1,6 +1,5 @@
 import { mkdir, readdir, realpath, rm } from "node:fs/promises";
-import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import {
   MAX_READ_FILE_BYTES,
   MAX_READ_FILE_LABEL,
@@ -9,6 +8,7 @@ import {
 } from "./files.js";
 import { sha256Hex } from "./fingerprint.js";
 import { type LedgerEntry, parseLedgerEntries } from "./state-manifest.js";
+import { resolveStateRoot } from "./state-root.js";
 import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 const JOURNAL_VERSION = 1;
@@ -39,20 +39,6 @@ export interface StoredJournal {
 }
 
 export type NewApplyJournal = Omit<ApplyJournal, "version" | "repoRoot">;
-
-function resolveStateRoot(): string {
-  const xdgStateHome = process.env.XDG_STATE_HOME;
-  if (xdgStateHome && isAbsolute(xdgStateHome)) {
-    return xdgStateHome;
-  }
-  const homeDirectory = homedir();
-  if (!isAbsolute(homeDirectory)) {
-    throw new Error(
-      "Cannot locate agemon's state directory: set HOME (or XDG_STATE_HOME) to an absolute path.",
-    );
-  }
-  return join(homeDirectory, ".local", "state");
-}
 
 export async function resolveJournalDirectory(
   repoRoot: string,

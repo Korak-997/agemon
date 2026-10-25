@@ -1,5 +1,13 @@
-import { basename } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import {
+  CODE_REVIEW_GRAPH_PACKAGE_SPEC,
+  ESSENTIALS_SKILLS_COMMIT,
+} from "../plugins/pins.js";
+import { SKILLS_CLI_PATH_IN_TOOLS_DIR } from "../plugins/skills/skills-cli.js";
 import type { SubprocessResult } from "./subprocess-runner.js";
+
+const PINNED_SKILLS_CLI_SUFFIX = `/${SKILLS_CLI_PATH_IN_TOOLS_DIR}`;
 
 function formatCommand(command: string, args: string[]): string {
   return [command, ...args].join(" ");
@@ -100,7 +108,7 @@ function buildFakeSkillsList(): SubprocessResult {
 }
 
 function buildFakeSkillsAdd(args: string[]): SubprocessResult {
-  const packageSource = args[2];
+  const packageSource = args[1];
   if (!packageSource) {
     return {
       code: 1,
@@ -121,7 +129,7 @@ function buildFakeSkillsAdd(args: string[]): SubprocessResult {
 
 function buildFakeSkillsRemove(args: string[]): SubprocessResult {
   const skillNames = args
-    .slice(2)
+    .slice(1)
     .filter((arg) => arg.length > 0 && !arg.startsWith("-"));
 
   for (const skillName of skillNames) {
@@ -135,12 +143,8 @@ function buildFakeSkillsRemove(args: string[]): SubprocessResult {
   };
 }
 
-function buildFakeNpxResponse(args: string[]): SubprocessResult | undefined {
-  if (args[0] !== "skills") {
-    return undefined;
-  }
-
-  const subcommand = args[1];
+function buildFakeSkillsCliResponse(args: string[]): SubprocessResult {
+  const subcommand = args[0];
   if (subcommand === "list" || subcommand === "ls") {
     return buildFakeSkillsList();
   }
@@ -155,7 +159,7 @@ function buildFakeNpxResponse(args: string[]): SubprocessResult | undefined {
 
   return {
     code: 0,
-    stdout: `[fake subprocess] npx ${args.join(" ")}\n`,
+    stdout: `[fake subprocess] skills ${args.join(" ")}\n`,
     stderr: "",
   };
 }
@@ -196,18 +200,17 @@ function buildFakePipxResponse(args: string[]): SubprocessResult | undefined {
   if (
     args[0] === "run" &&
     args[1] === "--spec" &&
-    args[2] === "code-review-graph" &&
+    args[2] === CODE_REVIEW_GRAPH_PACKAGE_SPEC &&
     args[3] === "code-review-graph"
   ) {
     return buildFakeCrgResponse(args.slice(4));
   }
 
   const [operation, packageName] = args;
-  if (packageName !== "code-review-graph") {
-    return undefined;
-  }
-
-  if (operation === "install") {
+  if (
+    operation === "install" &&
+    packageName === CODE_REVIEW_GRAPH_PACKAGE_SPEC
+  ) {
     fakeCrgInstalledState = true;
     return {
       code: 0,
@@ -216,7 +219,7 @@ function buildFakePipxResponse(args: string[]): SubprocessResult | undefined {
     };
   }
 
-  if (operation === "uninstall") {
+  if (operation === "uninstall" && packageName === "code-review-graph") {
     fakeCrgInstalledState = false;
     return {
       code: 0,
@@ -242,10 +245,28 @@ function parseGlobalNpmPackageNames(args: string[]): string[] {
   return packageNames;
 }
 
+function buildFakeNpmCi(args: string[]): SubprocessResult {
+  const prefix = readOptionValue(args, "--prefix");
+  if (prefix) {
+    const cliPath = join(prefix, SKILLS_CLI_PATH_IN_TOOLS_DIR);
+    mkdirSync(dirname(cliPath), { recursive: true });
+    writeFileSync(cliPath, "", "utf8");
+  }
+  return {
+    code: 0,
+    stdout: `[fake subprocess] npm ${args.join(" ")}\n`,
+    stderr: "",
+  };
+}
+
 function buildFakeNpmResponse(args: string[]): SubprocessResult | undefined {
   const operation = args[0];
   if (!operation) {
     return undefined;
+  }
+
+  if (operation === "ci") {
+    return buildFakeNpmCi(args);
   }
 
   const hasGlobalFlag = args.includes("-g") || args.includes("--global");
@@ -384,11 +405,16 @@ export function runFakeSubprocess(
     }
   }
 
-  if (command === "npx") {
-    const npxResponse = buildFakeNpxResponse(args);
-    if (npxResponse) {
-      return npxResponse;
-    }
+  if (args[0]?.endsWith(PINNED_SKILLS_CLI_SUFFIX)) {
+    return buildFakeSkillsCliResponse(args.slice(1));
+  }
+
+  if (
+    command === "git" &&
+    args.at(-2) === "rev-parse" &&
+    args.at(-1) === "HEAD"
+  ) {
+    return { code: 0, stdout: `${ESSENTIALS_SKILLS_COMMIT}\n`, stderr: "" };
   }
 
   if (command === "npm") {
