@@ -12,6 +12,7 @@ import {
   partitionNewEntries,
   rollBackApply,
 } from "./rollback.js";
+import { checkAgemonStateDirectoryBeforeRun } from "./state-root.js";
 import { printable } from "./untrusted-text.js";
 
 export const RECOVER_LIMIT_NOTE =
@@ -108,6 +109,9 @@ export async function recoverInterruptedApply(
   allPlugins: AgemonPlugin[],
   options: { dryRun: boolean },
 ): Promise<void> {
+  await checkAgemonStateDirectoryBeforeRun(options.dryRun, (line) =>
+    ctx.ui.info(line),
+  );
   const stored = await selectSingleJournal(ctx);
   if (stored === null) {
     ctx.log.log("Nothing to recover.");

@@ -1,4 +1,5 @@
 import type { Context } from "../core/context.js";
+import type { SharedResourceId } from "../core/machine-ledger.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
 
 export interface PluginPresence {
@@ -28,6 +29,7 @@ export const PROPOSED_OPERATION_ACTIONS = [
   "replace",
   "install-package",
   "register-service",
+  "use-shared",
   "conflict",
   "skip",
 ] as const;
@@ -70,10 +72,19 @@ export interface CapabilityStateRow {
   detail: string | null;
 }
 
+export interface SharedResourceDeclaration {
+  id: SharedResourceId;
+  toolName: string;
+  manualRemoveCommand: string;
+  removalVerb: "uninstall" | "disable";
+  migratesFromRepoLedgers: boolean;
+}
+
 export interface AgemonPlugin {
   id: string;
   dependsOn?: string[];
   riskClass?: RiskClass;
+  sharedResources?: SharedResourceDeclaration[];
   detect(ctx: Context): Promise<PluginPresence>;
   desiredRevision?(ctx: Context, resourceId: string): string | null;
   describeState?(ctx: Context): Promise<CapabilityStateRow[]>;

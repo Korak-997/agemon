@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveHomeDirectory } from "../home.js";
@@ -7,10 +8,9 @@ import type {
   ServiceManager,
   ServiceStatus,
   UnregisterAutostartInput,
-  UnregisterAutostartResult,
 } from "./index.js";
 import {
-  AGEMON_DAEMON_UNIT_PATTERN,
+  isAgemonDaemonUnitFile,
   workingDirectoryOfUnit,
 } from "./unit-files.js";
 
@@ -25,7 +25,6 @@ interface FakeServiceState {
   attemptLabel: string;
   user: string;
   active: boolean;
-  lingerEnabledByAgemon: boolean;
 }
 
 function resolveUser(user?: string): string {
@@ -34,6 +33,10 @@ function resolveUser(user?: string): string {
 
 function markerPath(homeDir: string, unitName: string): string {
   return join(homeDir, ".agemon", "fake-services", `${unitName}.json`);
+}
+
+function lingerMarkerPath(homeDir: string): string {
+  return join(homeDir, ".agemon", "fake-linger");
 }
 
 async function readMarker(
@@ -74,7 +77,6 @@ export function createFakeServiceManager(
       attemptLabel: firstAttempt.label,
       user,
       active: true,
-      lingerEnabledByAgemon: true,
     };
     await writeFile(
       destinationPath,
@@ -84,7 +86,6 @@ export function createFakeServiceManager(
 
     return {
       unitPath: destinationPath,
-      lingerEnabledByAgemon: state.lingerEnabledByAgemon,
       attemptLabel: state.attemptLabel,
       failedAttempts: [],
     };
@@ -92,19 +93,8 @@ export function createFakeServiceManager(
 
   const unregisterAutostart = async (
     registration: UnregisterAutostartInput,
-  ): Promise<UnregisterAutostartResult> => {
+  ): Promise<void> => {
     await rm(markerPath(homeDir, registration.unitName), { force: true });
-    if (!registration.disableLinger) {
-      return { lingerKeptFor: null };
-    }
-    const markers = await readdir(
-      join(homeDir, ".agemon", "fake-services"),
-    ).catch(() => []);
-    const lingerKeptFor =
-      markers
-        .map((marker) => marker.replace(/\.json$/, ""))
-        .find((unitName) => AGEMON_DAEMON_UNIT_PATTERN.test(unitName)) ?? null;
-    return { lingerKeptFor };
   };
 
   const readUnitWorkingDirectory = async (
@@ -114,10 +104,31 @@ export function createFakeServiceManager(
     return marker === null ? null : workingDirectoryOfUnit(marker.unitContents);
   };
 
+  const findAgemonDaemonUnit = async (): Promise<string | null> => {
+    const markers = await readdir(
+      join(homeDir, ".agemon", "fake-services"),
+    ).catch(() => []);
+    return (
+      markers
+        .map((marker) => marker.replace(/\.json$/, ""))
+        .find(isAgemonDaemonUnitFile) ?? null
+    );
+  };
+
   return {
     isActive,
     registerAutostart,
     unregisterAutostart,
     readUnitWorkingDirectory,
+    unitPathFor: (unitName) => markerPath(homeDir, unitName),
+    isLingerEnabled: async () => existsSync(lingerMarkerPath(homeDir)),
+    async enableLinger() {
+      await mkdir(join(homeDir, ".agemon"), { recursive: true });
+      await writeFile(lingerMarkerPath(homeDir), `${user}\n`, "utf8");
+    },
+    async disableLinger() {
+      await rm(lingerMarkerPath(homeDir), { force: true });
+    },
+    findAgemonDaemonUnit,
   };
 }

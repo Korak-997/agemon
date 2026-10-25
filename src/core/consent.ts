@@ -119,17 +119,25 @@ export function buildConsentGates(
   return gates;
 }
 
+export function useSharedOperations(plan: Plan): ProposedOperation[] {
+  return plan.operations.filter(
+    (operation) => operation.action === "use-shared",
+  );
+}
+
 function gateForOperation(
   operation: ProposedOperation,
 ): OperationGateId | null {
   if (operation.action === "conflict") {
     return "resolve-conflict";
   }
-  if (operation.action === "skip") {
+  if (operation.action === "skip" || operation.action === "use-shared") {
     return null;
   }
   if (operation.riskClass === "inert" && !operation.requiresConsent) {
-    return null;
+    throw new Error(
+      `Operation ${printable(operation.id)} (${operation.action}) is marked as needing no consent; only use-shared operations may be.`,
+    );
   }
   if (operation.action === "install-package") {
     return "install-tooling";

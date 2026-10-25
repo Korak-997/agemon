@@ -18,6 +18,7 @@ const ACTION_GLYPH: Record<ProposedOperationAction, SymbolName> = {
   adopt: "adopt",
   "install-package": "install",
   "register-service": "install",
+  "use-shared": "adopt",
   conflict: "conflict",
   skip: "pending",
 };
@@ -30,6 +31,7 @@ const ACTION_LABEL: Record<ProposedOperationAction, string> = {
   adopt: "adopt",
   "install-package": "install",
   "register-service": "register",
+  "use-shared": "use",
   conflict: "conflict",
   skip: "skip",
 };

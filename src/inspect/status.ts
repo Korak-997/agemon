@@ -7,6 +7,10 @@ import { resolveInsideRepo } from "../core/repo-paths.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
 import { printable } from "../core/untrusted-text.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
+import {
+  describeSharedTools,
+  type SharedToolStatus,
+} from "../plugins/shared-resource.js";
 import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
 import { renderStatusReport } from "../ui/status-view.js";
 import { collectCapabilityStates } from "./capabilities.js";
@@ -53,6 +57,7 @@ export interface InterruptedApplySummary {
 export interface StatusReport {
   managedResources: ManagedResourceStatus[];
   capabilities: CapabilityStatusRow[];
+  sharedResources: SharedToolStatus[];
   duplication: OverlapFinding[];
   trackedAgemonPaths: string[];
   trackingCheckError: string | null;
@@ -251,6 +256,7 @@ export async function buildStatusReport(
   ).overlaps;
 
   const capabilities = await buildCapabilityStatusRows(ctx, plugins);
+  const sharedResources = await describeSharedTools(ctx, plugins);
 
   const agents = await detectAgents(ctx, discovery);
   const agentsSummary: AgentsSummary = {
@@ -274,6 +280,7 @@ export async function buildStatusReport(
   return {
     managedResources,
     capabilities,
+    sharedResources,
     duplication,
     trackedAgemonPaths,
     trackingCheckError: discovery.isolation.trackingCheckError,

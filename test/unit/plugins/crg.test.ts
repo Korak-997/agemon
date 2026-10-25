@@ -25,6 +25,7 @@ import { hashLockedPipArgs } from "../../../src/plugins/crg/constraints.js";
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
+import { describeSharedTools } from "../../../src/plugins/shared-resource.js";
 
 const PINNED_SPEC = `code-review-graph==${CODE_REVIEW_GRAPH_VERSION}`;
 const METADATA_FIXTURE = join(
@@ -323,10 +324,11 @@ describe("crg plugin — install edge cases", () => {
   });
 
   it("passes the crg environment to status and to the PATH --version probe", async () => {
-    const { context, calls, home } = await createTestContext();
+    const { context, calls, home, repo } = await createTestContext();
     const binaryPath = join(home, "bin", "code-review-graph");
     await writeExecutable(binaryPath);
     vi.stubEnv("PATH", join(home, "bin"));
+    await mkdir(join(repo, ".code-review-graph"));
 
     await crgPlugin.verify(context);
 
@@ -345,9 +347,10 @@ describe("crg plugin — install edge cases", () => {
   });
 
   it("strips terminal control characters from a failing status message", async () => {
-    const { context, run, home } = await createTestContext();
+    const { context, run, home, repo } = await createTestContext();
     await writeExecutable(join(home, "bin", "code-review-graph"));
     vi.stubEnv("PATH", join(home, "bin"));
+    await mkdir(join(repo, ".code-review-graph"));
     run.mockImplementation(async (_command, args) =>
       args[0] === "--version"
         ? { code: 0, stdout: "code-review-graph 2.3.9\n", stderr: "" }
@@ -444,7 +447,9 @@ describe("crg plugin — detection and state", () => {
     const operations = await crgPlugin.plan?.(context);
     const [row] = (await crgPlugin.describeState?.(context)) ?? [];
 
-    expect(operations).toEqual([]);
+    expect(operations?.map((operation) => operation.action)).toEqual([
+      "use-shared",
+    ]);
     expect(
       infos.filter((line) => line.includes("pipx ensurepath")),
     ).toHaveLength(1);
@@ -650,5 +655,163 @@ describe("crg plugin — hash-locked install", () => {
     expect(
       requirements.filter((name) => name.startsWith("code-review-graph==")),
     ).toEqual([PINNED_SPEC]);
+  });
+});
+
+describe("crg plugin — shared with other repositories", () => {
+  it("plan proposes use-shared while this repository is not a holder, and nothing once it holds", async () => {
+    const { context, pipxHome } = await createTestContext();
+    await createPipxVenv(pipxHome);
+
+    const [operation] = (await crgPlugin.plan?.(context)) ?? [];
+    expect(operation).toMatchObject({
+      action: "use-shared",
+      targetPath: "pipx:code-review-graph",
+      riskClass: "inert",
+      requiresConsent: false,
+    });
+    await crgPlugin.apply?.(context, [operation]);
+
+    expect(await crgPlugin.plan?.(context)).toEqual([]);
+    expect(context.manifest.getActions().map((entry) => entry.type)).toEqual([
+      "uses-shared-resource",
+    ]);
+  });
+
+  it("rolling back a use-shared op drops the holder and never uninstalls", async () => {
+    const { context, pipxHome, calls } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    const [operation] = (await crgPlugin.plan?.(context)) ?? [];
+    await crgPlugin.apply?.(context, [operation]);
+
+    await crgPlugin.revert?.(context, context.manifest.getActions());
+
+    expect(
+      calls.some(
+        ([command, args]) => command === "pipx" && args[0] === "uninstall",
+      ),
+    ).toBe(false);
+    const [again] = (await crgPlugin.plan?.(context)) ?? [];
+    expect(again?.action).toBe("use-shared");
+  });
+
+  it("verifies a use-shared-only repository without a graph without running status", async () => {
+    const { context, pipxHome, calls, repo } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    const [operation] = (await crgPlugin.plan?.(context)) ?? [];
+    await crgPlugin.apply?.(context, [operation]);
+
+    expect(await crgPlugin.verify(context)).toEqual({
+      ok: true,
+      detail: "installed; no graph built in this repository",
+    });
+    expect(calls.some(([, args]) => args[0] === "status")).toBe(false);
+    expect(existsSync(join(repo, ".code-review-graph"))).toBe(false);
+  });
+
+  it("crash after the repo entry, before the machine holder: plan proposes use-shared again and nuke removes nothing", async () => {
+    const { context, pipxHome, calls } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    await context.manifest.recordAction({
+      plugin: "crg",
+      type: "uses-shared-resource",
+      target: "code-review-graph",
+      resourceId: "shared:pipx:code-review-graph",
+      preExisting: true,
+    });
+
+    const [operation] = (await crgPlugin.plan?.(context)) ?? [];
+    expect(operation?.action).toBe("use-shared");
+    await crgPlugin.uninstall(context);
+    expect(
+      calls.some(
+        ([command, args]) => command === "pipx" && args[0] === "uninstall",
+      ),
+    ).toBe(false);
+  });
+
+  it("machine holder without a repo entry: status flags it and plan proposes use-shared", async () => {
+    const { context, pipxHome } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    const [operation] = (await crgPlugin.plan?.(context)) ?? [];
+    await crgPlugin.apply?.(context, [operation]);
+    await context.manifest.removeActionsForPlugin("crg");
+
+    const [row] = await describeSharedTools(context, [crgPlugin]);
+    expect(row?.heldWithoutLedgerEntry).toBe(true);
+    const [again] = (await crgPlugin.plan?.(context)) ?? [];
+    expect(again?.action).toBe("use-shared");
+  });
+
+  it("verify fails when a graph agemon built has gone missing", async () => {
+    const { context, repo } = await createTestContext();
+    await crgPlugin.install(context);
+    await rm(join(repo, ".code-review-graph"), { recursive: true });
+
+    expect(await crgPlugin.verify(context)).toEqual({
+      ok: false,
+      detail: ".code-review-graph/ is missing — run agemon to build it again",
+    });
+  });
+
+  it("a use-shared op applied after crg disappeared installs nothing", async () => {
+    const { context, pipxHome, calls } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    const [operation] = (await crgPlugin.plan?.(context)) ?? [];
+    await rm(join(pipxHome, "venvs"), { recursive: true });
+
+    await expect(crgPlugin.apply?.(context, [operation])).rejects.toThrow(
+      "code-review-graph is no longer installed — re-run 'agemon plan'.",
+    );
+    expect(calls.some(([command]) => command === "pipx")).toBe(false);
+  });
+
+  it("a pre-P8 ledger that installed crg proposes use-shared with the claim, and nuke keeps crg", async () => {
+    const { context, pipxHome, calls, infos } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    await context.manifest.recordAction({
+      plugin: "crg",
+      type: "installed-binary",
+      target: "code-review-graph (pipx)",
+      preExisting: false,
+    });
+
+    const [operation] = (await crgPlugin.plan?.(context)) ?? [];
+    expect(operation?.preview.text).toContain(
+      "this repository's ledger says agemon installed it",
+    );
+    await crgPlugin.apply?.(context, [operation]);
+    await crgPlugin.uninstall(context);
+
+    expect(
+      calls.some(
+        ([command, args]) => command === "pipx" && args[0] === "uninstall",
+      ),
+    ).toBe(false);
+    expect(infos.at(-1)).toContain(
+      "Run 'pipx uninstall code-review-graph' yourself",
+    );
+  });
+
+  it("a forged ledger in a fresh clone removes nothing on nuke", async () => {
+    const { context, pipxHome, calls } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    await context.manifest.recordAction({
+      plugin: "crg",
+      type: "installed-binary",
+      target: "code-review-graph (pipx)",
+      preExisting: false,
+    });
+
+    await crgPlugin.uninstall({
+      ...context,
+      removeSharedTools: new Set(["code-review-graph"]),
+    } as Context);
+
+    expect(
+      calls.some(
+        ([command, args]) => command === "pipx" && args[0] === "uninstall",
+      ),
+    ).toBe(false);
   });
 });

@@ -16,10 +16,9 @@ import type {
   ServiceManager,
   ServiceStatus,
   UnregisterAutostartInput,
-  UnregisterAutostartResult,
 } from "./index.js";
 import {
-  AGEMON_DAEMON_UNIT_PATTERN,
+  isAgemonDaemonUnitFile,
   workingDirectoryOfUnit,
 } from "./unit-files.js";
 
@@ -263,15 +262,6 @@ export function createLinuxServiceManager(
   ): Promise<RegisterAutostartResult> => {
     const unitPath = resolveUnitPath(homeDir, registration.unitName);
     await mkdir(dirname(unitPath), { recursive: true });
-    const lingerWasOn = await readLingerIsOn();
-    if (!lingerWasOn) {
-      await assertSucceeded(
-        input.run,
-        "loginctl",
-        ["enable-linger", user],
-        "Unable to enable linger for current user.",
-      );
-    }
 
     const failures: string[] = [];
     const manualCleanup: string[] = [];
@@ -280,7 +270,6 @@ export function createLinuxServiceManager(
         await startAttempt(registration.unitName, unitPath, attempt);
         return {
           unitPath,
-          lingerEnabledByAgemon: !lingerWasOn,
           attemptLabel: attempt.label,
           failedAttempts: failures,
         };
@@ -295,18 +284,6 @@ export function createLinuxServiceManager(
       }
     }
 
-    if (!lingerWasOn) {
-      try {
-        await assertSucceeded(
-          input.run,
-          "loginctl",
-          ["disable-linger", user],
-          "Unable to disable linger for current user.",
-        );
-      } catch {
-        manualCleanup.push(`loginctl disable-linger ${user}`);
-      }
-    }
     const cleanupAdvice =
       manualCleanup.length === 0
         ? ""
@@ -316,50 +293,36 @@ export function createLinuxServiceManager(
     );
   };
 
-  const otherAgemonDaemonUnit = async (
-    unitName: string,
-  ): Promise<string | null> => {
+  const findAgemonDaemonUnit = async (): Promise<string | null> => {
     let unitFiles: string[];
     try {
-      unitFiles = await readdir(dirname(resolveUnitPath(homeDir, unitName)));
+      unitFiles = await readdir(dirname(resolveUnitPath(homeDir, "unit")));
     } catch {
       return null;
     }
-    return (
-      unitFiles.find(
-        (file) => file !== unitName && AGEMON_DAEMON_UNIT_PATTERN.test(file),
-      ) ?? null
-    );
+    return unitFiles.find(isAgemonDaemonUnitFile) ?? null;
   };
 
   const unregisterAutostart = async (
     registration: UnregisterAutostartInput,
-  ): Promise<UnregisterAutostartResult> => {
+  ): Promise<void> => {
     await stopAndDisable(registration.unitName);
-
-    const unitPath = resolveUnitPath(homeDir, registration.unitName);
-    await rm(unitPath, { force: true });
-
+    await rm(resolveUnitPath(homeDir, registration.unitName), { force: true });
     await assertSucceeded(
       input.run,
       "systemctl",
       ["--user", "daemon-reload"],
       "Unable to reload systemd user units.",
     );
+  };
 
-    if (!registration.disableLinger) {
-      return { lingerKeptFor: null };
-    }
-    const lingerKeptFor = await otherAgemonDaemonUnit(registration.unitName);
-    if (lingerKeptFor === null) {
-      await assertSucceeded(
-        input.run,
-        "loginctl",
-        ["disable-linger", user],
-        "Unable to disable linger for current user.",
-      );
-    }
-    return { lingerKeptFor };
+  const setLinger = async (enabled: boolean): Promise<void> => {
+    await assertSucceeded(
+      input.run,
+      "loginctl",
+      [enabled ? "enable-linger" : "disable-linger", user],
+      `Unable to ${enabled ? "enable" : "disable"} linger for the current user.`,
+    );
   };
 
   const readUnitWorkingDirectory = async (
@@ -376,5 +339,10 @@ export function createLinuxServiceManager(
     registerAutostart,
     unregisterAutostart,
     readUnitWorkingDirectory,
+    unitPathFor: (unitName) => resolveUnitPath(homeDir, unitName),
+    isLingerEnabled: readLingerIsOn,
+    enableLinger: () => setLinger(true),
+    disableLinger: () => setLinger(false),
+    findAgemonDaemonUnit,
   };
 }

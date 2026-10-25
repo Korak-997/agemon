@@ -3,6 +3,7 @@ import {
   buildConsentGates,
   type GatePrompts,
   resolveConsent,
+  useSharedOperations,
 } from "../../../src/core/consent.js";
 import type { Plan } from "../../../src/core/plan-store.js";
 import type { ProposedOperation } from "../../../src/plugins/types.js";
@@ -107,6 +108,33 @@ describe("buildConsentGates", () => {
     });
 
     expect(gates).toEqual([]);
+  });
+
+  it("puts use-shared operations in no gate and returns them separately", () => {
+    const useShared = operation({
+      action: "use-shared",
+      riskClass: "inert",
+      requiresConsent: false,
+    });
+    const plan = planWith([useShared]);
+
+    expect(buildConsentGates({ isolationStatus: "ignored", plan })).toEqual([]);
+    expect(useSharedOperations(plan)).toEqual([useShared]);
+  });
+
+  it("refuses an inert, no-consent operation of any other action", () => {
+    expect(() =>
+      buildConsentGates({
+        isolationStatus: "ignored",
+        plan: planWith([
+          operation({
+            action: "install-package",
+            riskClass: "inert",
+            requiresConsent: false,
+          }),
+        ]),
+      }),
+    ).toThrow(/only use-shared operations may be/);
   });
 
   it("marks a credential-adjacent write-config gate as forcing its diff", () => {

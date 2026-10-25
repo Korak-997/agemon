@@ -129,6 +129,7 @@ describe("renderStatusReport", () => {
         health: null,
       },
     ],
+    sharedResources: [],
     duplication: [],
     trackedAgemonPaths: [],
     trackingCheckError: null,
@@ -163,6 +164,63 @@ describe("renderStatusReport", () => {
     expect(rendered).toContain("Environment needs attention");
     expect(rendered).toContain("[ drifted ]");
     expect(rendered).toContain("agemon template updated");
+  });
+});
+
+describe("renderStatusReport — shared tools", () => {
+  const report: StatusReport = {
+    managedResources: [],
+    capabilities: [],
+    sharedResources: [
+      {
+        tool: "code-review-graph",
+        origin: "installed",
+        recordedBy: "/home/u/a",
+        holders: [
+          { path: "/home/u/a", thisRepository: true, missing: false },
+          { path: "/home/u/gone", thisRepository: false, missing: true },
+        ],
+        heldWithoutLedgerEntry: false,
+        manualRemoveCommand: "pipx uninstall code-review-graph",
+      },
+      {
+        tool: "agnix",
+        origin: "migrated",
+        recordedBy: "/home/u/b",
+        holders: [{ path: "/home/u/a", thisRepository: true, missing: false }],
+        heldWithoutLedgerEntry: true,
+        manualRemoveCommand: "npm uninstall --global agnix",
+      },
+    ],
+    duplication: [],
+    trackedAgemonPaths: [],
+    trackingCheckError: null,
+    interruptedApply: null,
+    agentsSummary: { total: 0, configured: 0, installed: 0 },
+    healthy: true,
+    hasAgemonState: true,
+  };
+
+  it("lists each shared tool with its origin, holders and missing holders", () => {
+    const rendered = renderStatusReport(report);
+    expect(rendered).toContain("Shared tools");
+    expect(rendered).toContain("/home/u/a (this repository)");
+    expect(rendered).toContain(
+      "/home/u/gone (missing — dropped on the next change)",
+    );
+    expect(rendered).toContain("installed by /home/u/a");
+  });
+
+  it("marks a holder entry this repository's ledger lost", () => {
+    expect(renderStatusReport(report)).toContain(
+      "held by this repository but not in its ledger — run 'agemon' to repair",
+    );
+  });
+
+  it("says when no shared tool is recorded", () => {
+    expect(renderStatusReport({ ...report, sharedResources: [] })).toContain(
+      "none recorded on this machine",
+    );
   });
 });
 

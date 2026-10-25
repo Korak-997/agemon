@@ -8,12 +8,12 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { errorMessage } from "./error-message.js";
 import { sha256Hex } from "./fingerprint.js";
 import type { SubprocessResult } from "./subprocess-runner.js";
 import type { RunSubprocess } from "./subprocess-trace.js";
-import { printable } from "./untrusted-text.js";
+import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 const NPM_ROOT_TIMEOUT_MS = 20_000;
 const ARCHIVE_DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -134,12 +134,22 @@ async function readInstalledManifest(
   }
 }
 
-async function resolveInstalledPackageDirectory(
+async function pathIsMissing(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
+  }
+}
+
+export async function resolveGlobalNpmRoot(
   run: RunSubprocess,
-  request: VerifiedBinaryInstallRequest,
+  options: { cwd?: string; mayNotExistYet?: boolean } = {},
 ): Promise<string> {
   const npmRootResult = await run("npm", ["root", "--global"], {
     timeoutMs: NPM_ROOT_TIMEOUT_MS,
+    cwd: options.cwd,
   });
   if (npmRootResult.code !== 0) {
     throw new Error(
@@ -152,12 +162,27 @@ async function resolveInstalledPackageDirectory(
       `npm root --global returned ${printable(npmRoot)}, which is not an absolute path.`,
     );
   }
+  if (resolve(npmRoot) !== npmRoot || !isSafeIdentifier(npmRoot)) {
+    throw new Error(
+      `npm root --global returned ${printable(npmRoot)}, which is not a single normalised path.`,
+    );
+  }
+  if (options.mayNotExistYet && (await pathIsMissing(npmRoot))) {
+    return npmRoot;
+  }
   if (!(await isDirectory(npmRoot))) {
     throw new Error(
       `npm root --global returned ${printable(npmRoot)}, which is not a directory. npm masks UUID-like path segments as ***; use an npm prefix without one.`,
     );
   }
+  return npmRoot;
+}
 
+async function resolveInstalledPackageDirectory(
+  run: RunSubprocess,
+  request: VerifiedBinaryInstallRequest,
+): Promise<string> {
+  const npmRoot = await resolveGlobalNpmRoot(run);
   const packageDirectory = join(npmRoot, request.packageName);
   const installedManifest = await readInstalledManifest(packageDirectory);
   if (installedManifest.version !== request.version) {

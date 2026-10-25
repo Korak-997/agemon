@@ -5,12 +5,21 @@ import type { LedgerEntry } from "../../core/state-manifest.js";
 import { printable } from "../../core/untrusted-text.js";
 import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../pins.js";
 import { describeOperation } from "../proposed-operation.js";
+import {
+  addSharedHolder,
+  createSharedResource,
+  describeUseSharedOperation,
+  isHeldByThisRepository,
+  releaseSharedResource,
+  repoLedgerUsesSharedResource,
+} from "../shared-resource.js";
 import type {
   AgemonPlugin,
   CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
+  SharedResourceDeclaration,
 } from "../types.js";
 import { ensureCrgConstraintsFile, hashLockedPipArgs } from "./constraints.js";
 import { crgSubprocessEnvironment, resolveCrgHome } from "./environment.js";
@@ -37,6 +46,14 @@ const ACTION_TYPE_GRAPH_BUILT = "graph-built";
 const GRAPH_ENTRY_NOT_DIRECTORY = `${GRAPH_DIRECTORY} is a symlink or file, not a directory; remove it, then run code-review-graph build`;
 const NOT_ON_PATH_HINT =
   "not on PATH — run 'pipx ensurepath' and open a new shell";
+
+const CRG_SHARED_RESOURCE: SharedResourceDeclaration = {
+  id: "pipx:code-review-graph",
+  toolName: PACKAGE_NAME,
+  manualRemoveCommand: `pipx uninstall ${PACKAGE_NAME}`,
+  removalVerb: "uninstall",
+  migratesFromRepoLedgers: true,
+};
 
 function getPluginActions(ctx: Context) {
   return ctx.manifest
@@ -105,7 +122,19 @@ async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
         `${PACKAGE_NAME} is installed via pipx but ${NOT_ON_PATH_HINT}`,
       );
     }
-    return [];
+    const ledgerRecordsUse =
+      hasManagedInstall(ctx) ||
+      repoLedgerUsesSharedResource(getPluginActions(ctx), CRG_SHARED_RESOURCE);
+    return ledgerRecordsUse &&
+      (await isHeldByThisRepository(ctx, CRG_SHARED_RESOURCE))
+      ? []
+      : [
+          describeUseSharedOperation(
+            PLUGIN_ID,
+            CRG_SHARED_RESOURCE,
+            hasManagedInstall(ctx),
+          ),
+        ];
   }
 
   return [
@@ -143,14 +172,11 @@ function reportIgnoredCrgEnvironment(ctx: Context): void {
   }
 }
 
-async function installCrg(ctx: Context): Promise<void> {
-  if (ctx.dryRun) {
-    ctx.ui.info(`Would install ${PACKAGE_NAME} via pipx`);
-    ctx.ui.info("Would build graph for current repository");
-    return;
-  }
+async function isCrgInstalled(ctx: Context): Promise<boolean> {
+  return (await locateCodeReviewGraph(ctx)).status === "found";
+}
 
-  const pipxHome = await resolvePipxHome();
+async function pipxInstallCrg(ctx: Context, pipxHome: string): Promise<void> {
   const constraintsPath = await ensureCrgConstraintsFile();
   const installResult = await ctx.run(
     "pipx",
@@ -167,13 +193,36 @@ async function installCrg(ctx: Context): Promise<void> {
         `pipx install failed for ${CODE_REVIEW_GRAPH_PACKAGE_SPEC}`,
     );
   }
+}
 
-  await ctx.manifest.recordAction({
-    plugin: PLUGIN_ID,
-    type: ACTION_TYPE_INSTALLED_BINARY,
-    target: `${PACKAGE_NAME} (pipx)`,
-    preExisting: false,
-  });
+async function installCrg(ctx: Context): Promise<void> {
+  if (ctx.dryRun) {
+    ctx.ui.info(`Would install ${PACKAGE_NAME} via pipx`);
+    ctx.ui.info("Would build graph for current repository");
+    return;
+  }
+
+  const pipxHome = await resolvePipxHome();
+  const outcome = await createSharedResource(
+    ctx,
+    PLUGIN_ID,
+    CRG_SHARED_RESOURCE,
+    {
+      isPresent: () => isCrgInstalled(ctx),
+      create: () => pipxInstallCrg(ctx, pipxHome),
+      async recordInstall() {
+        await ctx.manifest.recordAction({
+          plugin: PLUGIN_ID,
+          type: ACTION_TYPE_INSTALLED_BINARY,
+          target: `${PACKAGE_NAME} (pipx)`,
+          preExisting: false,
+        });
+      },
+    },
+  );
+  if (outcome === "already-present") {
+    return;
+  }
 
   const location = await locateCodeReviewGraph(ctx);
   if (location.status === "broken-venv") {
@@ -207,6 +256,30 @@ async function installCrg(ctx: Context): Promise<void> {
   }
 }
 
+async function useInstalledCrg(ctx: Context): Promise<void> {
+  if (ctx.dryRun) {
+    ctx.ui.info(`Would record that this repository uses ${PACKAGE_NAME}`);
+    return;
+  }
+  await addSharedHolder(ctx, PLUGIN_ID, CRG_SHARED_RESOURCE, {
+    isPresent: () => isCrgInstalled(ctx),
+    repoLedgerSaysInstalled: hasManagedInstall(ctx),
+  });
+}
+
+async function applyCrg(
+  ctx: Context,
+  operations: ProposedOperation[],
+): Promise<void> {
+  for (const operation of operations) {
+    if (operation.action === "use-shared") {
+      await useInstalledCrg(ctx);
+    } else if (operation.action === "install-package") {
+      await installCrg(ctx);
+    }
+  }
+}
+
 async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
   if (ctx.dryRun) {
     return { ok: true, detail: "dry-run" };
@@ -220,8 +293,17 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
     return { ok: false, detail: `${PACKAGE_NAME} is not installed` };
   }
 
-  if ((await graphEntryKind(ctx)) === "other") {
+  const graphEntry = await graphEntryKind(ctx);
+  if (graphEntry === "other") {
     return { ok: false, detail: GRAPH_ENTRY_NOT_DIRECTORY };
+  }
+  if (graphEntry === "missing") {
+    return entriesHaveBuiltGraph(getPluginActions(ctx))
+      ? {
+          ok: false,
+          detail: `${GRAPH_DIRECTORY}/ is missing — run agemon to build it again`,
+        }
+      : { ok: true, detail: "installed; no graph built in this repository" };
   }
 
   const statusResult = await ctx.run(location.binaryPath, ["status"], {
@@ -279,39 +361,48 @@ async function removeBuiltGraph(ctx: Context): Promise<void> {
 
 async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
   const managedInstall = entriesHaveManagedInstall(entries);
+  const usesSharedCrg =
+    managedInstall ||
+    repoLedgerUsesSharedResource(entries, CRG_SHARED_RESOURCE);
   const builtGraph = entriesHaveBuiltGraph(entries);
 
-  if (ctx.dryRun) {
-    if (builtGraph) {
+  if (builtGraph) {
+    if (ctx.dryRun) {
       ctx.ui.info(
         `Would remove ${GRAPH_DIRECTORY}/ (code graph, wiki/exports, embeddings — rebuildable with code-review-graph build)`,
       );
-    }
-    if (managedInstall) {
-      ctx.ui.info(`Would uninstall ${PACKAGE_NAME} from pipx`);
     } else {
+      await removeBuiltGraph(ctx);
+    }
+  }
+  if (!usesSharedCrg) {
+    if (ctx.dryRun) {
       ctx.ui.info(`Would keep pre-existing ${PACKAGE_NAME} install`);
     }
     return;
   }
 
-  if (builtGraph) {
-    await removeBuiltGraph(ctx);
-  }
-  if (!managedInstall) {
-    return;
-  }
-
-  const uninstallResult = await ctx.run("pipx", ["uninstall", PACKAGE_NAME], {
-    timeoutMs: UNINSTALL_TIMEOUT_MS,
-    env: { PIPX_HOME: await resolvePipxHome() },
+  await releaseSharedResource(ctx, CRG_SHARED_RESOURCE, {
+    releasingRepoInstalledIt: managedInstall,
+    isPresent: async () =>
+      (await locateCodeReviewGraph(ctx)).status !== "absent",
+    async remove() {
+      const uninstallResult = await ctx.run(
+        "pipx",
+        ["uninstall", PACKAGE_NAME],
+        {
+          timeoutMs: UNINSTALL_TIMEOUT_MS,
+          env: { PIPX_HOME: await resolvePipxHome() },
+        },
+      );
+      if (uninstallResult.code !== 0) {
+        throw new Error(
+          printable(uninstallResult.stderr) ||
+            `pipx uninstall failed for ${PACKAGE_NAME}`,
+        );
+      }
+    },
   });
-  if (uninstallResult.code !== 0) {
-    throw new Error(
-      printable(uninstallResult.stderr) ||
-        `pipx uninstall failed for ${PACKAGE_NAME}`,
-    );
-  }
 }
 
 async function uninstallCrg(ctx: Context): Promise<void> {
@@ -321,9 +412,11 @@ async function uninstallCrg(ctx: Context): Promise<void> {
 export const crgPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   riskClass: "executes",
+  sharedResources: [CRG_SHARED_RESOURCE],
   detect: detectCrgPresence,
   describeState: describeCrgState,
   plan: planCrg,
+  apply: applyCrg,
   install: installCrg,
   verify: verifyCrg,
   revert: revertCrg,

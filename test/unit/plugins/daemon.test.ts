@@ -15,8 +15,11 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplyRollbackError, applyPlan } from "../../../src/core/apply.js";
+import { writeJournal } from "../../../src/core/apply-journal.js";
 import type { Context } from "../../../src/core/context.js";
 import { NotARegularFileError } from "../../../src/core/files.js";
+import { readMachineLedger } from "../../../src/core/machine-ledger.js";
+import { recoverInterruptedApply } from "../../../src/core/recover.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { SubprocessResult } from "../../../src/core/subprocess-runner.js";
 import type {
@@ -45,6 +48,7 @@ interface FakeServiceManagerState {
   offeredAttempts: AutostartAttempt[][];
   unregistered: UnregisterAutostartInput[];
   lingerOn: boolean;
+  lingerChanges: ("enable" | "disable")[];
   usedAttemptLabel?: string;
   onRegister?: () => void;
   unreadableUnitNames?: Set<string>;
@@ -59,6 +63,7 @@ function createServiceState(
     offeredAttempts: [],
     unregistered: [],
     lingerOn: false,
+    lingerChanges: [],
     ...overrides,
   };
 }
@@ -79,11 +84,8 @@ function createFakeServiceManager(
         ) ?? input.attempts[0];
       state.activeUnitNames.add(input.unitName);
       state.unitContentsByName.set(input.unitName, used.unitContents);
-      const lingerEnabledByAgemon = !state.lingerOn;
-      state.lingerOn = true;
       return {
         unitPath: `/fake/systemd/user/${input.unitName}`,
-        lingerEnabledByAgemon,
         attemptLabel: used.label,
         failedAttempts: input.attempts
           .slice(0, input.attempts.indexOf(used))
@@ -94,14 +96,6 @@ function createFakeServiceManager(
       state.unregistered.push(input);
       state.activeUnitNames.delete(input.unitName);
       state.unitContentsByName.delete(input.unitName);
-      if (!input.disableLinger) {
-        return { lingerKeptFor: null };
-      }
-      const lingerKeptFor = [...state.unitContentsByName.keys()][0] ?? null;
-      if (lingerKeptFor === null) {
-        state.lingerOn = false;
-      }
-      return { lingerKeptFor };
     },
     async readUnitWorkingDirectory(unitName) {
       if (state.unreadableUnitNames?.has(unitName)) {
@@ -111,6 +105,21 @@ function createFakeServiceManager(
       return unitContents === undefined
         ? null
         : workingDirectoryOfUnit(unitContents);
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return state.lingerOn;
+    },
+    async enableLinger() {
+      state.lingerOn = true;
+      state.lingerChanges.push("enable");
+    },
+    async disableLinger() {
+      state.lingerOn = false;
+      state.lingerChanges.push("disable");
+    },
+    async findAgemonDaemonUnit() {
+      return [...state.unitContentsByName.keys()][0] ?? null;
     },
   };
 }
@@ -147,6 +156,7 @@ async function stubCrgEnvironment(
   vi.stubEnv("XDG_DATA_HOME", undefined);
   vi.stubEnv("AGEMON_FAKE_SUBPROCESS", "");
   vi.stubEnv("AGEMON_DAEMON_HARDENING", undefined);
+  vi.stubEnv("XDG_STATE_HOME", join(root, "state"));
   return { home, crgPath };
 }
 
@@ -235,6 +245,23 @@ async function installAndReadUnit(
     repo,
     environment,
   };
+}
+
+async function applyDaemonPlan(ctx: Context): Promise<unknown> {
+  const operations = (await daemonPlugin.plan?.(ctx)) ?? [];
+  return applyPlan(ctx, [daemonPlugin], {
+    plan: {
+      id: "0123456789abcdef",
+      agemonVersion: "9.9.9",
+      desiredStateHash: "hash",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      operations,
+    },
+    approved: operations,
+    workspaceIsolationApproved: null,
+    isolationStatus: "ignored",
+    allowUnignoredState: false,
+  }).catch((error: unknown) => error);
 }
 
 function unitLines(unit: string, key: string): string[] {
@@ -614,7 +641,7 @@ describe("daemon plugin hardening", () => {
     ).toBe(`service-unit:${unitNameFor(repo, "loyl")}`);
   });
 
-  it("a failed ledger write after register unregisters the new unit and restores linger", async () => {
+  it("a failed ledger write after register is rolled back: unit removed, linger off, ledger empty", async () => {
     await stubCrgEnvironment();
     const repo = await createSandboxDirectory("loyl");
     const state = createServiceState();
@@ -630,17 +657,17 @@ describe("daemon plugin hardening", () => {
       return recordAction(input);
     });
 
-    await expect(daemonPlugin.install(ctx)).rejects.toThrow("disk full");
+    expect(await applyDaemonPlan(ctx)).toBeInstanceOf(ApplyRollbackError);
 
     expect(state.unregistered).toEqual([
-      { unitName: unitNameFor(repo, "loyl"), disableLinger: true },
+      { unitName: unitNameFor(repo, "loyl") },
     ]);
     expect(state.activeUnitNames.size).toBe(0);
-    expect(state.lingerOn).toBe(false);
+    expect(state.lingerChanges).toEqual(["enable", "disable"]);
     expect(ctx.manifest.getActions()).toEqual([]);
   });
 
-  it("a save that fails after the entry was added leaves no daemon entries behind", async () => {
+  it("a save that fails while recording the intent never enables linger", async () => {
     await stubCrgEnvironment();
     const repo = await createSandboxDirectory("loyl");
     const state = createServiceState();
@@ -661,10 +688,30 @@ describe("daemon plugin hardening", () => {
       return persist();
     });
 
-    await expect(daemonPlugin.install(ctx)).rejects.toThrow("EIO");
+    expect(await applyDaemonPlan(ctx)).toBeInstanceOf(ApplyRollbackError);
 
     expect(ctx.manifest.getActions()).toEqual([]);
-    expect(state.lingerOn).toBe(false);
+    expect(state.lingerChanges).toEqual([]);
+    expect(state.activeUnitNames.size).toBe(0);
+  });
+
+  it("both attempts failing is rolled back: linger agemon enabled is disabled again", async () => {
+    await stubCrgEnvironment();
+    const repo = await createSandboxDirectory("loyl");
+    const state = createServiceState();
+    const manager = createFakeServiceManager(state);
+    manager.registerAutostart = async () => {
+      throw new Error("Could not start (strict: boom; compat: boom)");
+    };
+    const { ctx } = await createTestContext({
+      cwd: repo,
+      serviceManager: manager,
+    });
+
+    expect(await applyDaemonPlan(ctx)).toBeInstanceOf(ApplyRollbackError);
+
+    expect(state.lingerChanges).toEqual(["enable", "disable"]);
+    expect(ctx.manifest.getActions()).toEqual([]);
   });
 
   it("re-register prunes an old registered-service entry that has no resourceId", async () => {
@@ -722,7 +769,7 @@ describe("daemon plugin hardening", () => {
 
     expect(failure).toBeInstanceOf(ApplyRollbackError);
     expect(state.unregistered).toEqual([
-      { unitName: unitNameFor(repo, "loyl"), disableLinger: true },
+      { unitName: unitNameFor(repo, "loyl") },
     ]);
     expect(state.lingerOn).toBe(false);
     expect(ctx.manifest.getActions()).toEqual([]);
@@ -889,7 +936,7 @@ describe("daemon plugin ledger-driven revert", () => {
     await daemonPlugin.uninstall(ctx);
 
     expect(state.unregistered).toEqual([
-      { unitName: unitNameFor(repo, "loyl"), disableLinger: false },
+      { unitName: unitNameFor(repo, "loyl") },
     ]);
     expect(state.lingerOn).toBe(true);
   });
@@ -929,6 +976,7 @@ describe("daemon plugin ledger-driven revert", () => {
     expect(infos).toContain(
       "Keeping user linger: another agemon daemon (agemon-crg-daemon-other-0123abcd.service) still needs it",
     );
+    expect((await readMachineLedger()).resources.linger).toBeUndefined();
   });
 });
 
@@ -949,9 +997,7 @@ describe("daemon plugin migration from old unit names", () => {
     await daemonPlugin.install(ctx);
 
     expect([...state.activeUnitNames]).toEqual([newName]);
-    expect(state.unregistered).toEqual([
-      { unitName: OLD_SCHEME_UNIT, disableLinger: false },
-    ]);
+    expect(state.unregistered).toEqual([{ unitName: OLD_SCHEME_UNIT }]);
     expect(registeredUnitNames(ctx)).toEqual([`service-unit:${newName}`]);
     expect(await daemonPlugin.plan?.(ctx)).toEqual([]);
     expect(await daemonPlugin.detect(ctx)).toEqual({
@@ -1053,5 +1099,276 @@ describe("daemon plugin graph directory guard", () => {
       "Can't register the daemon: .code-review-graph in the repository is not a real directory",
     );
     expect(state.offeredAttempts).toEqual([]);
+  });
+});
+
+describe("daemon plugin and the shared linger record", () => {
+  async function lingerRecord() {
+    return (await readMachineLedger()).resources.linger ?? null;
+  }
+
+  async function secondRepository(
+    state: FakeServiceManagerState,
+    name: string,
+  ) {
+    const repo = await createSandboxDirectory(name);
+    const testContext = await createTestContext({
+      cwd: repo,
+      serviceManager: createFakeServiceManager(state),
+    });
+    return { ...testContext, repo };
+  }
+
+  it("strict fails, compat succeeds: linger is enabled once and recorded once", async () => {
+    const { ctx, state } = await createMigrationContext();
+    state.lingerOn = false;
+    state.usedAttemptLabel = "compat";
+
+    await daemonPlugin.install(ctx);
+
+    expect(state.lingerChanges).toEqual(["enable"]);
+    expect(
+      ctx.manifest
+        .getActions()
+        .filter((action) => action.type === "enabled-linger"),
+    ).toHaveLength(1);
+    expect(await lingerRecord()).toMatchObject({ origin: "installed" });
+  });
+
+  it("a freshly registered daemon plans nothing", async () => {
+    const { ctx } = await createMigrationContext();
+
+    await daemonPlugin.install(ctx);
+
+    expect(await daemonPlugin.plan?.(ctx)).toEqual([]);
+  });
+
+  it("linger stays on while another repo holds it; the installer disables it last", async () => {
+    const { ctx: a, state } = await createMigrationContext("first");
+    state.lingerOn = false;
+    await daemonPlugin.install(a);
+    const b = await secondRepository(state, "second");
+    await daemonPlugin.install(b.ctx);
+    expect(state.lingerChanges).toEqual(["enable"]);
+
+    await daemonPlugin.uninstall(b.ctx);
+    expect(state.lingerOn).toBe(true);
+    await daemonPlugin.uninstall(a);
+
+    expect(state.lingerOn).toBe(false);
+    expect(await lingerRecord()).toBeNull();
+  });
+
+  it("a pre-existing linger is never disabled, and nuke says it was enabled before agemon", async () => {
+    const { ctx, state, infos } = await createMigrationContext();
+
+    await daemonPlugin.install(ctx);
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.lingerChanges).toEqual([]);
+    expect(state.lingerOn).toBe(true);
+    expect(infos).toContain(
+      "Keeping linger: it was enabled before agemon tracked it — run 'loginctl disable-linger' yourself if nothing else needs it",
+    );
+  });
+
+  it("a second repo finding linger off while the first still holds it turns it back on, but never becomes its installer", async () => {
+    const { ctx: a, state } = await createMigrationContext("first");
+    state.lingerOn = false;
+    await daemonPlugin.install(a);
+    state.lingerOn = false;
+    const b = await secondRepository(state, "second");
+
+    await daemonPlugin.install(b.ctx);
+
+    expect(state.lingerChanges).toEqual(["enable", "enable"]);
+    expect(
+      b.ctx.manifest
+        .getActions()
+        .some((action) => action.type === "enabled-linger"),
+    ).toBe(false);
+    expect(await lingerRecord()).toMatchObject({
+      origin: "installed",
+      installedBy: await realpath(a.cwd),
+    });
+  });
+
+  it.each([
+    ["without", false],
+    ["with", true],
+  ])(
+    "a pre-P8 daemon repo %s an enabled-linger entry plans use-shared linger and records it pre-existing",
+    async (_label, hadEnabledLinger) => {
+      const { ctx, repo, state } = await createMigrationContext();
+      const unitName = unitNameFor(repo, "loyl");
+      seedUnit(state, unitName, repo);
+      await recordUnit(ctx, unitName);
+      if (hadEnabledLinger) {
+        await recordLingerEnabled(ctx);
+      }
+
+      const operations = (await daemonPlugin.plan?.(ctx)) ?? [];
+      expect(operations.map((operation) => operation.action)).toEqual([
+        "use-shared",
+      ]);
+      expect(operations[0]?.preview.text).toBe(
+        "record that this repository uses linger",
+      );
+      await daemonPlugin.apply?.(ctx, operations);
+
+      expect(await lingerRecord()).toEqual({
+        origin: "pre-existing",
+        holders: [await realpath(repo)],
+      });
+      expect(await daemonPlugin.plan?.(ctx)).toEqual([]);
+      await daemonPlugin.uninstall(ctx);
+      expect(state.lingerOn).toBe(true);
+    },
+  );
+
+  it("a forged enabled-linger in a fresh clone never disables linger", async () => {
+    const { ctx, repo, state } = await createMigrationContext();
+    await recordUnit(ctx, unitNameFor(repo, "loyl"));
+    await recordLingerEnabled(ctx);
+
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.lingerChanges).toEqual([]);
+  });
+
+  it("rolling back a use-shared linger op drops the holder", async () => {
+    const { ctx, repo, state } = await createMigrationContext();
+    seedUnit(state, unitNameFor(repo, "loyl"), repo);
+    await recordUnit(ctx, unitNameFor(repo, "loyl"));
+    const operations = (await daemonPlugin.plan?.(ctx)) ?? [];
+    await daemonPlugin.apply?.(ctx, operations);
+    const useEntries = ctx.manifest
+      .getActions()
+      .filter((action) => action.type === "uses-shared-resource");
+
+    await daemonPlugin.revert?.(ctx, useEntries);
+
+    expect(await lingerRecord()).toBeNull();
+    expect(state.lingerOn).toBe(true);
+  });
+
+  it("rollback of a failed re-registration keeps the installed linger record", async () => {
+    const { ctx, repo, state } = await createMigrationContext();
+    state.lingerOn = false;
+    await daemonPlugin.install(ctx);
+    state.activeUnitNames.clear();
+    const manager = createFakeServiceManager(state);
+    manager.registerAutostart = async () => {
+      throw new Error("Could not start (strict: boom; compat: boom)");
+    };
+
+    expect(
+      await applyDaemonPlan({ ...ctx, serviceManager: manager }),
+    ).toBeInstanceOf(ApplyRollbackError);
+
+    expect(state.lingerOn).toBe(true);
+    expect(await lingerRecord()).toMatchObject({
+      origin: "installed",
+      installedBy: await realpath(repo),
+    });
+  });
+
+  it("rollback of a re-registration that enabled linger turns it off again", async () => {
+    const { ctx, repo, state } = await createMigrationContext();
+    state.lingerOn = false;
+    await recordUnit(ctx, unitNameFor(repo, "loyl"));
+    const manager = createFakeServiceManager(state);
+    manager.registerAutostart = async () => {
+      throw new Error("Could not start (strict: boom; compat: boom)");
+    };
+    const failing = { ...ctx, serviceManager: manager };
+
+    expect(await applyDaemonPlan(failing)).toBeInstanceOf(ApplyRollbackError);
+
+    expect(state.lingerChanges).toEqual(["enable", "disable"]);
+    expect(registeredUnitNames(ctx)).toEqual([
+      `service-unit:${unitNameFor(repo, "loyl")}`,
+    ]);
+  });
+});
+
+describe("daemon plugin crash points are undone by recover", () => {
+  const PLAN_ID = "0123456789abcdef";
+
+  async function crashDuringInstall(
+    breakStep: (manager: ServiceManager, ctx: Context) => void,
+  ) {
+    const { ctx, repo, state } = await createMigrationContext();
+    state.lingerOn = false;
+    const manager = createFakeServiceManager(state);
+    breakStep(manager, ctx);
+    const crashing = { ...ctx, serviceManager: manager };
+    await writeJournal(repo, {
+      planId: PLAN_ID,
+      startedAt: "2026-10-25T00:00:00.000Z",
+      capabilityOrder: ["daemon"],
+      ledgerBefore: [],
+      snapshots: [],
+    });
+    ctx.manifest.setRecordingPlanId(PLAN_ID);
+    await expect(daemonPlugin.install(crashing)).rejects.toThrow("killed");
+    ctx.manifest.setRecordingPlanId(null);
+
+    const recovering = {
+      ...ctx,
+      manifest: await StateManifest.load(repo),
+      serviceManager: createFakeServiceManager(state),
+    };
+    await recoverInterruptedApply(recovering, [daemonPlugin], {
+      dryRun: false,
+    });
+    return { ctx: recovering, state };
+  }
+
+  async function expectClean(
+    ctx: Context,
+    state: FakeServiceManagerState,
+  ): Promise<void> {
+    expect(state.lingerOn).toBe(false);
+    expect(state.activeUnitNames.size).toBe(0);
+    expect((await readMachineLedger()).resources.linger).toBeUndefined();
+    expect(ctx.manifest.getActions()).toEqual([]);
+  }
+
+  it("after the intent was recorded, before linger was enabled", async () => {
+    const { ctx, state } = await crashDuringInstall((manager) => {
+      manager.enableLinger = async () => {
+        throw new Error("killed");
+      };
+    });
+    await expectClean(ctx, state);
+    expect(state.lingerChanges).toEqual([]);
+  });
+
+  it("after linger was enabled, before the unit started", async () => {
+    const { ctx, state } = await crashDuringInstall((manager) => {
+      manager.registerAutostart = async () => {
+        throw new Error("killed");
+      };
+    });
+    await expectClean(ctx, state);
+    expect(state.lingerChanges).toEqual(["enable", "disable"]);
+  });
+
+  it("after the unit started, before the hardening record", async () => {
+    const { ctx, state } = await crashDuringInstall((_manager, context) => {
+      const recordAction = context.manifest.recordAction.bind(context.manifest);
+      vi.spyOn(context.manifest, "recordAction").mockImplementation(
+        async (input) => {
+          if (input.type === "hardening-profile") {
+            throw new Error("killed");
+          }
+          return recordAction(input);
+        },
+      );
+    });
+    vi.restoreAllMocks();
+    await expectClean(ctx, state);
+    expect(state.lingerChanges).toEqual(["enable", "disable"]);
   });
 });

@@ -6,6 +6,7 @@ import type { Context } from "../../../src/core/context.js";
 import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
+import { withAgemonStateLock } from "../../../src/core/state-root.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import {
@@ -31,15 +32,21 @@ function createNoOpServiceManager(): ServiceManager {
     async registerAutostart() {
       return {
         unitPath: "",
-        lingerEnabledByAgemon: false,
         attemptLabel: "strict",
         failedAttempts: [],
       };
     },
-    async unregisterAutostart() {
-      return { lingerKeptFor: null };
-    },
+    async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
       return null;
     },
   };
@@ -123,6 +130,43 @@ describe("skills plugin", () => {
       .getActions()
       .filter((action) => action.plugin === "skills");
     expect(actionsAfterUninstall).toEqual([]);
+  });
+
+  it("waits for another run's Essentials install before fetching the pinned source", async () => {
+    const context = await createTestContext();
+    const gitCalls: string[][] = [];
+    const run = context.run;
+    context.run = async (command, args, options) => {
+      if (command === "git") {
+        gitCalls.push(args);
+      }
+      return run(command, args, options);
+    };
+    let releaseOtherRun: () => void = () => {};
+    let signalHeld: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      signalHeld = resolve;
+    });
+    const otherRun = withAgemonStateLock(
+      "skills-src.lock",
+      () =>
+        new Promise<void>((resolve) => {
+          releaseOtherRun = resolve;
+          signalHeld();
+        }),
+      1_000,
+    );
+    await held;
+
+    const install = skillsPlugin.install(context);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(gitCalls).toEqual([]);
+    releaseOtherRun();
+    await otherRun;
+    await install;
+
+    expect(gitCalls.length).toBeGreaterThan(0);
+    await uninstallPlugins({ ...context, yes: true }, [skillsPlugin], {});
   });
 
   it("git-ignores a skills-lock.json generated during install", async () => {

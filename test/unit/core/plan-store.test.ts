@@ -210,6 +210,54 @@ describe("readPlan validation", () => {
       "a target path of .",
       validPlan({ operations: [sampleOperation({ targetPath: "." })] }),
     ],
+    [
+      "an install-package marked inert and needing no consent",
+      validPlan({
+        operations: [
+          sampleOperation({
+            action: "install-package",
+            riskClass: "inert",
+            requiresConsent: false,
+          }),
+        ],
+      }),
+    ],
+    [
+      "a file create marked inert and needing no consent",
+      validPlan({
+        operations: [
+          sampleOperation({
+            action: "create",
+            riskClass: "inert",
+            requiresConsent: false,
+          }),
+        ],
+      }),
+    ],
+    [
+      "a use-shared operation that asks for consent",
+      validPlan({
+        operations: [
+          sampleOperation({
+            action: "use-shared",
+            riskClass: "inert",
+            requiresConsent: true,
+          }),
+        ],
+      }),
+    ],
+    [
+      "a use-shared operation with another risk class",
+      validPlan({
+        operations: [
+          sampleOperation({
+            action: "use-shared",
+            riskClass: "executes",
+            requiresConsent: false,
+          }),
+        ],
+      }),
+    ],
   ])("refuses a plan with %s", async (_label, contents) => {
     const cwd = await createSandbox();
     await plantPlanFile(cwd, VALID_PLAN_ID, contents);

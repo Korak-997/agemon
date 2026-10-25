@@ -20,12 +20,21 @@ import { crgUnitEnvironment, resolveCrgHome } from "../crg/environment.js";
 import { BROKEN_PIPX_VENV_HINT, locateCodeReviewGraph } from "../crg/locate.js";
 import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../pins.js";
 import { describeOperation } from "../proposed-operation.js";
+import {
+  addSharedHolder,
+  claimSharedResourceBeforeCreating,
+  describeUseSharedOperation,
+  isHeldByThisRepository,
+  releaseSharedResource,
+  repoLedgerUsesSharedResource,
+} from "../shared-resource.js";
 import type {
   AgemonPlugin,
   CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
+  SharedResourceDeclaration,
 } from "../types.js";
 
 const PLUGIN_ID = "daemon";
@@ -40,6 +49,14 @@ const ACTION_TYPE_REGISTERED_SERVICE = "registered-service";
 const ACTION_TYPE_ENABLED_LINGER = "enabled-linger";
 const ACTION_TYPE_HARDENING_PROFILE = "hardening-profile";
 const SERVICE_UNIT_RESOURCE_PREFIX = "service-unit:";
+
+const LINGER_SHARED_RESOURCE: SharedResourceDeclaration = {
+  id: "linger",
+  toolName: "linger",
+  manualRemoveCommand: "loginctl disable-linger",
+  removalVerb: "disable",
+  migratesFromRepoLedgers: false,
+};
 
 function slugifyForUnitName(raw: string): string {
   const normalized = raw
@@ -179,7 +196,6 @@ async function migrateStaleUnit(
   } else {
     await ctx.serviceManager.unregisterAutostart({
       unitName: staleUnit.unitName,
-      disableLinger: false,
     });
   }
   await ctx.manifest.removeActionIds([staleUnit.entry.id]);
@@ -431,6 +447,37 @@ async function describeDaemonState(
   ];
 }
 
+function ledgerRecordsLingerUse(entries: LedgerEntry[]): boolean {
+  return (
+    entries.some(
+      (entry) =>
+        isRecordedRegistration(entry) ||
+        entry.type === ACTION_TYPE_ENABLED_LINGER,
+    ) || repoLedgerUsesSharedResource(entries, LINGER_SHARED_RESOURCE)
+  );
+}
+
+async function lingerIsOnOrUnknown(ctx: Context): Promise<boolean | null> {
+  try {
+    return await ctx.serviceManager.isLingerEnabled();
+  } catch (error) {
+    ctx.ui.info(
+      `could not read user linger (${printable(errorMessage(error))}); not recording this repository as a linger user this time`,
+    );
+    return null;
+  }
+}
+
+async function needsLingerUseShared(ctx: Context): Promise<boolean> {
+  if ((await lingerIsOnOrUnknown(ctx)) !== true) {
+    return false;
+  }
+  return !(
+    ledgerRecordsLingerUse(getPluginActions(ctx)) &&
+    (await isHeldByThisRepository(ctx, LINGER_SHARED_RESOURCE))
+  );
+}
+
 async function planDaemon(ctx: Context): Promise<ProposedOperation[]> {
   const unitName = await resolveUnitName(ctx);
   const status = await ctx.serviceManager.isActive(unitName);
@@ -438,7 +485,9 @@ async function planDaemon(ctx: Context): Promise<ProposedOperation[]> {
     (unit) => unit.unitName,
   );
   if (status.active && staleUnitNames.length === 0) {
-    return [];
+    return (await needsLingerUseShared(ctx))
+      ? [describeUseSharedOperation(PLUGIN_ID, LINGER_SHARED_RESOURCE, false)]
+      : [];
   }
 
   const replaces =
@@ -488,55 +537,20 @@ async function installDaemon(ctx: Context): Promise<void> {
   }
 }
 
+async function recordDaemonAction(
+  ctx: Context,
+  input: Omit<RecordManifestActionInput, "plugin" | "preExisting">,
+): Promise<void> {
+  await ctx.manifest.recordAction({
+    ...input,
+    plugin: PLUGIN_ID,
+    preExisting: false,
+  });
+}
+
 async function registerDaemon(ctx: Context, unitName: string): Promise<void> {
   const paths = await resolveUnitPaths(ctx);
   const hardening = await chooseHardening(paths);
-  const registration = await ctx.serviceManager.registerAutostart({
-    unitName,
-    attempts: hardening.profiles.map((profile) => ({
-      label: profile,
-      unitContents: buildUnitContents(paths, profile),
-    })),
-  });
-  ctx.ui.info(describeHardening(registration, hardening));
-
-  try {
-    await recordRegistration(ctx, unitName, registration);
-  } catch (error) {
-    try {
-      await ctx.serviceManager.unregisterAutostart({
-        unitName,
-        disableLinger: registration.lingerEnabledByAgemon,
-      });
-    } catch (cleanupError) {
-      const manualCleanup = [
-        `systemctl --user disable --now ${unitName}`,
-        `rm '${registration.unitPath}'`,
-        "systemctl --user daemon-reload",
-        ...(registration.lingerEnabledByAgemon
-          ? ["loginctl disable-linger"]
-          : []),
-      ];
-      throw new Error(
-        `${errorMessage(error)}; removing ${unitName} again also failed (${errorMessage(cleanupError)}). Run these yourself: ${manualCleanup.join("; ")}`,
-        { cause: error },
-      );
-    }
-    throw error;
-  }
-}
-
-function recordedUnitName(entry: LedgerEntry): string {
-  return entry.resourceId?.startsWith(SERVICE_UNIT_RESOURCE_PREFIX)
-    ? entry.resourceId.slice(SERVICE_UNIT_RESOURCE_PREFIX.length)
-    : basename(entry.target);
-}
-
-async function recordRegistration(
-  ctx: Context,
-  unitName: string,
-  registration: RegisterAutostartResult,
-): Promise<void> {
   const supersededIds = getPluginActions(ctx)
     .filter(
       (action) =>
@@ -546,43 +560,49 @@ async function recordRegistration(
     )
     .map((action) => action.id);
 
-  const idsBeforeRecording = new Set(
-    getPluginActions(ctx).map((action) => action.id),
+  const mustEnableLinger = await claimSharedResourceBeforeCreating(
+    ctx,
+    LINGER_SHARED_RESOURCE,
+    {
+      isPresent: () => ctx.serviceManager.isLingerEnabled(),
+      async recordIntent(becomesLingerInstaller) {
+        await recordDaemonAction(ctx, {
+          type: ACTION_TYPE_REGISTERED_SERVICE,
+          target: ctx.serviceManager.unitPathFor(unitName),
+          resourceId: `${SERVICE_UNIT_RESOURCE_PREFIX}${unitName}`,
+        });
+        if (becomesLingerInstaller) {
+          await recordDaemonAction(ctx, {
+            type: ACTION_TYPE_ENABLED_LINGER,
+            target: process.env.USER ?? "current-user",
+          });
+        }
+      },
+    },
   );
-  const record = async (
-    input: Omit<RecordManifestActionInput, "plugin" | "preExisting">,
-  ): Promise<void> => {
-    await ctx.manifest.recordAction({
-      ...input,
-      plugin: PLUGIN_ID,
-      preExisting: false,
-    });
-  };
-
-  try {
-    await record({
-      type: ACTION_TYPE_REGISTERED_SERVICE,
-      target: registration.unitPath,
-      resourceId: `${SERVICE_UNIT_RESOURCE_PREFIX}${unitName}`,
-    });
-    if (registration.lingerEnabledByAgemon) {
-      await record({
-        type: ACTION_TYPE_ENABLED_LINGER,
-        target: process.env.USER ?? "current-user",
-      });
-    }
-    await record({
-      type: ACTION_TYPE_HARDENING_PROFILE,
-      target: registration.attemptLabel,
-    });
-    await ctx.manifest.removeActionIds(supersededIds);
-  } catch (error) {
-    const recordedIds = getPluginActions(ctx)
-      .map((action) => action.id)
-      .filter((id) => !idsBeforeRecording.has(id));
-    await ctx.manifest.removeActionIds(recordedIds).catch(() => {});
-    throw error;
+  if (mustEnableLinger) {
+    await ctx.serviceManager.enableLinger();
   }
+
+  const registration = await ctx.serviceManager.registerAutostart({
+    unitName,
+    attempts: hardening.profiles.map((profile) => ({
+      label: profile,
+      unitContents: buildUnitContents(paths, profile),
+    })),
+  });
+  ctx.ui.info(describeHardening(registration, hardening));
+  await recordDaemonAction(ctx, {
+    type: ACTION_TYPE_HARDENING_PROFILE,
+    target: registration.attemptLabel,
+  });
+  await ctx.manifest.removeActionIds(supersededIds);
+}
+
+function recordedUnitName(entry: LedgerEntry): string {
+  return entry.resourceId?.startsWith(SERVICE_UNIT_RESOURCE_PREFIX)
+    ? entry.resourceId.slice(SERVICE_UNIT_RESOURCE_PREFIX.length)
+    : basename(entry.target);
 }
 
 async function verifyDaemon(ctx: Context): Promise<PluginVerificationResult> {
@@ -606,6 +626,38 @@ function entriesEnabledLingerByAgemon(entries: LedgerEntry[]): boolean {
   );
 }
 
+async function releaseLingerIfThisRepoUsedIt(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
+  if (!ledgerRecordsLingerUse(entries)) {
+    return;
+  }
+  const enabledLingerHere = entriesEnabledLingerByAgemon(entries);
+  const revertedIds = new Set(entries.map((entry) => entry.id));
+  const revertsARegistration = entries.some(isRecordedRegistration);
+  const olderRegistrationRemains = getPluginActions(ctx).some(
+    (entry) => isRecordedRegistration(entry) && !revertedIds.has(entry.id),
+  );
+  if (revertsARegistration && olderRegistrationRemains && !enabledLingerHere) {
+    return;
+  }
+  await releaseSharedResource(ctx, LINGER_SHARED_RESOURCE, {
+    releasingRepoInstalledIt: enabledLingerHere,
+    isPresent: () => ctx.serviceManager.isLingerEnabled(),
+    async remove() {
+      const remainingUnit = await ctx.serviceManager.findAgemonDaemonUnit();
+      if (remainingUnit !== null) {
+        ctx.ui.info(
+          `Keeping user linger: another agemon daemon (${printable(remainingUnit)}) still needs it`,
+        );
+        return;
+      }
+      await ctx.serviceManager.disableLinger();
+    },
+  });
+}
+
 async function revertDaemon(
   ctx: Context,
   entries: LedgerEntry[],
@@ -614,45 +666,52 @@ async function revertDaemon(
   const units = recordedUnits(entries);
   const repoRoot = await realpath(ctx.cwd);
   const removableUnits: RecordedUnit[] = [];
-  let removesAnExistingUnit = false;
   for (const unit of units) {
     const ownership = await classifyRecordedUnit(ctx, unit, repoRoot);
     if (ownership.kind === "other") {
       describeKeptUnit(ctx, unit.unitName, ownership.owner);
     } else {
       removableUnits.push(unit);
-      removesAnExistingUnit ||= ownership.kind === "this-repo";
     }
   }
-  const disableLinger =
-    removesAnExistingUnit && entriesEnabledLingerByAgemon(entries);
 
   if (ctx.dryRun) {
     for (const unit of removableUnits) {
       ctx.ui.info(`Would unregister user service ${unit.unitName}`);
-    }
-    if (disableLinger) {
-      ctx.ui.info(
-        "Would disable user linger because agemon enabled it, unless another agemon daemon still needs it",
-      );
     }
     if (units.length === 0) {
       ctx.ui.info(
         "Would keep the pre-existing daemon unit (agemon did not register it)",
       );
     }
+  } else {
+    for (const unit of removableUnits) {
+      await ctx.serviceManager.unregisterAutostart({ unitName: unit.unitName });
+    }
+  }
+  await releaseLingerIfThisRepoUsedIt(ctx, entries);
+}
+
+async function useLinger(ctx: Context): Promise<void> {
+  if (ctx.dryRun) {
+    ctx.ui.info("Would record that this repository uses user linger");
     return;
   }
+  await addSharedHolder(ctx, PLUGIN_ID, LINGER_SHARED_RESOURCE, {
+    isPresent: () => ctx.serviceManager.isLingerEnabled(),
+    repoLedgerSaysInstalled: false,
+  });
+}
 
-  for (const [index, unit] of removableUnits.entries()) {
-    const { lingerKeptFor } = await ctx.serviceManager.unregisterAutostart({
-      unitName: unit.unitName,
-      disableLinger: disableLinger && index === removableUnits.length - 1,
-    });
-    if (lingerKeptFor !== null) {
-      ctx.ui.info(
-        `Keeping user linger: another agemon daemon (${lingerKeptFor}) still needs it`,
-      );
+async function applyDaemon(
+  ctx: Context,
+  operations: ProposedOperation[],
+): Promise<void> {
+  for (const operation of operations) {
+    if (operation.action === "use-shared") {
+      await useLinger(ctx);
+    } else if (operation.action === "register-service") {
+      await installDaemon(ctx);
     }
   }
 }
@@ -665,9 +724,11 @@ export const daemonPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   dependsOn: ["crg"],
   riskClass: "executes",
+  sharedResources: [LINGER_SHARED_RESOURCE],
   detect: detectDaemon,
   describeState: describeDaemonState,
   plan: planDaemon,
+  apply: applyDaemon,
   install: installDaemon,
   verify: verifyDaemon,
   revert: revertDaemon,

@@ -15,7 +15,7 @@ import {
 import { assertNoInterruptedApply } from "./apply-journal.js";
 import { resolveConfigPath, writeConfig } from "./config.js";
 import type { ConflictResolution, SkippedOperation } from "./consent.js";
-import { buildConsentGates } from "./consent.js";
+import { buildConsentGates, useSharedOperations } from "./consent.js";
 import type { Context } from "./context.js";
 import {
   computePlanId,
@@ -24,6 +24,7 @@ import {
   writePlan,
 } from "./plan-store.js";
 import { isInteractiveTerminal } from "./prompt.js";
+import { checkAgemonStateDirectoryBeforeRun } from "./state-root.js";
 import { printable } from "./untrusted-text.js";
 
 type ConflictDecisionMap = Record<string, "keep" | "replace" | "skip">;
@@ -276,6 +277,23 @@ function assertPlanIsCompatible(
     );
   }
 
+  const foreignSharedOperation = plan.operations.find(
+    (operation) =>
+      operation.action === "use-shared" &&
+      !pluginById
+        .get(operation.capabilityId)
+        ?.sharedResources?.some(
+          (resource) =>
+            resource.id === operation.targetPath &&
+            resource.id === operation.resourceId,
+        ),
+  );
+  if (foreignSharedOperation) {
+    throw new Error(
+      `Plan ${plan.id} asks ${foreignSharedOperation.capabilityId} to use the shared tool ${printable(foreignSharedOperation.targetPath)}, which it does not manage.`,
+    );
+  }
+
   const fileActionForNonWriter = plan.operations.find(
     (operation) =>
       FILE_TARGETING_ACTIONS.has(operation.action) &&
@@ -318,6 +336,9 @@ export async function reconcile(
   allPlugins: AgemonPlugin[],
   options: ReconcileOptions,
 ): Promise<RunOutcome> {
+  await checkAgemonStateDirectoryBeforeRun(ctx.dryRun, (line) =>
+    ctx.ui.info(line),
+  );
   await assertNoInterruptedApply(ctx.cwd);
   const plugins = resolvePluginOrder(allPlugins, options.only);
 
@@ -337,17 +358,21 @@ export async function reconcile(
       agemonVersion: options.agemonVersion,
     }));
 
-  const sessionCannotConsent = !ctx.yes && !isInteractiveTerminal();
-  const isFirstRun = options.persistConfig === true;
-  if (
-    ctx.dryRun ||
-    (plan.operations.length > 0 && sessionCannotConsent && isFirstRun)
-  ) {
+  if (ctx.dryRun) {
     await previewAndStop(ctx, plan);
     return "previewed";
   }
 
   const { isolation } = await discoverRepository(ctx);
+  const sessionCannotConsent = !ctx.yes && !isInteractiveTerminal();
+  const isFirstRun = options.persistConfig === true;
+  const needsConsentBeforeApplying =
+    plan.operations.some((operation) => operation.action !== "use-shared") ||
+    (plan.operations.length > 0 && isolation.status !== "ignored");
+  if (sessionCannotConsent && isFirstRun && needsConsentBeforeApplying) {
+    await previewAndStop(ctx, plan);
+    return "previewed";
+  }
   if (isolation.trackingCheckError !== null) {
     ctx.ui.info(isolation.trackingCheckError);
   }
@@ -363,10 +388,29 @@ export async function reconcile(
   const approval = await ctx.consent(gates, {
     conflictDecisions: options.conflictDecisions,
   });
-  const consentMissing = approval.skipped.some((skip) => skip.consentMissing);
+  const stateCanBeWritten =
+    isolation.status === "ignored" ||
+    approval.workspaceIsolationApproved === true ||
+    options.allowUnignoredState;
+  const sharedOperations = useSharedOperations(plan);
+  const skipped: SkippedOperation[] = [
+    ...approval.skipped,
+    ...(stateCanBeWritten
+      ? []
+      : sharedOperations.map((operation) => ({
+          operation,
+          reason: "needs /.agemon/ git-ignored",
+          consentMissing: sessionCannotConsent,
+        }))),
+  ];
+  const toApply = [
+    ...approval.approved,
+    ...(stateCanBeWritten ? sharedOperations : []),
+  ];
+  const consentMissing = skipped.some((skip) => skip.consentMissing);
 
-  if (approval.approved.length === 0) {
-    if (approval.skipped.every(isSettledConflict)) {
+  if (toApply.length === 0) {
+    if (skipped.every(isSettledConflict)) {
       return finishWithNothingToApply(
         ctx,
         plugins,
@@ -377,7 +421,7 @@ export async function reconcile(
     ctx.log.log(
       renderRunSummary({
         kind: "declined",
-        skipped: approval.skipped.map((skip) => ({
+        skipped: skipped.map((skip) => ({
           label: skip.operation.targetPath || skip.operation.resourceId,
           reason: skip.reason,
         })),
@@ -390,7 +434,7 @@ export async function reconcile(
   try {
     result = await applyPlan(ctx, allPlugins, {
       plan,
-      approved: approval.approved,
+      approved: toApply,
       workspaceIsolationApproved: approval.workspaceIsolationApproved,
       isolationStatus: isolation.status,
       allowUnignoredState: options.allowUnignoredState,
@@ -402,7 +446,7 @@ export async function reconcile(
     throw error;
   }
 
-  reportSkippedOperations(ctx, approval.skipped);
+  reportSkippedOperations(ctx, skipped);
 
   const appliedCapabilityIds = new Set(
     result.applied.map((operation) => operation.capabilityId),
@@ -514,6 +558,11 @@ function previewContext(
       unregisterAutostart: refuseCommand,
       readUnitWorkingDirectory: (unitName) =>
         ctx.serviceManager.readUnitWorkingDirectory(unitName),
+      unitPathFor: (unitName) => ctx.serviceManager.unitPathFor(unitName),
+      isLingerEnabled: refuseCommand,
+      enableLinger: refuseCommand,
+      disableLinger: refuseCommand,
+      findAgemonDaemonUnit: () => ctx.serviceManager.findAgemonDaemonUnit(),
     },
   };
 }
@@ -603,6 +652,9 @@ export async function uninstallPlugins(
   allPlugins: AgemonPlugin[],
   options: UninstallOptions,
 ): Promise<UninstallOutcome> {
+  await checkAgemonStateDirectoryBeforeRun(ctx.dryRun, (line) =>
+    ctx.ui.info(line),
+  );
   await assertNoInterruptedApply(ctx.cwd);
   const requestedIds = selectUninstallRequest(allPlugins, options);
   const orderedRequest = resolvePluginOrder(allPlugins, undefined)

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateManifest } from "../../../src/core/state-manifest.js";
+import { printable } from "../../../src/core/untrusted-text.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -413,5 +414,82 @@ describe("StateManifest recording plan id and restoreActions", () => {
 
     expect(manifest.getActions()).toEqual([kept]);
     expect((await StateManifest.load(sandbox)).getActions()).toEqual([kept]);
+  });
+});
+
+describe("StateManifest refuses control characters in ledger text", () => {
+  const V3_ENTRY = { ...V2_MANIFEST.actions[0] };
+
+  it.each<[string, Record<string, unknown>]>([
+    ["type", { type: "managed\nrule-file" }],
+    ["plugin", { plugin: "crg\u001b[2J" }],
+    ["id", { id: "11\u0007" }],
+    ["resourceId", { resourceId: "rule-file:A\nB" }],
+    ["planId", { planId: "abc\u0000" }],
+    ["target", { target: "AGENTS\n.md" }],
+    ["backup.path", { backup: { path: "a\nb", checksum: "x" } }],
+    ["validation.detail", { validation: { ok: false, detail: "x\u001b" } }],
+  ])(
+    "a v3 entry with a control character in %s fails to load, naming the entry and field",
+    async (field, override) => {
+      const cwd = await createSandbox();
+      await writeManifest(cwd, {
+        ...V2_MANIFEST,
+        version: 3,
+        actions: [{ ...V3_ENTRY, ...override }],
+      });
+
+      await expect(StateManifest.load(cwd)).rejects.toThrow(
+        `entry 0 (${printable(String(override.plugin ?? "master-prompt"))}/`,
+      );
+      await expect(StateManifest.load(cwd)).rejects.toThrow(
+        `'${field}' contains a control character. agemon never writes this`,
+      );
+    },
+  );
+
+  it("a forged v1 ledger with a newline in its target fails to load", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, {
+      ...V1_MANIFEST,
+      actions: [{ ...V1_MANIFEST.actions[0], target: "AGENTS.md\nfake line" }],
+    });
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(
+      "'target' contains a control character",
+    );
+  });
+
+  it("a tab or a zero-width character in a target is accepted; a newline is not", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, {
+      ...V2_MANIFEST,
+      version: 3,
+      actions: [{ ...V3_ENTRY, target: "dir\twith tab/​file.md" }],
+    });
+
+    await expect(StateManifest.load(cwd)).resolves.toBeDefined();
+  });
+
+  it("a non-object ledger entry still reports the schema error", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, { ...V2_MANIFEST, version: 3, actions: [null] });
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(/invalid schema/);
+  });
+
+  it("recordAction refuses to write what the reader would refuse", async () => {
+    const cwd = await createSandbox();
+    const manifest = await StateManifest.load(cwd);
+
+    await expect(
+      manifest.recordAction({
+        plugin: "crg",
+        type: "installed\nbinary",
+        target: "code-review-graph",
+        preExisting: false,
+      }),
+    ).rejects.toThrow("'type' contains a control character");
+    expect(manifest.getActions()).toEqual([]);
   });
 });

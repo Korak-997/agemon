@@ -7,7 +7,7 @@ import {
   writeNewFileWithFallback,
 } from "./files.js";
 import { resolveStateDirectory } from "./repo-paths.js";
-import { printable } from "./untrusted-text.js";
+import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 const MANIFEST_RELATIVE_PATH = ".agemon/state.json";
 const LEDGER_VERSION = 3;
@@ -180,6 +180,90 @@ function isLedgerEntry(value: unknown): value is LedgerEntry {
   );
 }
 
+const PATH_TEXT_UNSAFE_CHARACTER_RANGES =
+  "\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f";
+const PATH_TEXT_UNSAFE_CHARACTERS = new RegExp(
+  `[${PATH_TEXT_UNSAFE_CHARACTER_RANGES}]`,
+  "u",
+);
+
+const MAX_ECHOED_IDENTIFIER_CHARACTERS = 80;
+
+const IDENTIFIER_TEXT_FIELDS = [
+  "id",
+  "plugin",
+  "type",
+  "resourceId",
+  "planId",
+  "createdAt",
+  "agemonVersion",
+  "fingerprintBefore",
+  "fingerprintAfter",
+  "desiredRevision",
+] as const;
+
+function isSafePathText(value: string): boolean {
+  return !PATH_TEXT_UNSAFE_CHARACTERS.test(value);
+}
+
+function findUnsafeTextField(entry: Record<string, unknown>): string | null {
+  for (const field of IDENTIFIER_TEXT_FIELDS) {
+    const value = entry[field];
+    if (typeof value === "string" && !isSafeIdentifier(value)) {
+      return field;
+    }
+  }
+  if (typeof entry.target === "string" && !isSafePathText(entry.target)) {
+    return "target";
+  }
+  const validation = entry.validation as Record<string, unknown> | null;
+  if (
+    typeof validation?.detail === "string" &&
+    !isSafeIdentifier(validation.detail)
+  ) {
+    return "validation.detail";
+  }
+  const backup = entry.backup as Record<string, unknown> | null;
+  if (typeof backup?.path === "string" && !isSafePathText(backup.path)) {
+    return "backup.path";
+  }
+  if (
+    typeof backup?.checksum === "string" &&
+    !isSafeIdentifier(backup.checksum)
+  ) {
+    return "backup.checksum";
+  }
+  return null;
+}
+
+function describeUnsafeEntry(
+  entries: unknown[],
+): { index: number; field: string; entry: Record<string, unknown> } | null {
+  for (const [index, value] of entries.entries()) {
+    if (typeof value !== "object" || value === null) {
+      continue;
+    }
+    const entry = value as Record<string, unknown>;
+    const field = findUnsafeTextField(entry);
+    if (field !== null) {
+      return { index, field, entry };
+    }
+  }
+  return null;
+}
+
+function assertSafeLedgerText(entries: unknown[]): void {
+  const unsafe = describeUnsafeEntry(entries);
+  if (unsafe === null) {
+    return;
+  }
+  const shortText = (value: unknown) =>
+    printable(String(value).slice(0, MAX_ECHOED_IDENTIFIER_CHARACTERS));
+  throw new Error(
+    `${MANIFEST_RELATIVE_PATH} entry ${unsafe.index} (${shortText(unsafe.entry.plugin)}/${shortText(unsafe.entry.id)}): '${unsafe.field}' contains a control character. agemon never writes this — restore .agemon/state.json from git or remove that entry; nuke and apply stay blocked until then.`,
+  );
+}
+
 function normalizeLedgerEntry(value: LedgerEntry): LedgerEntry {
   return {
     id: value.id,
@@ -210,7 +294,11 @@ function normalizeLedgerEntry(value: LedgerEntry): LedgerEntry {
 }
 
 export function parseLedgerEntries(value: unknown): LedgerEntry[] | null {
-  if (!Array.isArray(value) || !value.every((entry) => isLedgerEntry(entry))) {
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry) => isLedgerEntry(entry)) ||
+    describeUnsafeEntry(value) !== null
+  ) {
     return null;
   }
   return value.map(normalizeLedgerEntry);
@@ -267,6 +355,7 @@ function interpretManifestContents(parsed: unknown): LoadedManifest {
     throw new Error("State manifest has an invalid schema");
   }
 
+  assertSafeLedgerText(parsed.actions);
   if (parsed.version === LEDGER_VERSION || parsed.version === 2) {
     const actions = parseLedgerEntries(parsed.actions);
     if (actions === null) {
@@ -405,6 +494,7 @@ export class StateManifest {
       validation: input.validation ?? null,
       backup: input.backup ?? null,
     };
+    assertSafeLedgerText([action]);
     this.state.actions.push(action);
     await this.persist();
     return action;
@@ -420,6 +510,14 @@ export class StateManifest {
     if (!entry) {
       return undefined;
     }
+    assertSafeLedgerText([
+      {
+        ...entry,
+        ...Object.fromEntries(
+          Object.entries(patch).filter(([, value]) => value !== undefined),
+        ),
+      },
+    ]);
     if (patch.fingerprintBefore !== undefined) {
       entry.fingerprintBefore = patch.fingerprintBefore;
     }

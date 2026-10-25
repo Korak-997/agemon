@@ -14,15 +14,21 @@ function createNoOpServiceManager(): ServiceManager {
     async registerAutostart() {
       return {
         unitPath: "",
-        lingerEnabledByAgemon: false,
         attemptLabel: "strict",
         failedAttempts: [],
       };
     },
-    async unregisterAutostart() {
-      return { lingerKeptFor: null };
-    },
+    async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
       return null;
     },
   };

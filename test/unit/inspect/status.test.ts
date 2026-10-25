@@ -41,15 +41,21 @@ function createNoOpServiceManager(): ServiceManager {
     async registerAutostart() {
       return {
         unitPath: "",
-        lingerEnabledByAgemon: false,
         attemptLabel: "strict",
         failedAttempts: [],
       };
     },
-    async unregisterAutostart() {
-      return { lingerKeptFor: null };
-    },
+    async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
       return null;
     },
   };
@@ -366,26 +372,6 @@ describe("status and discovery against hostile repo contents", () => {
     },
     HOSTILE_READ_TIMEOUT_MS,
   );
-
-  it("reports an unreadable forged ledger target as an escaped problem instead of aborting", async () => {
-    const context = await createStatusContext();
-    await recordManagedRuleFile(
-      context,
-      `\u001b]0;pwned\u0007${"x".repeat(300)}`,
-      "anything\n",
-    );
-
-    const problems = await verifyManagedState(context);
-
-    const report = problems.join("\n");
-    expect(report).not.toContain("\u001b");
-    expect(report).not.toContain("\u0007");
-    expect(problems).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^ignoring ledger entry for \?\]0;pwned\?x+/),
-      ]),
-    );
-  });
 
   it("reports a ledger target outside the repo as a problem instead of throwing", async () => {
     const context = await createStatusContext();

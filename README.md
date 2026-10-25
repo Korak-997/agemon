@@ -86,8 +86,9 @@ units, so one never overwrites and restarts the other's daemon.
 The ledger records the unit name, and `nuke` removes the unit it recorded, even after the
 repository was renamed or moved. A unit that now runs for another existing repository is
 kept and reported. Units registered by older agemon versions (named without the hash) are
-replaced on the next `agemon` run. Linger is switched off only when agemon switched it
-on and no other agemon daemon unit is left.
+replaced on the next `agemon` run. User linger is shared by every repository: `nuke`
+switches it off only in the repository that switched it on, once no other repository
+uses it and no other agemon daemon unit is left.
 
 ## Requirements
 
@@ -199,7 +200,7 @@ agemon [options]
 Reverse managed changes:
 
 ```bash
-agemon nuke [--yes] [--dry-run] [--only <plugins>] [--skip-daemon]
+agemon nuke [--yes] [--dry-run] [--only <plugins>] [--skip-daemon] [--remove-shared <tools>]
 ```
 
 `nuke` first lists everything it will reverse, including machine-wide steps such as
@@ -219,6 +220,12 @@ uninstalling a global npm package or disabling user linger. It then asks once. N
   fresh clone's committed `agemon.toml` survives `nuke --only …`. Deleting it is always
   listed and asked about like any other reversal;
 - `nuke --dry-run` changes nothing, not even `.agemon/`.
+- code-review-graph and agnix are shared by every repository on the machine. `nuke`
+  removes one only when this repository installed it and no other repository uses it
+  (`agemon status` lists the users under "Shared tools"). A tool agemon installed before
+  it tracked shared tools is kept unless you pass `--remove-shared code-review-graph,agnix`
+  (or one of them); the kept line prints the manual uninstall command. See
+  [Two Ledgers](docs/architecture-and-operations.md#two-ledgers).
 
 Restore the files an interrupted apply changed (see
 [Interrupted applies](#interrupted-applies)):
@@ -426,6 +433,8 @@ kept by `nuke` because every repo on the machine shares them:
 
 - `tools/<hash>/`: the `skills` CLI, installed from `assets/tools/package-lock.json`
 - `skills-src/<commit>/`: the pinned Essentials checkout that `skills add` installs from
+- `machine.json`: which repositories use code-review-graph, agnix and user linger, and who
+  installed or enabled them
 
 ## Local Development
 

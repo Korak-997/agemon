@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Context } from "../../core/context.js";
 import { ensureGitignoreEntry } from "../../core/gitignore.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
+import { withAgemonStateLock } from "../../core/state-root.js";
 import { printable } from "../../core/untrusted-text.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
@@ -40,6 +41,7 @@ const SKILLS_LOCK_GITIGNORE_ENTRY = "/skills-lock.json";
 
 const SKILLS_LIST_TIMEOUT_MS = 30_000;
 const SKILLS_ADD_TIMEOUT_MS = 180_000;
+const SKILLS_SOURCE_LOCK_WAIT_MS = 30 * 60_000;
 const SKILLS_REMOVE_TIMEOUT_MS = 120_000;
 
 interface SkillsListEntry {
@@ -401,6 +403,40 @@ async function fetchPinnedSources(
   }
 }
 
+async function addPinnedSkills(
+  ctx: Context,
+  entriesToAdd: SkillBundleEntry[],
+): Promise<void> {
+  await fetchPinnedSources(ctx, entriesToAdd);
+  for (const entry of entriesToAdd) {
+    const addResult = await runSkillsCli(
+      ctx,
+      [
+        "add",
+        entry.source,
+        "--skill",
+        entry.skillName,
+        "--agent",
+        entry.agent,
+        "--yes",
+      ],
+      SKILLS_ADD_TIMEOUT_MS,
+    );
+    if (addResult.code !== 0) {
+      throw new Error(
+        addResult.stderr || `skills add failed for ${entry.skillName}`,
+      );
+    }
+
+    await ctx.manifest.recordAction({
+      plugin: PLUGIN_ID,
+      type: ACTION_TYPE_INSTALLED_SKILL,
+      target: entry.skillName,
+      preExisting: false,
+    });
+  }
+}
+
 async function installSkills(ctx: Context): Promise<void> {
   const isFreshInstall = getRecordedGroups(ctx).length === 0;
   const unofferedGroups = getUnofferedGroups(ctx);
@@ -444,34 +480,11 @@ async function installSkills(ctx: Context): Promise<void> {
     }
   }
 
-  await fetchPinnedSources(ctx, entriesToAdd);
-  for (const entry of entriesToAdd) {
-    const addResult = await runSkillsCli(
-      ctx,
-      [
-        "add",
-        entry.source,
-        "--skill",
-        entry.skillName,
-        "--agent",
-        entry.agent,
-        "--yes",
-      ],
-      SKILLS_ADD_TIMEOUT_MS,
-    );
-    if (addResult.code !== 0) {
-      throw new Error(
-        addResult.stderr || `skills add failed for ${entry.skillName}`,
-      );
-    }
-
-    await ctx.manifest.recordAction({
-      plugin: PLUGIN_ID,
-      type: ACTION_TYPE_INSTALLED_SKILL,
-      target: entry.skillName,
-      preExisting: false,
-    });
-  }
+  await withAgemonStateLock(
+    "skills-src.lock",
+    () => addPinnedSkills(ctx, entriesToAdd),
+    SKILLS_SOURCE_LOCK_WAIT_MS,
+  );
 
   const skillsLockExistsAfterInstall = existsSync(getSkillsLockPath(ctx.cwd));
   if (

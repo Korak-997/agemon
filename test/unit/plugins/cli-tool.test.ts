@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -35,15 +35,21 @@ function createNoOpServiceManager(): ServiceManager {
     async registerAutostart() {
       return {
         unitPath: "",
-        lingerEnabledByAgemon: false,
         attemptLabel: "strict",
         failedAttempts: [],
       };
     },
-    async unregisterAutostart() {
-      return { lingerKeptFor: null };
-    },
+    async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
       return null;
     },
   };
@@ -290,25 +296,183 @@ describe("cli-tool plugin", () => {
     expect(context.manifest.getActions()).toEqual(ledgerBefore);
   });
 
-  it("records pre-existing CLI tools without managing uninstall", async () => {
+  it("detect writes nothing; using a pre-existing tool records a holder that nuke drops without uninstalling", async () => {
     const context = await createTestContext("agnix");
+    const commands = recordCommands(context);
 
     const detected = await cliToolPlugin.detect(context);
-    expect(detected.present).toBe(true);
-    expect(detected.preExisting).toBe(true);
+    expect(detected).toEqual({ present: true, preExisting: true });
+    expect(context.manifest.getActions()).toEqual([]);
 
-    const actionsAfterDetect = context.manifest
-      .getActions()
-      .filter((action) => action.plugin === "cli-tool");
-    expect(actionsAfterDetect).toHaveLength(1);
-    expect(actionsAfterDetect[0]?.preExisting).toBe(true);
+    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+    expect(operations.map((operation) => operation.action)).toEqual([
+      "use-shared",
+    ]);
+    await cliToolPlugin.apply?.(context, operations);
+    expect(
+      context.manifest
+        .getActions()
+        .map((action) => [action.type, action.resourceId]),
+    ).toEqual([["uses-shared-resource", "shared:npm-global:agnix"]]);
+    expect(await cliToolPlugin.plan?.(context)).toEqual([]);
 
     await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
 
-    const actionsAfterUninstall = context.manifest
-      .getActions()
-      .filter((action) => action.plugin === "cli-tool");
-    expect(actionsAfterUninstall).toEqual([]);
+    expect(
+      context.manifest
+        .getActions()
+        .filter((action) => action.plugin === "cli-tool"),
+    ).toEqual([]);
+    expect(commands.some((command) => command[1] === "uninstall")).toBe(false);
+  });
+
+  it("an existing global npm agnix off PATH is refused, not overwritten or uninstalled", async () => {
+    const context = await createTestContext();
+    const commands = recordCommands(context);
+    const stateRoot = process.env.XDG_STATE_HOME ?? "";
+    await mkdir(join(stateRoot, "agemon-fake", "npm-root", "agnix"), {
+      recursive: true,
+    });
+    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+
+    await expect(cliToolPlugin.apply?.(context, operations)).rejects.toThrow(
+      /A global npm agnix already exists at .*npm uninstall --global agnix/,
+    );
+    expect(
+      commands.filter(
+        (command) =>
+          command[0] === "npm" &&
+          (command[1] === "install" || command[1] === "uninstall"),
+      ),
+    ).toEqual([]);
+    expect(context.manifest.getActions()).toEqual([]);
+    await rm(join(stateRoot, "agemon-fake", "npm-root", "agnix"), {
+      recursive: true,
+    });
+  });
+
+  it.each<[string, { code: number; stdout: string }]>([
+    ["a failing npm", { code: 1, stdout: "" }],
+    ["a relative path", { code: 0, stdout: "rel/path\n" }],
+    ["an unnormalised path", { code: 0, stdout: "/a/../b\n" }],
+    ["two lines", { code: 0, stdout: "/a\n/b\n" }],
+    ["a zero-width character", { code: 0, stdout: "/a\u200b/b\n" }],
+  ])(
+    "refuses to install when npm root --global returns %s",
+    async (_label, reply) => {
+      const context = await createTestContext();
+      const commands: string[][] = [];
+      const run = context.run;
+      context.run = async (command, args, options) => {
+        commands.push([command, ...args]);
+        if (command === "npm" && args[0] === "root") {
+          return { ...reply, stderr: "" };
+        }
+        return run(command, args, options);
+      };
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+
+      await expect(cliToolPlugin.apply?.(context, operations)).rejects.toThrow(
+        /npm root --global (failed|returned)/,
+      );
+      expect(
+        commands.some(
+          (command) => command[0] === "npm" && command[1] === "install",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("installs when npm's global package directory does not exist yet (custom prefix)", async () => {
+    const context = await createTestContext();
+    const commands: string[][] = [];
+    const run = context.run;
+    const missingRoot = join(
+      process.env.XDG_STATE_HOME ?? "",
+      "custom-prefix",
+      "lib",
+      "node_modules",
+    );
+    context.run = async (command, args, options) => {
+      commands.push([command, ...args]);
+      if (command === "npm" && args[0] === "root") {
+        return { code: 0, stdout: `${missingRoot}\n`, stderr: "" };
+      }
+      return run(command, args, options);
+    };
+    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+
+    await cliToolPlugin.apply?.(context, operations);
+
+    expect(
+      commands.some(
+        (command) => command[0] === "npm" && command[1] === "install",
+      ),
+    ).toBe(true);
+    await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
+  });
+
+  it("a dangling npm link at <npm root>/agnix also counts as an existing agnix", async () => {
+    const context = await createTestContext();
+    const stateRoot = process.env.XDG_STATE_HOME ?? "";
+    const npmRoot = join(stateRoot, "agemon-fake", "npm-root");
+    await mkdir(npmRoot, { recursive: true });
+    await rm(join(npmRoot, "agnix"), { recursive: true, force: true });
+    await symlink(join(npmRoot, "nowhere"), join(npmRoot, "agnix"));
+    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+
+    await expect(cliToolPlugin.apply?.(context, operations)).rejects.toThrow(
+      /A global npm agnix already exists/,
+    );
+    await rm(join(npmRoot, "agnix"));
+  });
+
+  it("an agnix the shared-tools ledger records but that is off PATH gets the PATH hint, not the uninstall advice", async () => {
+    const context = await createTestContext();
+    const stateRoot = process.env.XDG_STATE_HOME ?? "";
+    await mkdir(join(stateRoot, "agemon-fake", "npm-root", "agnix"), {
+      recursive: true,
+    });
+    await mkdir(join(stateRoot, "agemon"), { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(stateRoot, "agemon", "machine.json"),
+      JSON.stringify({
+        version: 1,
+        resources: {
+          "npm-global:agnix": { origin: "pre-existing", holders: [] },
+        },
+      }),
+    );
+    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+
+    await expect(cliToolPlugin.apply?.(context, operations)).rejects.toThrow(
+      "agnix is installed but 'agnix --version' fails on your PATH (it is recorded in the shared-tools ledger)",
+    );
+    await rm(join(stateRoot, "agemon", "machine.json"));
+    await rm(join(stateRoot, "agemon-fake", "npm-root", "agnix"), {
+      recursive: true,
+    });
+  });
+
+  it("an old preexisting-cli-tool entry is dropped on nuke without uninstalling", async () => {
+    const context = await createTestContext("agnix");
+    const commands = recordCommands(context);
+    const messages: string[] = [];
+    context.ui = { ...context.ui, info: (message) => messages.push(message) };
+    await context.manifest.recordAction({
+      plugin: "cli-tool",
+      type: "preexisting-cli-tool",
+      target: "agnix",
+      preExisting: true,
+    });
+
+    await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
+
+    expect(context.manifest.getActions()).toEqual([]);
+    expect(commands.some((command) => command[1] === "uninstall")).toBe(false);
+    expect(messages).toContain(
+      "Keeping agnix: this repository is not registered as using it",
+    );
   });
 
   it("never uninstalls a package whose ledger target is not a bundle tool", async () => {

@@ -1,23 +1,17 @@
 import { existsSync } from "node:fs";
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context, SubprocessResult } from "../../core/context.js";
 import { sha256Hex } from "../../core/fingerprint.js";
 import { resolveToolsManifestDirectory } from "../../core/package-assets.js";
 import {
-  resolveToolsRoot,
-  TOOLS_DIRECTORY_MODE,
+  prepareToolsRoot,
+  withAgemonStateLock,
 } from "../../core/state-root.js";
 
 const TOOLS_LOCK_HASH_LENGTH = 16;
 const TOOLS_INSTALL_TIMEOUT_MS = 180_000;
+const TOOLS_LOCK_WAIT_MS = 10 * 60_000;
 const TOOLS_MANIFEST_FILES = ["package.json", "package-lock.json"];
 export const SKILLS_CLI_PATH_IN_TOOLS_DIR = join(
   "node_modules",
@@ -109,7 +103,7 @@ export async function ensureSkillsCli(ctx: SkillsCliContext): Promise<string> {
   const lockHash = sha256Hex(
     await readFile(join(manifestDirectory, "package-lock.json")),
   ).slice(0, TOOLS_LOCK_HASH_LENGTH);
-  const toolsRoot = resolveToolsRoot();
+  const toolsRoot = await prepareToolsRoot();
   const toolsDirectory = join(toolsRoot, lockHash);
   const cliPath = join(toolsDirectory, SKILLS_CLI_PATH_IN_TOOLS_DIR);
 
@@ -117,13 +111,20 @@ export async function ensureSkillsCli(ctx: SkillsCliContext): Promise<string> {
     return cliPath;
   }
 
-  await mkdir(toolsRoot, { recursive: true, mode: TOOLS_DIRECTORY_MODE });
-  await installToolsDirectory(
-    ctx,
-    toolsRoot,
-    manifestDirectory,
-    toolsDirectory,
-    cliPath,
+  await withAgemonStateLock(
+    "tools.lock",
+    async () => {
+      if (!existsSync(cliPath)) {
+        await installToolsDirectory(
+          ctx,
+          toolsRoot,
+          manifestDirectory,
+          toolsDirectory,
+          cliPath,
+        );
+      }
+    },
+    TOOLS_LOCK_WAIT_MS,
   );
   return cliPath;
 }

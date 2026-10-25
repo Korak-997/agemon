@@ -61,6 +61,7 @@ export interface Context {
     },
   ) => Promise<ApprovedOperationSet>;
   skillGroupsOption?: string;
+  removeSharedTools?: ReadonlySet<string>;
 }
 
 export interface CreateContextInput {
@@ -71,6 +72,7 @@ export interface CreateContextInput {
   progress: StepProgress;
   skillGroups?: string;
   verbose?: boolean;
+  removeSharedTools?: ReadonlySet<string>;
 }
 
 async function selectVerifiedBinaryInstaller(
@@ -123,6 +125,7 @@ export async function createContext(
     yes: input.yes,
     interactive,
     skillGroupsOption: input.skillGroups,
+    removeSharedTools: input.removeSharedTools,
     log: console,
     ui: input.ui,
     progress: input.progress,

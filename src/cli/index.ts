@@ -21,6 +21,10 @@ import {
   recoverInterruptedApply,
 } from "../core/recover.js";
 import { resolveRepositoryRoot } from "../core/repo-paths.js";
+import {
+  checkAgemonStateDirectoryBeforeRun,
+  withRepositoryRunLock,
+} from "../core/state-root.js";
 import { printable } from "../core/untrusted-text.js";
 import { startUpdateCheck } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
@@ -72,6 +76,7 @@ interface CliOptions {
   quiet?: boolean;
   verbose?: boolean;
   checkAgentsUsable?: boolean;
+  removeShared?: string;
 }
 
 const SILENT_SPINNER: StepSpinner = {
@@ -337,10 +342,38 @@ async function runApply(options: CliOptions): Promise<number> {
   return exitCodeForOutcome(outcome);
 }
 
+function parseRemoveSharedOption(
+  options: CliOptions,
+  plugins: AgemonPlugin[],
+): ReadonlySet<string> {
+  if (options.removeShared === undefined) {
+    return new Set();
+  }
+  const knownToolNames = plugins.flatMap((plugin) =>
+    (plugin.sharedResources ?? [])
+      .filter((resource) => resource.migratesFromRepoLedgers)
+      .map((resource) => resource.toolName),
+  );
+  const toolNames = options.removeShared
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  const unknownToolNames = toolNames.filter(
+    (name) => !knownToolNames.includes(name),
+  );
+  if (toolNames.length === 0 || unknownToolNames.length > 0) {
+    throw new Error(
+      `--remove-shared takes a comma-separated list of: ${knownToolNames.join(", ")}`,
+    );
+  }
+  return new Set(toolNames);
+}
+
 async function runNuke(options: CliOptions): Promise<number> {
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = getRegisteredPlugins();
+  const removeSharedTools = parseRemoveSharedOption(options, plugins);
   const context = await createContext({
     repoRoot,
     dryRun: Boolean(options.dryRun),
@@ -348,6 +381,7 @@ async function runNuke(options: CliOptions): Promise<number> {
     ui: spinner,
     verbose: Boolean(options.verbose),
     progress: selectProgress(options),
+    removeSharedTools,
   });
 
   const outcome = await uninstallPlugins(context, plugins, {
@@ -355,6 +389,22 @@ async function runNuke(options: CliOptions): Promise<number> {
     skipIds: options.skipDaemon ? ["daemon"] : [],
   });
   return exitCodeForOutcome(outcome);
+}
+
+function lockingTheRepository(
+  run: (options: CliOptions) => Promise<number>,
+): (options: CliOptions) => Promise<number> {
+  return async (options) => {
+    if (options.dryRun) {
+      return run(options);
+    }
+    await checkAgemonStateDirectoryBeforeRun(false, (line) =>
+      console.log(line),
+    );
+    return withRepositoryRunLock(await resolveRepositoryRootFor(options), () =>
+      run(options),
+    );
+  };
 }
 
 async function runRecover(options: CliOptions): Promise<number> {
@@ -436,7 +486,7 @@ function createProgram(recordExitCode: (code: number) => void): Command {
         process.env.NO_COLOR = "1";
       }
     })
-    .action(recordWithUpdateCheck(runInstall));
+    .action(recordWithUpdateCheck(lockingTheRepository(runInstall)));
 
   program
     .command("inspect")
@@ -493,7 +543,7 @@ function createProgram(recordExitCode: (code: number) => void): Command {
     )
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
     .action((_options: CliOptions, command: Command) =>
-      recordWithUpdateCheck(runApply)({
+      recordWithUpdateCheck(lockingTheRepository(runApply))({
         ...command.parent?.opts(),
         ...command.opts(),
       }),
@@ -506,8 +556,12 @@ function createProgram(recordExitCode: (code: number) => void): Command {
     .option("--yes", "skip confirmation prompts")
     .option("--skip-daemon", "keep the daemon (and what it needs) installed")
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .option(
+      "--remove-shared <tools>",
+      "also remove these shared tools agemon installed before it tracked them per machine (code-review-graph, agnix)",
+    )
     .action((_options: CliOptions, command: Command) =>
-      recordWithUpdateCheck(runNuke)({
+      recordWithUpdateCheck(lockingTheRepository(runNuke))({
         ...command.parent?.opts(),
         ...command.opts(),
       }),
@@ -523,7 +577,10 @@ function createProgram(recordExitCode: (code: number) => void): Command {
     .option("--yes", "restore without asking")
     .addHelpText("after", `\n${RECOVER_LIMIT_NOTE}`)
     .action((_options: CliOptions, command: Command) =>
-      record(runRecover)({ ...command.parent?.opts(), ...command.opts() }),
+      record(lockingTheRepository(runRecover))({
+        ...command.parent?.opts(),
+        ...command.opts(),
+      }),
     );
 
   program.exitOverride();

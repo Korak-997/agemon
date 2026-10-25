@@ -6,15 +6,17 @@ import {
   readRegularFileIfExists,
   writeFileAtomic,
 } from "./files.js";
-import { sha256Hex } from "./fingerprint.js";
 import { type LedgerEntry, parseLedgerEntries } from "./state-manifest.js";
-import { resolveStateRoot } from "./state-root.js";
+import {
+  repositoryStateKey,
+  resolveAgemonStateDirectory,
+  type StateDirectoryMode,
+} from "./state-root.js";
 import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 const JOURNAL_VERSION = 1;
 const JOURNAL_DIRECTORY_MODE = 0o700;
 const JOURNAL_FILE_MODE = 0o600;
-const REPO_KEY_LENGTH = 16;
 const JOURNAL_FILE_NAME_PATTERN = /^([0-9a-f]{16})\.json$/u;
 
 export interface JournalSnapshot {
@@ -42,9 +44,13 @@ export type NewApplyJournal = Omit<ApplyJournal, "version" | "repoRoot">;
 
 export async function resolveJournalDirectory(
   repoRoot: string,
+  mode: StateDirectoryMode = "check",
 ): Promise<string> {
-  const repoKey = sha256Hex(await realpath(repoRoot)).slice(0, REPO_KEY_LENGTH);
-  return join(resolveStateRoot(), "agemon", "journals", repoKey);
+  return join(
+    (await resolveAgemonStateDirectory(mode)).path,
+    "journals",
+    await repositoryStateKey(repoRoot),
+  );
 }
 
 export async function writeJournal(
@@ -63,7 +69,7 @@ export async function writeJournal(
     );
   }
 
-  const directory = await resolveJournalDirectory(repoRoot);
+  const directory = await resolveJournalDirectory(repoRoot, "prepare");
   await mkdir(directory, { recursive: true, mode: JOURNAL_DIRECTORY_MODE });
   const path = join(directory, `${journal.planId}.json`);
   await writeFileAtomic(path, payload, { newFileMode: JOURNAL_FILE_MODE });

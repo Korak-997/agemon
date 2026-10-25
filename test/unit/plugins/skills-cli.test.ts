@@ -168,6 +168,26 @@ describe("ensureSkillsCli", () => {
     expect(await readdir(toolsRoot())).toEqual([]);
   });
 
+  it("two concurrent repairs of a broken tools dir both succeed", async () => {
+    const toolsDirectory = await expectedToolsDirectory();
+    await mkdir(toolsDirectory, { recursive: true });
+    await writeFile(join(toolsDirectory, "leftover"), "x", "utf8");
+    const { ctx, npmCiCalls } = createRunner(async (prefix) => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      await writeSkillsCliInto(prefix);
+      return OK;
+    });
+
+    const [first, second] = await Promise.all([
+      ensureSkillsCli(ctx),
+      ensureSkillsCli(ctx),
+    ]);
+
+    expect(first).toBe(second);
+    expect(existsSync(first)).toBe(true);
+    expect(npmCiCalls()).toHaveLength(1);
+  });
+
   it("uses the winner's tools dir when a concurrent run installs first", async () => {
     const toolsDirectory = await expectedToolsDirectory();
     const { ctx } = createRunner(async (prefix) => {

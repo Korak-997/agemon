@@ -118,25 +118,7 @@ function callsMatching(calls: CommandCall[], expected: string): number {
 }
 
 describe("linux service manager", () => {
-  it("registers autostart without enabling linger when already enabled", async () => {
-    const { run, calls } = createSystemdStub("yes");
-    const { serviceManager } = await createManager(run);
-
-    const registration = await serviceManager.registerAutostart({
-      unitName: "agemon.service",
-      attempts: STRICT_AND_COMPAT,
-    });
-
-    expect(registration.lingerEnabledByAgemon).toBe(false);
-    expect(registration.attemptLabel).toBe("strict");
-    expect(callsMatching(calls, "loginctl enable-linger tester")).toBe(0);
-
-    const writtenUnitContents = await readFile(registration.unitPath, "utf8");
-    expect(writtenUnitContents).toContain("ExecStart=strict");
-    expect((await stat(registration.unitPath)).mode & 0o777).toBe(0o644);
-  });
-
-  it("enables linger when registering and linger is off", async () => {
+  it("registers autostart without ever reading or changing linger", async () => {
     const { run, calls } = createSystemdStub("no");
     const { serviceManager } = await createManager(run);
 
@@ -145,11 +127,17 @@ describe("linux service manager", () => {
       attempts: STRICT_AND_COMPAT,
     });
 
-    expect(registration.lingerEnabledByAgemon).toBe(true);
-    expect(callsMatching(calls, "loginctl enable-linger tester")).toBe(1);
+    expect(registration.attemptLabel).toBe("strict");
+    expect(calls.some((call) => call.command === "loginctl")).toBe(false);
+    const writtenUnitContents = await readFile(registration.unitPath, "utf8");
+    expect(writtenUnitContents).toContain("ExecStart=strict");
+    expect((await stat(registration.unitPath)).mode & 0o777).toBe(0o644);
+    expect(registration.unitPath).toBe(
+      serviceManager.unitPathFor("agemon.service"),
+    );
   });
 
-  it("strict attempt fails, compat succeeds: lingerEnabledByAgemon stays true", async () => {
+  it("strict attempt fails, compat succeeds: the strict unit is removed first", async () => {
     let enableCalls = 0;
     const { run, calls } = createSystemdStub("no", (call) => {
       if (call === "systemctl --user enable --now agemon.service") {
@@ -165,13 +153,7 @@ describe("linux service manager", () => {
       attempts: STRICT_AND_COMPAT,
     });
 
-    expect(registration).toMatchObject({
-      lingerEnabledByAgemon: true,
-      attemptLabel: "compat",
-    });
-    expect(callsMatching(calls, LINGER_QUERY)).toBe(1);
-    expect(callsMatching(calls, "loginctl enable-linger tester")).toBe(1);
-    expect(callsMatching(calls, "loginctl disable-linger tester")).toBe(0);
+    expect(registration.attemptLabel).toBe("compat");
     expect(
       callsMatching(calls, "systemctl --user disable --now agemon.service"),
     ).toBe(1);
@@ -181,7 +163,7 @@ describe("linux service manager", () => {
     );
   });
 
-  it("both attempts fail: no unit file left, daemon-reload ran, linger disabled again", async () => {
+  it("both attempts fail: no unit file left, daemon-reload ran, linger untouched", async () => {
     const { run, calls } = createSystemdStub("no", (call) =>
       call === "systemctl --user enable --now agemon.service"
         ? FAILURE
@@ -199,18 +181,13 @@ describe("linux service manager", () => {
     );
     await expect(readdir(unitDirectory)).resolves.toEqual([]);
     expect(callsMatching(calls, "systemctl --user daemon-reload")).toBe(4);
-    expect(callsMatching(calls, "loginctl disable-linger tester")).toBe(1);
-    expect(calls.at(-1)).toEqual({
-      command: "loginctl",
-      args: ["disable-linger", "tester"],
-    });
+    expect(calls.some((call) => call.command === "loginctl")).toBe(false);
   });
 
-  it("both attempts fail and disable-linger fails: error lists the manual commands", async () => {
+  it("both attempts fail and the unit cleanup fails: error lists the manual commands", async () => {
     const { run } = createSystemdStub("no", (call) =>
       call === "systemctl --user enable --now agemon.service" ||
-      call === "systemctl --user disable --now agemon.service" ||
-      call === "loginctl disable-linger tester"
+      call === "systemctl --user disable --now agemon.service"
         ? FAILURE
         : undefined,
     );
@@ -222,25 +199,8 @@ describe("linux service manager", () => {
         attempts: STRICT_AND_COMPAT,
       }),
     ).rejects.toThrow(
-      "Cleanup also failed; run these yourself: systemctl --user disable --now agemon.service; loginctl disable-linger tester",
+      "Cleanup also failed; run these yourself: systemctl --user disable --now agemon.service",
     );
-  });
-
-  it("does not disable linger it found already on when every attempt fails", async () => {
-    const { run, calls } = createSystemdStub("yes", (call) =>
-      call === "systemctl --user enable --now agemon.service"
-        ? FAILURE
-        : undefined,
-    );
-    const { serviceManager } = await createManager(run);
-
-    await expect(
-      serviceManager.registerAutostart({
-        unitName: "agemon.service",
-        attempts: STRICT_AND_COMPAT,
-      }),
-    ).rejects.toThrow(/Could not start agemon.service/);
-    expect(callsMatching(calls, "loginctl disable-linger tester")).toBe(0);
   });
 
   it.each([
@@ -249,20 +209,30 @@ describe("linux service manager", () => {
       "linger is neither yes nor no",
       { code: 0, stdout: "maybe\n", stderr: "" },
     ],
-  ])("linger read failure writes no unit file (%s)", async (_case, reply) => {
-    const { run, calls } = createSystemdStub("yes", (call) =>
+  ])("isLingerEnabled refuses to guess (%s)", async (_case, reply) => {
+    const { run } = createSystemdStub("yes", (call) =>
       call === LINGER_QUERY ? reply : undefined,
     );
-    const { serviceManager, unitDirectory } = await createManager(run);
+    const { serviceManager } = await createManager(run);
 
-    await expect(
-      serviceManager.registerAutostart({
-        unitName: "agemon.service",
-        attempts: STRICT_AND_COMPAT,
-      }),
-    ).rejects.toThrow();
-    await expect(readdir(unitDirectory)).resolves.toEqual([]);
-    expect(calls).toHaveLength(1);
+    await expect(serviceManager.isLingerEnabled()).rejects.toThrow();
+  });
+
+  it("isLingerEnabled, enableLinger and disableLinger call loginctl for the user", async () => {
+    const { run, calls } = createSystemdStub("yes");
+    const { serviceManager } = await createManager(run);
+
+    expect(await serviceManager.isLingerEnabled()).toBe(true);
+    await serviceManager.enableLinger();
+    await serviceManager.disableLinger();
+
+    expect(calls.map((call) => [call.command, ...call.args].join(" "))).toEqual(
+      [
+        LINGER_QUERY,
+        "loginctl enable-linger tester",
+        "loginctl disable-linger tester",
+      ],
+    );
   });
 
   it("a unit path that is not a regular file aborts without removing it", async () => {
@@ -289,10 +259,9 @@ describe("linux service manager", () => {
     expect(
       callsMatching(calls, "systemctl --user disable --now agemon.service"),
     ).toBe(0);
-    expect(callsMatching(calls, "loginctl disable-linger tester")).toBe(1);
   });
 
-  it("an unwritable unit directory fails before linger is touched", async () => {
+  it("an unwritable unit directory fails before any command runs", async () => {
     const { run, calls } = createSystemdStub("no");
     const homeDir = await mkdtemp(join(tmpdir(), "agemon-linux-service-test-"));
     createdTempDirectories.push(homeDir);
@@ -397,7 +366,6 @@ describe("linux service manager", () => {
 
     await serviceManager.unregisterAutostart({
       unitName: "agemon.service",
-      disableLinger: false,
     });
 
     expect(
@@ -436,62 +404,36 @@ describe("linux service manager", () => {
     await expect(
       serviceManager.unregisterAutostart({
         unitName: "agemon.service",
-        disableLinger: false,
       }),
     ).rejects.toThrow("permission denied");
   });
 
-  it("disables linger during unregister when requested", async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), "agemon-linux-service-test-"));
-    createdTempDirectories.push(homeDir);
-
-    const { run, calls } = createRunStub(() => ({
-      code: 0,
-      stdout: "",
-      stderr: "",
-    }));
-
-    const serviceManager = createLinuxServiceManager({
-      run,
-      homeDir,
-      user: "tester",
-    });
-
-    await serviceManager.unregisterAutostart({
-      unitName: "agemon.service",
-      disableLinger: true,
-    });
-
-    expect(
-      calls.some(
-        (call) =>
-          call.command === "loginctl" &&
-          call.args.join(" ") === "disable-linger tester",
-      ),
-    ).toBe(true);
-  });
-
-  it("keeps linger on unregister while another agemon daemon unit exists", async () => {
+  it("unregister never touches linger", async () => {
     const { run, calls } = createSystemdStub("yes");
-    const { serviceManager, unitDirectory } = await createManager(run);
-    await mkdir(unitDirectory, { recursive: true });
-    await writeFile(
-      join(unitDirectory, "agemon-crg-daemon-other-0123abcd.service"),
-      "[Service]\n",
-      "utf8",
-    );
-    await writeFile(join(unitDirectory, "unrelated.service"), "", "utf8");
+    const { serviceManager } = await createManager(run);
 
-    const result = await serviceManager.unregisterAutostart({
-      unitName: "agemon-crg-daemon-mine-89abcdef.service",
-      disableLinger: true,
-    });
+    await serviceManager.unregisterAutostart({ unitName: "agemon.service" });
 
-    expect(result).toEqual({
-      lingerKeptFor: "agemon-crg-daemon-other-0123abcd.service",
-    });
-    expect(callsMatching(calls, "loginctl disable-linger tester")).toBe(0);
+    expect(calls.some((call) => call.command === "loginctl")).toBe(false);
   });
+
+  it.each([
+    ["a current-scheme unit", "agemon-crg-daemon-other-0123abcd.service"],
+    ["the legacy unit name", "agemon-crg-daemon.service"],
+  ])(
+    "findAgemonDaemonUnit finds %s and ignores other units",
+    async (_case, unitName) => {
+      const { run } = createSystemdStub("yes");
+      const { serviceManager, unitDirectory } = await createManager(run);
+      await mkdir(unitDirectory, { recursive: true });
+      await writeFile(join(unitDirectory, "unrelated.service"), "", "utf8");
+      expect(await serviceManager.findAgemonDaemonUnit()).toBeNull();
+
+      await writeFile(join(unitDirectory, unitName), "[Service]\n", "utf8");
+
+      expect(await serviceManager.findAgemonDaemonUnit()).toBe(unitName);
+    },
+  );
 
   it("readUnitWorkingDirectory reads only a regular file in the unit directory", async () => {
     const { run } = createSystemdStub("yes");

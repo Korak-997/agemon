@@ -1,9 +1,11 @@
+import { printable } from "../core/untrusted-text.js";
 import { describeOverlap } from "../inspect/duplication.js";
 import type {
   CapabilityStatusRow,
   ManagedResourceStatus,
   StatusReport,
 } from "../inspect/status.js";
+import type { SharedToolStatus } from "../plugins/shared-resource.js";
 import type { CapabilityState } from "../plugins/types.js";
 import { box } from "./box.js";
 import { badge, section } from "./format.js";
@@ -46,6 +48,36 @@ function managedResourceRow(resource: ManagedResourceStatus): string[] {
     resource.ownershipMode ?? "",
     healthBadge(resource.health),
     resource.detail ?? "",
+  ];
+}
+
+function describeSharedToolHolder(
+  holder: SharedToolStatus["holders"][number],
+): string {
+  const path = printable(holder.path);
+  if (holder.missing) {
+    return `${path} (missing — dropped on the next change)`;
+  }
+  return holder.thisRepository ? `${path} (this repository)` : path;
+}
+
+function describeSharedToolNote(tool: SharedToolStatus): string {
+  if (tool.heldWithoutLedgerEntry) {
+    return "held by this repository but not in its ledger — run 'agemon' to repair";
+  }
+  if (tool.origin === "installed") {
+    return `installed by ${printable(tool.recordedBy ?? "")}`;
+  }
+  if (tool.origin === "migrated") {
+    return `installed before agemon tracked shared tools (per ${printable(tool.recordedBy ?? "")}); 'agemon nuke --remove-shared ${tool.tool}' there, or '${tool.manualRemoveCommand}'`;
+  }
+  return `there before agemon tracked it; agemon never removes it ('${tool.manualRemoveCommand}')`;
+}
+
+function sharedToolLines(tool: SharedToolStatus): string[] {
+  return [
+    `  ${tool.tool} (${tool.origin}) — ${describeSharedToolNote(tool)}`,
+    `    used by: ${tool.holders.map(describeSharedToolHolder).join(", ") || "nobody"}`,
   ];
 }
 
@@ -116,6 +148,13 @@ export function renderStatusReport(report: StatusReport): string {
         ...report.capabilities.map(capabilityRow),
       ]),
     );
+  }
+
+  lines.push(section("Shared tools"));
+  if (report.sharedResources.length === 0) {
+    lines.push("  none recorded on this machine");
+  } else {
+    lines.push(...report.sharedResources.flatMap(sharedToolLines));
   }
 
   lines.push(section("Duplication"));

@@ -72,7 +72,10 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 - Builds the graph with `<binary> build` and verifies with `<binary> status`, with
   `CRG_HOME` fixed to `~/.code-review-graph` and git's fsmonitor and hooks disabled.
 - Preserves pre-existing installs using manifest metadata. `nuke` removes
-  `.code-review-graph/` only when agemon built it.
+  `.code-review-graph/` only when agemon built it, and uninstalls the pipx package only as
+  described in [Two Ledgers](#two-ledgers).
+- `verify` skips `<binary> status` in a repository without `.code-review-graph/`, because
+  `status` would create that directory.
 
 ### `daemon`
 
@@ -84,8 +87,12 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
   `WorkingDirectory`; a unit that now runs for another existing repository is kept.
 - Units recorded under an old name are migrated by the next `agemon` run: the new unit is
   registered and recorded first, then each old unit this repo owns is removed.
-- Linger is disabled only when agemon enabled it, this revert removed a unit, and no other
-  `agemon-crg-daemon-*.service` remains in the user unit directory.
+- Linger is a shared resource (see [Two Ledgers](#two-ledgers)). It is disabled only by
+  the repository that enabled it, once it is the last holder, and only while no other
+  agemon daemon unit file (including the legacy `agemon-crg-daemon.service`) remains in
+  the user unit directory. That file check is a safety net for units registered before
+  agemon tracked linger. Linger that was already on is recorded `pre-existing`, even when
+  a repository ledger claims agemon enabled it.
 - Refuses to register when `.code-review-graph` exists but is not a real directory.
 - Runs the `code-review-graph` binary that the crg plugin locates, with the same
   `CRG_HOME` and git safety settings as crg's own commands.
@@ -94,11 +101,13 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
   `~/.code-review-graph`. A repository that is or contains your home directory, or
   `AGEMON_DAEMON_HARDENING=compat`, goes straight to `compat`. The profile used is
   printed and recorded in the ledger.
-- Registration is one transaction: linger is read once and enabled when needed, then for
-  each profile the unit is written atomically, enabled and watched until it has stayed
-  `active` without restarts for 2 seconds (10-second limit). A failed attempt removes its
-  unit again. If every attempt fails, linger is switched back off when agemon switched it
-  on, and the error lists any cleanup command that also failed.
+- Registration records its intent first. Under the shared-tools lock it reads linger and
+  records the unit, `enabled-linger` (when linger is off) and the machine linger record.
+  Only then does it enable linger and, for each profile, write the unit atomically, enable
+  it and watch it until it has stayed `active` without restarts for 2 seconds (10-second
+  limit). A failed attempt removes its own unit. Any later failure, or an interrupted run,
+  is undone by the apply rollback or `agemon recover` from those entries, which also
+  switches linger back off when this registration switched it on.
 - Verifies service active; `verify`'s detail includes the resolved unit name.
 
 ### `skills`
@@ -137,7 +146,12 @@ Current bundle (`src/plugins/skills/catalog.ts`):
   build does not run on linux-x64, the musl build is tried. On any failure, the npm package
   is uninstalled and nothing is recorded.
 - Under `AGEMON_FAKE_SUBPROCESS=1`, the installer is a fake that only records the request.
-- Removes only tools installed by agemon.
+- Before `npm install --global`, it runs `npm root --global` and refuses to install when
+  a global `agnix` entry already exists there (the binary is then just off your PATH or
+  broken), so it never overwrites or uninstalls a user's own copy.
+- Removes only tools installed by agemon, and only as described in
+  [Two Ledgers](#two-ledgers). `detect` writes nothing; a repository that uses an agnix it
+  did not install records that through a `use-shared` plan line.
 
 Current bundle (`src/plugins/cli-tool/catalog.ts`):
 
@@ -215,6 +229,104 @@ input:
 - Plugins act only on their own ledger targets: master-prompt on its five rule files,
   cli-tool on its bundle. Other entries are reported and dropped.
 - `readRegularFileIfExists` refuses symlinks and special files and caps reads at 8 MiB.
+- Ledger text is checked when the ledger loads (every version) and when agemon writes an
+  entry: identifiers, ids, versions, fingerprints and details may not contain control,
+  zero-width or bidi characters. `target` and `backup.path` may contain tabs, zero-width
+  and bidi characters (real paths can), but no other control character. A ledger that
+  fails names the entry and field. agemon never writes such an entry, so the fix is to
+  restore `.agemon/state.json` from git or remove that entry.
+
+## Two Ledgers
+
+agemon keeps two ledgers with separate jobs:
+
+| Ledger | Path | Owns |
+|---|---|---|
+| Repository ledger | `.agemon/state.json` | everything agemon changed inside this repository, and which shared tools this repository installed or uses |
+| Shared-tools ledger | `${XDG_STATE_HOME:-~/.local/state}/agemon/machine.json` | which repositories use each machine-wide resource, and who installed it |
+
+The repository ledger stays the source of truth for repository files. The shared-tools
+ledger exists because code-review-graph (pipx), agnix (npm `-g`) and user linger (for
+the daemon) exist once per machine but are used by many repositories. Linger is never
+recorded `migrated`, so `--remove-shared` accepts only `code-review-graph` and `agnix`.
+
+Each shared tool has one record:
+
+- `origin: installed`, with `installedBy` and `ownerDirectoryId` (device, inode and birth
+  time of that directory) — agemon installed it from that repository;
+- `origin: migrated`, with `claimedBy` — that repository's ledger says agemon installed
+  it, but the shared-tools ledger did not see the install (a ledger written before
+  agemon tracked shared tools, a lost `machine.json`, or a forged ledger);
+- `origin: pre-existing` — the tool was already there; agemon never removes it;
+- `holders` — the repositories that use it.
+
+Rules:
+
+- A repository becomes a holder when agemon installs the tool there, or through a
+  `use-shared` plan line ("record that this repository uses …") when the tool already
+  exists. `use-shared` needs no consent: it records a fact and never installs. A stored
+  plan may not mark any other action as needing no consent.
+- `nuke` removes a tool only when this repository is its last holder **and** installed it
+  (`installedBy`). A `migrated` tool also needs `nuke --remove-shared <tool>` from the
+  claiming repository. Everything else is kept, and `nuke` prints the manual command.
+- A repository that is not a holder removes nothing, whatever its ledger says, so a
+  committed `state.json` cannot uninstall a tool on someone else's machine.
+- Holders whose path no longer exists are dropped on the next change. If the installing
+  (or claiming) directory is gone or was replaced — for example a different clone at the
+  same path — the record is treated as `pre-existing`, so the new directory inherits no
+  right to remove the tool.
+- `machine.json` is changed only under `machine.lock`. The lock records the owner's pid,
+  boot id and process start time. A lock left by a dead process is broken under a second
+  lock, `machine.lock.break`.
+- `<stateRoot>/agemon` must be a real directory owned by you. Others may not write to it:
+  group write is allowed only for a user private group. It is tightened to `0700` when
+  others could read it. `<stateRoot>` must not be writable by others unless it is sticky.
+- `status` shows a "Shared tools" section with each tool's origin and users.
+- Locks, all under `<stateRoot>/agemon`: `runs/<repo key>.lock` is held for a whole
+  non-dry-run `agemon`, `apply`, `nuke` or `recover`, taken before the ledger is loaded,
+  and a second run in the same repository fails at once. `skills-src.lock` is held while
+  the pinned Essentials source is fetched and copied, `tools.lock` while the skills CLI is
+  installed or repaired, and `machine.lock` while `machine.json` changes. The order is
+  always run lock → `skills-src.lock` → `tools.lock`. `machine.lock` is never held while
+  another lock is taken.
+- Everything agemon writes outside repositories lives under `<stateRoot>/agemon/`
+  (`tools/`, `skills-src/`, `journals/`, `runs/`, `machine.json`). That directory is the
+  record of agemon-owned machine state: removing agemon itself means removing it after
+  the per-repository `nuke`s.
+- `plan`, `status` and `inspect` may install the pinned skills CLI (as they have since it
+  was pinned), so they can create `<stateRoot>/agemon` and tighten its mode.
+
+Accepted gaps (agemon keeps the tool, never removes one wrongly):
+
+- A tool another repository was already using before agemon tracked shared tools is
+  recorded `pre-existing` by whichever repository runs first, so agemon never removes it.
+- If the installing (or claiming) repository was deleted, moved or renamed without `nuke`,
+  the tool stays. A repository that only uses a tool never removes it.
+- Holders that still exist but no longer use agemon (`.agemon/` deleted by hand) are not
+  dropped. `status` lists them, and running `agemon` there repairs the record.
+- A crash between recording an install in the repository ledger and in `machine.json`
+  leaves the tool installed after `recover` or `nuke`; the manual command is printed.
+- Each `XDG_STATE_HOME` has its own shared-tools ledger, so run agemon with one state
+  root. `XDG_STATE_HOME` must be inside your own directory tree: agemon does not check its
+  ancestors.
+- The owner identity relies on the filesystem's birth time. Without one (ext2/3, NFSv3,
+  many FUSE mounts), or where Node reports the change time instead, agemon never removes
+  the tool. Re-cloning into the very same emptied
+  directory keeps its identity, so that clone inherits the right to remove the tool.
+- If agemon is interrupted right after recording that it will enable linger, and you then
+  enable linger yourself before running `agemon recover`, `recover` turns it off again
+  (this repository is still its recorded installer).
+- Resource ids that agemon derives from file names come only from fixed names today; a
+  derived id must keep passing the identifier check.
+- A repository that registers its daemon while another repository is recorded as having
+  enabled linger turns linger back on if it is off, but does not become its installer, so
+  it never disables it.
+- A holder on an unmounted drive looks missing and is dropped. A holder on a dead network
+  mount can stall the run.
+- Lock liveness needs `/proc`. Without it agemon falls back to `kill(pid, 0)` and accepts
+  pid reuse. Containers that share one state directory across pid namespaces are not
+  supported. A stalled or crashed breaker can, rarely, let two runs in at once; each holder
+  re-checks its lock before every write and every install or uninstall.
 
 ## UI/Output Layer
 

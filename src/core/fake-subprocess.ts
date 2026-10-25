@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { resolveHomeDirectory } from "../platform/home.js";
 import {
@@ -8,6 +14,7 @@ import {
   ESSENTIALS_SKILLS_COMMIT,
 } from "../plugins/pins.js";
 import { SKILLS_CLI_PATH_IN_TOOLS_DIR } from "../plugins/skills/skills-cli.js";
+import { resolveStateRoot } from "./state-root.js";
 import type { SubprocessResult } from "./subprocess-runner.js";
 import type {
   VerifiedBinaryInstaller,
@@ -42,7 +49,31 @@ function buildFakeStateSignature(): string {
   ].join("||");
 }
 
+function fakeGlobalNpmStatePath(): string {
+  return join(resolveStateRoot(), "agemon-fake", "npm-global.json");
+}
+
+function saveFakeGlobalNpmPackages(): void {
+  if (fakeInstalledGlobalNpmPackageNames?.size === 0) {
+    rmSync(fakeGlobalNpmStatePath(), { force: true });
+    return;
+  }
+  mkdirSync(dirname(fakeGlobalNpmStatePath()), { recursive: true });
+  writeFileSync(
+    fakeGlobalNpmStatePath(),
+    JSON.stringify([...(fakeInstalledGlobalNpmPackageNames ?? [])]),
+  );
+}
+
+function loadSavedFakeGlobalNpmPackages(): string[] | null {
+  if (!existsSync(fakeGlobalNpmStatePath())) {
+    return null;
+  }
+  return JSON.parse(readFileSync(fakeGlobalNpmStatePath(), "utf8"));
+}
+
 export function resetFakeSubprocessState(): void {
+  rmSync(fakeGlobalNpmStatePath(), { force: true });
   fakeCrgInstalledState = null;
   fakeInstalledSkillNames = null;
   fakeInstalledGlobalNpmPackageNames = null;
@@ -88,7 +119,7 @@ function initializeFakeStateIfNeeded(): void {
       .map((packageName) => packageName.trim())
       .filter((packageName) => packageName.length > 0);
   fakeInstalledGlobalNpmPackageNames = new Set(
-    preinstalledGlobalNpmPackages ?? [],
+    loadSavedFakeGlobalNpmPackages() ?? preinstalledGlobalNpmPackages ?? [],
   );
 
   const versionedAgentBinaryNames =
@@ -351,6 +382,11 @@ function buildFakeNpmResponse(args: string[]): SubprocessResult | undefined {
   }
 
   const hasGlobalFlag = args.includes("-g") || args.includes("--global");
+  if (operation === "root" && hasGlobalFlag) {
+    const fakeNpmRoot = join(resolveStateRoot(), "agemon-fake", "npm-root");
+    mkdirSync(fakeNpmRoot, { recursive: true });
+    return { code: 0, stdout: `${fakeNpmRoot}\n`, stderr: "" };
+  }
   if (!hasGlobalFlag) {
     return {
       code: 0,
@@ -369,6 +405,7 @@ function buildFakeNpmResponse(args: string[]): SubprocessResult | undefined {
         fakeInstalledGlobalNpmPackageNames?.add(pinnedPackageName);
       }
     }
+    saveFakeGlobalNpmPackages();
     return {
       code: 0,
       stdout: `installed ${packageNames.length} package(s) globally\n`,
@@ -380,6 +417,7 @@ function buildFakeNpmResponse(args: string[]): SubprocessResult | undefined {
     for (const packageName of packageNames) {
       fakeInstalledGlobalNpmPackageNames?.delete(packageName);
     }
+    saveFakeGlobalNpmPackages();
     return {
       code: 0,
       stdout: `removed ${packageNames.length} package(s) globally\n`,

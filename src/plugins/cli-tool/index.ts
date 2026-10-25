@@ -1,9 +1,24 @@
+import { lstat } from "node:fs/promises";
+import { join } from "node:path";
 import type { Context } from "../../core/context.js";
 import { errorMessage } from "../../core/error-message.js";
+import { readMachineLedger } from "../../core/machine-ledger.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
+import { resolveAgemonStateDirectory } from "../../core/state-root.js";
 import { printable } from "../../core/untrusted-text.js";
-import type { VerifiedArchiveCandidate } from "../../core/verified-binary-installer.js";
+import {
+  resolveGlobalNpmRoot,
+  type VerifiedArchiveCandidate,
+} from "../../core/verified-binary-installer.js";
 import { describeOperation } from "../proposed-operation.js";
+import {
+  addSharedHolder,
+  createSharedResource,
+  describeUseSharedOperation,
+  isHeldByThisRepository,
+  releaseSharedResource,
+  repoLedgerUsesSharedResource,
+} from "../shared-resource.js";
 import type {
   AgemonPlugin,
   CapabilityStateRow,
@@ -59,21 +74,6 @@ function hasManagedInstallRecord(ctx: Context, toolId: string): boolean {
   );
 }
 
-function hasPreexistingRecord(ctx: Context, toolId: string): boolean {
-  return getPluginActions(ctx).some(
-    (action) =>
-      action.type === ACTION_TYPE_PREEXISTING_CLI_TOOL &&
-      action.target === toolId &&
-      action.preExisting === true,
-  );
-}
-
-function hasAnyRecordForTool(ctx: Context, toolId: string): boolean {
-  return (
-    hasManagedInstallRecord(ctx, toolId) || hasPreexistingRecord(ctx, toolId)
-  );
-}
-
 async function isToolBinaryAvailable(
   ctx: Context,
   entry: CliToolBundleEntry,
@@ -85,39 +85,15 @@ async function isToolBinaryAvailable(
 }
 
 async function detectCliTools(ctx: Context): Promise<PluginPresence> {
-  const bundleAvailability = await Promise.all(
-    CLI_TOOL_BUNDLE.map(async (entry) => ({
-      entry,
-      available: await isToolBinaryAvailable(ctx, entry),
-    })),
-  );
-
-  if (bundleAvailability.some((tool) => !tool.available)) {
-    return { present: false, preExisting: false };
+  for (const entry of CLI_TOOL_BUNDLE) {
+    if (!(await isToolBinaryAvailable(ctx, entry))) {
+      return { present: false, preExisting: false };
+    }
   }
-
   const allManaged = CLI_TOOL_BUNDLE.every((entry) =>
     hasManagedInstallRecord(ctx, entry.id),
   );
-  if (allManaged) {
-    return { present: true, preExisting: false };
-  }
-
-  if (!ctx.dryRun) {
-    for (const { entry } of bundleAvailability) {
-      if (hasAnyRecordForTool(ctx, entry.id)) {
-        continue;
-      }
-      await ctx.manifest.recordAction({
-        plugin: PLUGIN_ID,
-        type: ACTION_TYPE_PREEXISTING_CLI_TOOL,
-        target: entry.id,
-        preExisting: true,
-      });
-    }
-  }
-
-  return { present: true, preExisting: true };
+  return { present: true, preExisting: !allManaged };
 }
 
 async function describeCliToolsState(
@@ -152,28 +128,44 @@ async function describeCliToolsState(
   );
 }
 
+function describeInstallOperation(
+  entry: CliToolBundleEntry,
+): ProposedOperation {
+  return describeOperation({
+    capabilityId: PLUGIN_ID,
+    resourceId: `package:${entry.id}`,
+    targetPath: entry.packageName,
+    action: "install-package",
+    riskClass: "executes",
+    requiresConsent: true,
+    preview: {
+      kind: "note",
+      text: `npm install --global --ignore-scripts ${pinnedPackageSpec(entry)}; binary from the v${entry.version} GitHub release, sha256-pinned`,
+    },
+  });
+}
+
 async function planCliTools(ctx: Context): Promise<ProposedOperation[]> {
-  const missingEntries: CliToolBundleEntry[] = [];
+  const operations: ProposedOperation[] = [];
   for (const entry of CLI_TOOL_BUNDLE) {
     if (!(await isToolBinaryAvailable(ctx, entry))) {
-      missingEntries.push(entry);
+      operations.push(describeInstallOperation(entry));
+    } else if (
+      !(
+        entriesForTool(getPluginActions(ctx), entry).usesIt &&
+        (await isHeldByThisRepository(ctx, entry.sharedResource))
+      )
+    ) {
+      operations.push(
+        describeUseSharedOperation(
+          PLUGIN_ID,
+          entry.sharedResource,
+          hasManagedInstallRecord(ctx, entry.id),
+        ),
+      );
     }
   }
-
-  return missingEntries.map((entry) =>
-    describeOperation({
-      capabilityId: PLUGIN_ID,
-      resourceId: `package:${entry.id}`,
-      targetPath: entry.packageName,
-      action: "install-package",
-      riskClass: "executes",
-      requiresConsent: true,
-      preview: {
-        kind: "note",
-        text: `npm install --global --ignore-scripts ${pinnedPackageSpec(entry)}; binary from the v${entry.version} GitHub release, sha256-pinned`,
-      },
-    }),
-  );
+  return operations;
 }
 
 async function uninstallGlobalPackage(
@@ -209,10 +201,38 @@ async function removePartlyInstalledPackage(
   }
 }
 
+async function assertNoForeignGlobalPackage(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<void> {
+  const npmRoot = await resolveGlobalNpmRoot(ctx.run, {
+    cwd: (await resolveAgemonStateDirectory("prepare")).path,
+    mayNotExistYet: true,
+  });
+  const packagePath = join(npmRoot, entry.packageName);
+  try {
+    await lstat(packagePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  const recordedByAgemon =
+    (await readMachineLedger()).resources[entry.sharedResource.id] !==
+    undefined;
+  throw new Error(
+    recordedByAgemon
+      ? `${entry.packageName} is installed but '${entry.binaryName} --version' fails on your PATH (it is recorded in the shared-tools ledger); fix your PATH, then run agemon again.`
+      : `A global npm ${entry.packageName} already exists at ${printable(packagePath)} but '${entry.binaryName} --version' fails on your PATH — fix it or run 'npm uninstall --global ${entry.packageName}', then run agemon again.`,
+  );
+}
+
 async function installPinnedCliTool(
   ctx: Context,
   entry: CliToolBundleEntry,
 ): Promise<void> {
+  await assertNoForeignGlobalPackage(ctx, entry);
   const candidates = resolveVerifiedArchiveCandidates(
     entry,
     `${process.platform}-${process.arch}`,
@@ -248,37 +268,68 @@ async function installPinnedCliTool(
   }
 }
 
-async function installCliTools(ctx: Context): Promise<void> {
+async function installSharedCliTool(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<void> {
   if (ctx.dryRun) {
-    for (const entry of CLI_TOOL_BUNDLE) {
-      ctx.ui.info(
-        `Would install ${pinnedPackageSpec(entry)} globally via npm, with its sha256-pinned binary`,
-      );
-    }
+    ctx.ui.info(
+      `Would install ${pinnedPackageSpec(entry)} globally via npm, with its sha256-pinned binary`,
+    );
     return;
   }
+  await createSharedResource(ctx, PLUGIN_ID, entry.sharedResource, {
+    isPresent: () => isToolBinaryAvailable(ctx, entry),
+    create: () => installPinnedCliTool(ctx, entry),
+    async recordInstall() {
+      await ctx.manifest.recordAction({
+        plugin: PLUGIN_ID,
+        type: ACTION_TYPE_INSTALLED_CLI_TOOL,
+        target: entry.id,
+        preExisting: false,
+      });
+    },
+  });
+}
 
+async function useInstalledCliTool(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<void> {
+  if (ctx.dryRun) {
+    ctx.ui.info(`Would record that this repository uses ${entry.binaryName}`);
+    return;
+  }
+  await addSharedHolder(ctx, PLUGIN_ID, entry.sharedResource, {
+    isPresent: () => isToolBinaryAvailable(ctx, entry),
+    repoLedgerSaysInstalled: hasManagedInstallRecord(ctx, entry.id),
+  });
+}
+
+async function installCliTools(ctx: Context): Promise<void> {
   for (const entry of CLI_TOOL_BUNDLE) {
-    const toolIsAvailable = await isToolBinaryAvailable(ctx, entry);
-    if (toolIsAvailable) {
-      if (!hasAnyRecordForTool(ctx, entry.id)) {
-        await ctx.manifest.recordAction({
-          plugin: PLUGIN_ID,
-          type: ACTION_TYPE_PREEXISTING_CLI_TOOL,
-          target: entry.id,
-          preExisting: true,
-        });
-      }
-      continue;
+    if (!(await isToolBinaryAvailable(ctx, entry))) {
+      await installSharedCliTool(ctx, entry);
     }
+  }
+}
 
-    await installPinnedCliTool(ctx, entry);
-    await ctx.manifest.recordAction({
-      plugin: PLUGIN_ID,
-      type: ACTION_TYPE_INSTALLED_CLI_TOOL,
-      target: entry.id,
-      preExisting: false,
-    });
+async function applyCliTools(
+  ctx: Context,
+  operations: ProposedOperation[],
+): Promise<void> {
+  for (const operation of operations) {
+    const installEntry = CLI_TOOL_BUNDLE.find(
+      (entry) => operation.resourceId === `package:${entry.id}`,
+    );
+    const sharedEntry = CLI_TOOL_BUNDLE.find(
+      (entry) => operation.resourceId === entry.sharedResource.id,
+    );
+    if (operation.action === "install-package" && installEntry) {
+      await installSharedCliTool(ctx, installEntry);
+    } else if (operation.action === "use-shared" && sharedEntry) {
+      await useInstalledCliTool(ctx, sharedEntry);
+    }
   }
 }
 
@@ -308,42 +359,63 @@ async function verifyCliTools(ctx: Context): Promise<PluginVerificationResult> {
   };
 }
 
-async function revertCliTools(
-  ctx: Context,
+function entriesForTool(
   entries: LedgerEntry[],
-): Promise<void> {
-  const installedByAgemon = entries.filter(
+  entry: CliToolBundleEntry,
+): { installedIt: boolean; usesIt: boolean } {
+  const installedIt = entries.some(
     (action) =>
       action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
+      action.target === entry.id &&
       action.preExisting === false,
   );
-  const managedPackageNames: string[] = [];
-  for (const action of installedByAgemon) {
-    const bundleEntry = CLI_TOOL_BUNDLE.find(
-      (entry) => entry.id === action.target,
+  const usesIt =
+    installedIt ||
+    repoLedgerUsesSharedResource(entries, entry.sharedResource) ||
+    entries.some(
+      (action) =>
+        action.type === ACTION_TYPE_PREEXISTING_CLI_TOOL &&
+        action.target === entry.id,
     );
-    if (bundleEntry) {
-      managedPackageNames.push(bundleEntry.packageName);
-    } else {
+  return { installedIt, usesIt };
+}
+
+function reportUnmanagedTargets(ctx: Context, entries: LedgerEntry[]): void {
+  for (const action of entries) {
+    const isToolEntry =
+      action.type === ACTION_TYPE_INSTALLED_CLI_TOOL ||
+      action.type === ACTION_TYPE_PREEXISTING_CLI_TOOL;
+    if (
+      isToolEntry &&
+      !CLI_TOOL_BUNDLE.some((entry) => entry.id === action.target)
+    ) {
       ctx.ui.info(
         `ignoring ledger entry for ${printable(action.target)}: cli-tool does not manage that package`,
       );
     }
   }
+}
 
-  if (ctx.dryRun) {
-    if (managedPackageNames.length === 0) {
-      ctx.ui.info("Would keep pre-existing CLI tools untouched");
-      return;
+async function revertCliTools(
+  ctx: Context,
+  entries: LedgerEntry[],
+): Promise<void> {
+  reportUnmanagedTargets(ctx, entries);
+  let releasedAny = false;
+  for (const entry of CLI_TOOL_BUNDLE) {
+    const { installedIt, usesIt } = entriesForTool(entries, entry);
+    if (!usesIt) {
+      continue;
     }
-    for (const packageName of managedPackageNames) {
-      ctx.ui.info(`Would uninstall global npm package ${packageName}`);
-    }
-    return;
+    releasedAny = true;
+    await releaseSharedResource(ctx, entry.sharedResource, {
+      releasingRepoInstalledIt: installedIt,
+      isPresent: async () => true,
+      remove: () => uninstallGlobalPackage(ctx, entry.packageName),
+    });
   }
-
-  for (const packageName of managedPackageNames) {
-    await uninstallGlobalPackage(ctx, packageName);
+  if (ctx.dryRun && !releasedAny) {
+    ctx.ui.info("Would keep pre-existing CLI tools untouched");
   }
 }
 
@@ -354,9 +426,11 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
 export const cliToolPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
   riskClass: "executes",
+  sharedResources: CLI_TOOL_BUNDLE.map((entry) => entry.sharedResource),
   detect: detectCliTools,
   describeState: describeCliToolsState,
   plan: planCliTools,
+  apply: applyCliTools,
   install: installCliTools,
   verify: verifyCliTools,
   revert: revertCliTools,

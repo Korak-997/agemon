@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -129,6 +130,22 @@ describe("writeJournal", () => {
     await expect(readdir(repo)).resolves.toEqual([]);
   });
 
+  it("refuses to write or read journals in an agemon state dir others can write", async () => {
+    const repo = await createRepo();
+    const stateRoot = await mkdtemp(join(tmpdir(), "agemon-journal-state-"));
+    createdTempDirectories.push(stateRoot);
+    await mkdir(join(stateRoot, "agemon"), { mode: 0o700 });
+    await chmod(join(stateRoot, "agemon"), 0o707);
+    process.env.XDG_STATE_HOME = stateRoot;
+
+    await expect(writeJournal(repo, newJournal())).rejects.toThrow(
+      /other users can write to it/,
+    );
+    await expect(readJournals(repo)).rejects.toThrow(
+      /other users can write to it/,
+    );
+  });
+
   it("round-trips through readJournals", async () => {
     const repo = await createRepo();
     const { path, journal } = await writeJournal(repo, newJournal());
@@ -247,6 +264,27 @@ describe("readJournals validation", () => {
     await expect(failure).rejects.toThrow(detail);
     await expect(readJournals(repo)).rejects.toThrow(
       `The interrupted-apply journal ${path} is invalid:`,
+    );
+  });
+
+  it("refuses a journal whose ledgerBefore has a control character in a target", async () => {
+    const repo = await createRepo();
+    await plantJournal(repo, `${PLAN_ID}.json`, {
+      ...(await validJournalRecord(repo)),
+      ledgerBefore: [
+        {
+          id: "1",
+          plugin: "master-prompt",
+          type: "managed-rule-file",
+          target: "a\nb",
+          preExisting: false,
+          createdAt: "2026-10-24T00:00:00.000Z",
+        },
+      ],
+    });
+
+    await expect(readJournals(repo)).rejects.toThrow(
+      "'ledgerBefore' is not a list of valid ledger entries",
     );
   });
 

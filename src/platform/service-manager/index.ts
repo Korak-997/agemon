@@ -34,18 +34,12 @@ export interface RegisterAutostartInput {
 
 export interface RegisterAutostartResult {
   unitPath: string;
-  lingerEnabledByAgemon: boolean;
   attemptLabel: string;
   failedAttempts: string[];
 }
 
 export interface UnregisterAutostartInput {
   unitName: string;
-  disableLinger: boolean;
-}
-
-export interface UnregisterAutostartResult {
-  lingerKeptFor: string | null;
 }
 
 export interface ServiceManager {
@@ -53,10 +47,13 @@ export interface ServiceManager {
   registerAutostart(
     input: RegisterAutostartInput,
   ): Promise<RegisterAutostartResult>;
-  unregisterAutostart(
-    input: UnregisterAutostartInput,
-  ): Promise<UnregisterAutostartResult>;
+  unregisterAutostart(input: UnregisterAutostartInput): Promise<void>;
   readUnitWorkingDirectory(unitName: string): Promise<string | null>;
+  unitPathFor(unitName: string): string;
+  isLingerEnabled(): Promise<boolean>;
+  enableLinger(): Promise<void>;
+  disableLinger(): Promise<void>;
+  findAgemonDaemonUnit(): Promise<string | null>;
 }
 
 export interface CreateServiceManagerInput {

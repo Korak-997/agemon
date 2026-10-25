@@ -127,17 +127,34 @@ function validatePlan(parsed: unknown, planId: string): Plan {
     if (typeof preview.text !== "string") {
       fail(`'${field("preview.text")}' must be a string`);
     }
+    const action = oneOf(
+      PROPOSED_OPERATION_ACTIONS,
+      operation.action,
+      field("action"),
+    );
+    const riskClass = oneOf(
+      RISK_CLASSES,
+      operation.riskClass,
+      field("riskClass"),
+    );
+    const needsNoConsent = riskClass === "inert" && !operation.requiresConsent;
+    if (action === "use-shared" && !needsNoConsent) {
+      fail(
+        `'operations[${index}]' is a use-shared operation, which must be inert and need no consent`,
+      );
+    }
+    if (action !== "use-shared" && needsNoConsent) {
+      fail(
+        `'operations[${index}]' marks ${action} as needing no consent; re-run 'agemon plan'`,
+      );
+    }
     return {
       id: identifier(operation.id, field("id")),
       capabilityId: identifier(operation.capabilityId, field("capabilityId")),
       resourceId: identifier(operation.resourceId, field("resourceId")),
       targetPath,
-      action: oneOf(
-        PROPOSED_OPERATION_ACTIONS,
-        operation.action,
-        field("action"),
-      ),
-      riskClass: oneOf(RISK_CLASSES, operation.riskClass, field("riskClass")),
+      action,
+      riskClass,
       requiresConsent: operation.requiresConsent as boolean,
       expectedFingerprint,
       preview: {

@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -8,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   resolveJournalDirectory,
   writeJournal,
@@ -29,6 +30,7 @@ import {
   readPlan,
   writePlan,
 } from "../../../src/core/plan-store.js";
+import { recoverInterruptedApply } from "../../../src/core/recover.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
@@ -51,15 +53,21 @@ function createNoOpServiceManager(): ServiceManager {
     async registerAutostart() {
       return {
         unitPath: "",
-        lingerEnabledByAgemon: false,
         attemptLabel: "strict",
         failedAttempts: [],
       };
     },
-    async unregisterAutostart() {
-      return { lingerKeptFor: null };
-    },
+    async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
       return null;
     },
   };
@@ -990,8 +998,15 @@ describe("uninstallPlugins", () => {
       (previewCtx: Context) =>
         previewCtx.serviceManager.unregisterAutostart({
           unitName: "agemon-crg-daemon-x-01234567.service",
-          disableLinger: false,
         }),
+    ],
+    [
+      "isLingerEnabled",
+      (previewCtx: Context) => previewCtx.serviceManager.isLingerEnabled(),
+    ],
+    [
+      "disableLinger",
+      (previewCtx: Context) => previewCtx.serviceManager.disableLinger(),
     ],
     [
       "registerAutostart",
@@ -1062,5 +1077,271 @@ describe("uninstallPlugins", () => {
     );
     expect(failure).not.toContain("npm_secret");
     expect(failure).not.toContain("more detail");
+  });
+});
+
+describe("reconcile with use-shared operations", () => {
+  const AGNIX_RESOURCE = {
+    id: "npm-global:agnix" as const,
+    toolName: "agnix",
+    manualRemoveCommand: "npm uninstall --global agnix",
+    removalVerb: "uninstall" as const,
+    migratesFromRepoLedgers: true,
+  };
+
+  function useSharedOperation(targetPath: string = AGNIX_RESOURCE.id) {
+    return describeOperation({
+      capabilityId: "shared-cap",
+      resourceId: targetPath,
+      targetPath,
+      action: "use-shared",
+      riskClass: "inert",
+      requiresConsent: false,
+      preview: { kind: "note", text: "record that this repository uses agnix" },
+    });
+  }
+
+  function createSharingCapability(
+    extra: ReturnType<typeof describeOperation>[] = [],
+  ) {
+    const applied: string[][] = [];
+    const plugin: AgemonPlugin = {
+      id: "shared-cap",
+      sharedResources: [AGNIX_RESOURCE],
+      async detect() {
+        return { present: true, preExisting: true };
+      },
+      async plan() {
+        return [useSharedOperation(), ...extra];
+      },
+      async apply(_ctx, operations) {
+        applied.push(operations.map((operation) => operation.action));
+      },
+      async install() {},
+      async verify() {
+        return { ok: true };
+      },
+      async uninstall() {},
+    };
+    return { plugin, applied };
+  }
+
+  const installOperation = describeOperation({
+    capabilityId: "shared-cap",
+    resourceId: "package:agnix",
+    targetPath: "agnix",
+    action: "install-package",
+    riskClass: "executes",
+    requiresConsent: true,
+    preview: { kind: "note", text: "install agnix" },
+  });
+
+  it("a plan with only use-shared ops (no gates) applies them", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    const { plugin, applied } = createSharingCapability();
+
+    const outcome = await reconcile(ctx, [plugin], RECONCILE_OPTIONS);
+
+    expect(outcome).toBe("applied");
+    expect(applied).toEqual([["use-shared"]]);
+  });
+
+  it("declining every gate still applies use-shared ops", async () => {
+    const ctx = await createTestContext(async (gates) => ({
+      approved: [],
+      skipped: gates.flatMap((gate) =>
+        gate.operations.map((operation) => ({
+          operation,
+          reason: "declined",
+          consentMissing: false,
+        })),
+      ),
+      workspaceIsolationApproved: null,
+      conflictResolutions: [],
+    }));
+    const { plugin, applied } = createSharingCapability([installOperation]);
+
+    await reconcile(ctx, [plugin], RECONCILE_OPTIONS);
+
+    expect(applied).toEqual([["use-shared"]]);
+  });
+
+  it("a non-interactive first run with only use-shared ops stops at the preview when /.agemon/ is not ignored", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    await rm(join(ctx.cwd, ".gitignore"));
+    const { plugin, applied } = createSharingCapability();
+
+    const outcome = await reconcile({ ...ctx, yes: false }, [plugin], {
+      ...RECONCILE_OPTIONS,
+      persistConfig: true,
+    });
+
+    expect(outcome).toBe("previewed");
+    expect(applied).toEqual([]);
+  });
+
+  it("a non-interactive first run with only use-shared ops applies them in an ignored repo", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    const { plugin, applied } = createSharingCapability();
+
+    const outcome = await reconcile({ ...ctx, yes: false }, [plugin], {
+      ...RECONCILE_OPTIONS,
+      persistConfig: true,
+    });
+
+    expect(outcome).toBe("applied");
+    expect(applied).toEqual([["use-shared"]]);
+  });
+
+  it("skips use-shared ops when /.agemon/ may not be git-ignored", async () => {
+    const ctx = await createTestContext(async () => ({
+      approved: [],
+      skipped: [],
+      workspaceIsolationApproved: false,
+      conflictResolutions: [],
+    }));
+    await rm(join(ctx.cwd, ".gitignore"));
+    const { plugin, applied } = createSharingCapability();
+
+    const outcome = await reconcile(ctx, [plugin], RECONCILE_OPTIONS);
+
+    expect(outcome).toBe("declined");
+    expect(applied).toEqual([]);
+  });
+
+  it.each([
+    ["a tool the plugin does not manage", "pipx:code-review-graph"],
+    ["an option-like target", "--global"],
+  ])(
+    "refuses a stored plan whose use-shared op names %s",
+    async (_label, target) => {
+      const ctx = await createTestContext(approveEveryGate);
+      const { plugin, applied } = createSharingCapability();
+      const plan = await buildPlan(ctx, [plugin], { agemonVersion: "9.9.9" });
+      const forged: Plan = {
+        ...plan,
+        operations: [useSharedOperation(target)],
+      };
+
+      await expect(
+        reconcile(ctx, [plugin], { ...RECONCILE_OPTIONS, plan: forged }),
+      ).rejects.toThrow(/which it does not manage/);
+      expect(applied).toEqual([]);
+    },
+  );
+
+  it("refuses a use-shared op whose resource id names a foreign tool", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    const { plugin, applied } = createSharingCapability();
+    const plan = await buildPlan(ctx, [plugin], { agemonVersion: "9.9.9" });
+    const forged: Plan = {
+      ...plan,
+      operations: [
+        { ...useSharedOperation(), resourceId: "pipx:code-review-graph" },
+      ],
+    };
+
+    await expect(
+      reconcile(ctx, [plugin], { ...RECONCILE_OPTIONS, plan: forged }),
+    ).rejects.toThrow(/which it does not manage/);
+    expect(applied).toEqual([]);
+  });
+
+  it("a stored plan with a use-shared op round-trips, applies, and creates no repo file", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    const { plugin, applied } = createSharingCapability();
+    const plan = await buildPlan(ctx, [plugin], { agemonVersion: "9.9.9" });
+    await writePlan(ctx.cwd, plan);
+    const stored = await readPlan(ctx.cwd, plan.id);
+
+    const outcome = await reconcile(ctx, [plugin], {
+      ...RECONCILE_OPTIONS,
+      plan: stored,
+    });
+
+    expect(outcome).toBe("applied");
+    expect(applied).toEqual([["use-shared"]]);
+    expect((await readdir(ctx.cwd)).sort()).toEqual([".agemon", ".gitignore"]);
+  });
+
+  it("refuses a use-shared op for a plugin that declares no shared tools", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    const { plugin } = createSharingCapability();
+    const plan = await buildPlan(ctx, [plugin], { agemonVersion: "9.9.9" });
+    const withoutSharedTools = { ...plugin, sharedResources: undefined };
+
+    await expect(
+      reconcile(ctx, [withoutSharedTools], { ...RECONCILE_OPTIONS, plan }),
+    ).rejects.toThrow(/which it does not manage/);
+  });
+});
+
+describe("the state directory is checked before any work", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function looseStateRoot(): Promise<void> {
+    const stateRoot = await mkdtemp(join(tmpdir(), "agemon-loose-state-"));
+    createdTempDirectories.push(stateRoot);
+    await mkdir(join(stateRoot, "agemon"), { mode: 0o700 });
+    await chmod(join(stateRoot, "agemon"), 0o707);
+    vi.stubEnv("XDG_STATE_HOME", stateRoot);
+  }
+
+  it("reconcile refuses before planning", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    const capability = createFakeCapability({
+      id: "fake",
+      targetPath: "FAKE.md",
+    });
+    await looseStateRoot();
+
+    await expect(
+      reconcile(ctx, [capability.plugin], RECONCILE_OPTIONS),
+    ).rejects.toThrow(/other users can write to it/);
+    expect(capability.planCallCount()).toBe(0);
+  });
+
+  it("nuke refuses before reversing anything", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    await looseStateRoot();
+
+    await expect(uninstallPlugins(ctx, [], {})).rejects.toThrow(
+      /other users can write to it/,
+    );
+  });
+
+  it("recover refuses before reading journals", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    await looseStateRoot();
+
+    await expect(
+      recoverInterruptedApply(ctx, [], { dryRun: false }),
+    ).rejects.toThrow(/other users can write to it/);
+  });
+});
+
+describe("printing ledger targets", () => {
+  it("nuke --dry-run prints a zero-width character in a ledger target as '?'", async () => {
+    const ctx = await createTestContext(approveEveryGate);
+    await ctx.manifest.recordAction({
+      plugin: "master-prompt",
+      type: "managed-rule-file",
+      target: "AGENTS\u200b.md",
+      preExisting: false,
+    });
+    const lines: string[] = [];
+    const preview = {
+      ...ctx,
+      dryRun: true,
+      ui: { ...ctx.ui, info: (line: string) => lines.push(line) },
+    };
+
+    await uninstallPlugins(preview, [masterPromptPlugin], {});
+
+    const printed = lines.join("\n");
+    expect(printed).toContain("AGENTS?.md");
+    expect(printed).not.toContain("\u200b");
   });
 });
