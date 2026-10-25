@@ -498,12 +498,23 @@ function previewContext(
   const refuse = (): never => {
     throw new PreviewPromptError("the nuke preview must not ask for consent");
   };
+  const refuseCommand = (): never => {
+    throw new PreviewPromptError("the nuke preview must not run commands");
+  };
   return {
     ...ctx,
     dryRun: true,
     ui: { start() {}, succeed() {}, fail() {}, info: collect },
     confirm: refuse,
     consent: refuse,
+    run: refuseCommand,
+    serviceManager: {
+      isActive: refuseCommand,
+      registerAutostart: refuseCommand,
+      unregisterAutostart: refuseCommand,
+      readUnitWorkingDirectory: (unitName) =>
+        ctx.serviceManager.readUnitWorkingDirectory(unitName),
+    },
   };
 }
 

@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
+export const TOOLS_DIRECTORY_MODE = 0o700;
+
 export function resolveStateRoot(): string {
   const xdgStateHome = process.env.XDG_STATE_HOME;
   if (xdgStateHome && isAbsolute(xdgStateHome)) {
@@ -13,4 +15,8 @@ export function resolveStateRoot(): string {
     );
   }
   return join(homeDirectory, ".local", "state");
+}
+
+export function resolveToolsRoot(): string {
+  return join(resolveStateRoot(), "agemon", "tools");
 }

@@ -7,9 +7,8 @@ vi.mock("node:os", async (importOriginal) => ({
   userInfo: userInfoMock,
 }));
 
-const { isHomeDirectory, resolveHomeDirectory } = await import(
-  "../../../src/platform/home.js"
-);
+const { containsHomeDirectory, isHomeDirectory, resolveHomeDirectory } =
+  await import("../../../src/platform/home.js");
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -48,5 +47,16 @@ describe("isHomeDirectory", () => {
 
     expect(await isHomeDirectory("/")).toBe(true);
     expect(await isHomeDirectory("/tmp")).toBe(false);
+  });
+});
+
+describe("containsHomeDirectory", () => {
+  it("is true for the home directory itself and any directory above it", async () => {
+    vi.stubEnv("HOME", "/tmp");
+    userInfoMock.mockReturnValue({ homedir: "/nonexistent-account-home" });
+
+    expect(await containsHomeDirectory("/tmp")).toBe(true);
+    expect(await containsHomeDirectory("/")).toBe(true);
+    expect(await containsHomeDirectory("/usr")).toBe(false);
   });
 });

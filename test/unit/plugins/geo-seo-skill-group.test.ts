@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { resolveVendoredSkillPath } from "../../../src/core/package-assets.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
-import { resolveVendoredSkillPath } from "../../../src/plugins/skills/vendored-path.js";
 
 const GEO_SEO_SKILL_NAMES = [
   "geo",

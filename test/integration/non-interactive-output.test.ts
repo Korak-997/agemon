@@ -34,11 +34,11 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph==2.3.9; build the code graph for this repository
+             pipx install code-review-graph==2.3.9 (dependencies hash-locked); build the code graph for this repository
 
       daemon
-        v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
-             register systemd --user unit agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service to keep the code graph fresh
+        v  agemon-crg-daemon-repo-<REPO_HASH>.service [executes]
+             register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
         v  skill-groups:configured  [executes]
@@ -140,11 +140,11 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph==2.3.9; build the code graph for this repository
+             pipx install code-review-graph==2.3.9 (dependencies hash-locked); build the code graph for this repository
 
       daemon
-        v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
-             register systemd --user unit agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service to keep the code graph fresh
+        v  agemon-crg-daemon-repo-<REPO_HASH>.service [executes]
+             register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
         v  skill-groups:configured  [executes]
@@ -242,6 +242,7 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
+      daemon hardening: strict
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
       ╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
       │                                                                        │
@@ -287,11 +288,11 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph==2.3.9; build the code graph for this repository
+             pipx install code-review-graph==2.3.9 (dependencies hash-locked); build the code graph for this repository
 
       daemon
-        v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
-             register systemd --user unit agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service to keep the code graph fresh
+        v  agemon-crg-daemon-repo-<REPO_HASH>.service [executes]
+             register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
         v  skill-groups:configured  [executes]
@@ -468,8 +469,8 @@ describe("non-interactive output contract", () => {
           },
           {
             "capabilityId": "daemon",
-            "resourceId": "service-unit:agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service",
-            "label": "agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service",
+            "resourceId": "service-unit:agemon-crg-daemon-repo-<REPO_HASH>.service",
+            "label": "agemon-crg-daemon-repo-<REPO_HASH>.service",
             "state": "absent",
             "detail": null
           },

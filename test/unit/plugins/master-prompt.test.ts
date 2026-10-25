@@ -47,10 +47,15 @@ function createNoOpServiceManager(): ServiceManager {
       return {
         unitPath: "",
         lingerEnabledByAgemon: false,
+        attemptLabel: "strict",
+        failedAttempts: [],
       };
     },
     async unregisterAutostart() {
-      return;
+      return { lingerKeptFor: null };
+    },
+    async readUnitWorkingDirectory() {
+      return null;
     },
   };
 }

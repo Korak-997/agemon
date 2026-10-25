@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../../../src/plugins/skills/vendored-path.js", () => ({
+vi.mock("../../../src/core/package-assets.js", () => ({
   resolveVendoredSkillPath: () => {
     throw new Error(
       "Unable to locate agemon's vendored assets/skills directory.",

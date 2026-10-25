@@ -32,6 +32,6 @@ export function resolveVendoredSkillPath(
   return join(resolvePackageRoot(), "assets", "skills", groupId, skillId);
 }
 
-export function resolveSkillsToolsManifestDirectory(): string {
+export function resolveToolsManifestDirectory(): string {
   return join(resolvePackageRoot(), "assets", "tools");
 }

@@ -123,6 +123,8 @@ const PIN_CHECKS: PinCheck[] = [
           now,
         ),
       ),
+    bumpReminder:
+      'a bump also regenerates assets/tools/code-review-graph-constraints.txt: echo "code-review-graph==<version>" | uv pip compile - --universal --generate-hashes --python-version 3.10 --no-annotate -o assets/tools/code-review-graph-constraints.txt',
   },
   {
     name: "agnix (npm)",

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveHomeDirectory } from "../home.js";
 import type {
@@ -7,7 +7,12 @@ import type {
   ServiceManager,
   ServiceStatus,
   UnregisterAutostartInput,
+  UnregisterAutostartResult,
 } from "./index.js";
+import {
+  AGEMON_DAEMON_UNIT_PATTERN,
+  workingDirectoryOfUnit,
+} from "./unit-files.js";
 
 interface CreateFakeServiceManagerInput {
   homeDir?: string;
@@ -17,6 +22,7 @@ interface CreateFakeServiceManagerInput {
 interface FakeServiceState {
   unitName: string;
   unitContents: string;
+  attemptLabel: string;
   user: string;
   active: boolean;
   lingerEnabledByAgemon: boolean;
@@ -61,9 +67,11 @@ export function createFakeServiceManager(
   ): Promise<RegisterAutostartResult> => {
     const destinationPath = markerPath(homeDir, registration.unitName);
     await mkdir(join(homeDir, ".agemon", "fake-services"), { recursive: true });
+    const [firstAttempt] = registration.attempts;
     const state: FakeServiceState = {
       unitName: registration.unitName,
-      unitContents: registration.unitContents,
+      unitContents: firstAttempt.unitContents,
+      attemptLabel: firstAttempt.label,
       user,
       active: true,
       lingerEnabledByAgemon: true,
@@ -77,18 +85,39 @@ export function createFakeServiceManager(
     return {
       unitPath: destinationPath,
       lingerEnabledByAgemon: state.lingerEnabledByAgemon,
+      attemptLabel: state.attemptLabel,
+      failedAttempts: [],
     };
   };
 
   const unregisterAutostart = async (
     registration: UnregisterAutostartInput,
-  ): Promise<void> => {
+  ): Promise<UnregisterAutostartResult> => {
     await rm(markerPath(homeDir, registration.unitName), { force: true });
+    if (!registration.disableLinger) {
+      return { lingerKeptFor: null };
+    }
+    const markers = await readdir(
+      join(homeDir, ".agemon", "fake-services"),
+    ).catch(() => []);
+    const lingerKeptFor =
+      markers
+        .map((marker) => marker.replace(/\.json$/, ""))
+        .find((unitName) => AGEMON_DAEMON_UNIT_PATTERN.test(unitName)) ?? null;
+    return { lingerKeptFor };
+  };
+
+  const readUnitWorkingDirectory = async (
+    unitName: string,
+  ): Promise<string | null> => {
+    const marker = await readMarker(homeDir, unitName);
+    return marker === null ? null : workingDirectoryOfUnit(marker.unitContents);
   };
 
   return {
     isActive,
     registerAutostart,
     unregisterAutostart,
+    readUnitWorkingDirectory,
   };
 }

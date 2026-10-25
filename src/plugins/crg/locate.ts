@@ -14,6 +14,7 @@ import {
 import { crgSubprocessEnvironment } from "./environment.js";
 
 const CRG_BINARY_NAME = "code-review-graph";
+export const BROKEN_PIPX_VENV_HINT = `pipx venv is broken — run 'pipx uninstall ${CRG_BINARY_NAME}', then 'agemon'`;
 const PIPX_VENV_NAME = "code-review-graph";
 const PACKAGE_VERSION_PATTERN = /^[0-9][0-9A-Za-z.+!-]{0,63}$/;
 const VERSION_IN_OUTPUT_PATTERN = /\d+(?:\.\d+){1,8}[0-9A-Za-z.+!-]{0,32}/;

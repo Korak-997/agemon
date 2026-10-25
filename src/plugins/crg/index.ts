@@ -12,8 +12,10 @@ import type {
   PluginVerificationResult,
   ProposedOperation,
 } from "../types.js";
+import { ensureCrgConstraintsFile, hashLockedPipArgs } from "./constraints.js";
 import { crgSubprocessEnvironment, resolveCrgHome } from "./environment.js";
 import {
+  BROKEN_PIPX_VENV_HINT,
   type CrgLocation,
   locateCodeReviewGraph,
   pipxMetadataPath,
@@ -32,7 +34,6 @@ const UNINSTALL_TIMEOUT_MS = 120_000;
 const ACTION_TYPE_INSTALLED_BINARY = "installed-binary";
 const ACTION_TYPE_GRAPH_BUILT = "graph-built";
 
-const BROKEN_VENV_HINT = `pipx venv is broken — run 'pipx reinstall ${PACKAGE_NAME}'`;
 const GRAPH_ENTRY_NOT_DIRECTORY = `${GRAPH_DIRECTORY} is a symlink or file, not a directory; remove it, then run code-review-graph build`;
 const NOT_ON_PATH_HINT =
   "not on PATH — run 'pipx ensurepath' and open a new shell";
@@ -81,7 +82,7 @@ async function describeCrgState(ctx: Context): Promise<CapabilityStateRow[]> {
     return [{ ...row, state: "absent", detail: null }];
   }
   if (location.status === "broken-venv") {
-    return [{ ...row, state: "unknown", detail: BROKEN_VENV_HINT }];
+    return [{ ...row, state: "unknown", detail: BROKEN_PIPX_VENV_HINT }];
   }
   return [
     {
@@ -95,7 +96,7 @@ async function describeCrgState(ctx: Context): Promise<CapabilityStateRow[]> {
 async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
   const location = await locateCodeReviewGraph(ctx);
   if (location.status === "broken-venv") {
-    ctx.ui.info(BROKEN_VENV_HINT);
+    ctx.ui.info(BROKEN_PIPX_VENV_HINT);
     return [];
   }
   if (location.status === "found") {
@@ -117,7 +118,7 @@ async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
       requiresConsent: true,
       preview: {
         kind: "note",
-        text: `pipx install ${CODE_REVIEW_GRAPH_PACKAGE_SPEC}; build the code graph for this repository`,
+        text: `pipx install ${CODE_REVIEW_GRAPH_PACKAGE_SPEC} (dependencies hash-locked); build the code graph for this repository`,
       },
     }),
   ];
@@ -150,14 +151,19 @@ async function installCrg(ctx: Context): Promise<void> {
   }
 
   const pipxHome = await resolvePipxHome();
+  const constraintsPath = await ensureCrgConstraintsFile();
   const installResult = await ctx.run(
     "pipx",
-    ["install", CODE_REVIEW_GRAPH_PACKAGE_SPEC],
+    [
+      "install",
+      CODE_REVIEW_GRAPH_PACKAGE_SPEC,
+      hashLockedPipArgs(constraintsPath),
+    ],
     { timeoutMs: INSTALL_TIMEOUT_MS, env: { PIPX_HOME: pipxHome } },
   );
   if (installResult.code !== 0) {
     throw new Error(
-      installResult.stderr ||
+      printable(installResult.stderr) ||
         `pipx install failed for ${CODE_REVIEW_GRAPH_PACKAGE_SPEC}`,
     );
   }
@@ -171,7 +177,7 @@ async function installCrg(ctx: Context): Promise<void> {
 
   const location = await locateCodeReviewGraph(ctx);
   if (location.status === "broken-venv") {
-    throw new Error(`pipx reported success but the ${BROKEN_VENV_HINT}`);
+    throw new Error(`pipx reported success but the ${BROKEN_PIPX_VENV_HINT}`);
   }
   if (location.status !== "found") {
     throw new Error(
@@ -208,7 +214,7 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
 
   const location = await locateCodeReviewGraph(ctx);
   if (location.status === "broken-venv") {
-    return { ok: false, detail: BROKEN_VENV_HINT };
+    return { ok: false, detail: BROKEN_PIPX_VENV_HINT };
   }
   if (location.status === "absent") {
     return { ok: false, detail: `${PACKAGE_NAME} is not installed` };
@@ -302,7 +308,8 @@ async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
   });
   if (uninstallResult.code !== 0) {
     throw new Error(
-      uninstallResult.stderr || `pipx uninstall failed for ${PACKAGE_NAME}`,
+      printable(uninstallResult.stderr) ||
+        `pipx uninstall failed for ${PACKAGE_NAME}`,
     );
   }
 }

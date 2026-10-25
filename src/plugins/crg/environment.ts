@@ -16,10 +16,10 @@ function existingGitConfigCount(): number {
   return /^\d+$/.test(configured) && Number.isSafeInteger(count) ? count : 0;
 }
 
-function crgGitSafetyEnvironment(): Record<string, string> {
-  const firstIndex = existingGitConfigCount();
+const VARIABLES_CLEARED_FOR_CRG = ["CRG_DATA_DIR", "GIT_CONFIG_PARAMETERS"];
+
+function gitSafetyConfiguration(firstIndex: number): Record<string, string> {
   const environment: Record<string, string> = {
-    GIT_CONFIG_PARAMETERS: "",
     GIT_CONFIG_COUNT: String(firstIndex + GIT_SAFETY_CONFIG.length),
   };
   GIT_SAFETY_CONFIG.forEach(([key, value], offset) => {
@@ -32,7 +32,19 @@ function crgGitSafetyEnvironment(): Record<string, string> {
 export function crgSubprocessEnvironment(): Record<string, string> {
   return {
     CRG_HOME: resolveCrgHome(),
-    CRG_DATA_DIR: "",
-    ...crgGitSafetyEnvironment(),
+    ...Object.fromEntries(
+      VARIABLES_CLEARED_FOR_CRG.map((variable) => [variable, ""]),
+    ),
+    ...gitSafetyConfiguration(existingGitConfigCount()),
+  };
+}
+
+export function crgUnitEnvironment(): {
+  set: Record<string, string>;
+  unset: string[];
+} {
+  return {
+    set: { CRG_HOME: resolveCrgHome(), ...gitSafetyConfiguration(0) },
+    unset: VARIABLES_CLEARED_FOR_CRG,
   };
 }

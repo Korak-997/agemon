@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   chmod,
@@ -6,6 +7,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -19,6 +21,7 @@ import type {
   RunSubprocessOptions,
   SubprocessResult,
 } from "../../../src/core/subprocess-runner.js";
+import { hashLockedPipArgs } from "../../../src/plugins/crg/constraints.js";
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
@@ -78,6 +81,7 @@ async function createTestContext(options: { dryRun?: boolean } = {}) {
   vi.stubEnv("GIT_CONFIG_COUNT", undefined);
   vi.stubEnv("CRG_HOME", undefined);
   vi.stubEnv("CRG_DATA_DIR", undefined);
+  vi.stubEnv("XDG_STATE_HOME", join(root, "state"));
   const pipxHome = join(home, ".local", "share", "pipx");
 
   const calls: RunCall[] = [];
@@ -115,7 +119,21 @@ async function createTestContext(options: { dryRun?: boolean } = {}) {
       },
     },
   } as unknown as Context;
-  return { context, run, calls, infos, home, repo, pipxHome };
+  const toolsRoot = join(root, "state", "agemon", "tools");
+  return { context, run, calls, infos, home, repo, pipxHome, toolsRoot };
+}
+
+const SHIPPED_CONSTRAINTS = join(
+  process.cwd(),
+  "assets/tools/code-review-graph-constraints.txt",
+);
+
+async function shippedConstraintsCopyPath(toolsRoot: string): Promise<string> {
+  const hash = createHash("sha256")
+    .update(await readFile(SHIPPED_CONSTRAINTS, "utf8"))
+    .digest("hex")
+    .slice(0, 16);
+  return join(toolsRoot, `code-review-graph-constraints-${hash}.txt`);
 }
 
 function commandsOf(calls: RunCall[]): string[][] {
@@ -130,12 +148,12 @@ describe("crg plugin — install, verify, uninstall", () => {
 
     expect(operation?.preview).toEqual({
       kind: "note",
-      text: `pipx install ${PINNED_SPEC}; build the code graph for this repository`,
+      text: `pipx install ${PINNED_SPEC} (dependencies hash-locked); build the code graph for this repository`,
     });
   });
 
   it("installs the pin into the resolved pipx home, runs the installed binary, and uninstalls by name", async () => {
-    const { context, calls, pipxHome } = await createTestContext();
+    const { context, calls, pipxHome, toolsRoot } = await createTestContext();
     const binaryPath = join(
       pipxHome,
       "venvs",
@@ -149,7 +167,12 @@ describe("crg plugin — install, verify, uninstall", () => {
     await crgPlugin.uninstall(context);
 
     expect(commandsOf(calls)).toEqual([
-      ["pipx", "install", PINNED_SPEC],
+      [
+        "pipx",
+        "install",
+        PINNED_SPEC,
+        `--pip-args=--require-hashes --only-binary=:all: -c '${await shippedConstraintsCopyPath(toolsRoot)}'`,
+      ],
       [binaryPath, "build"],
       [binaryPath, "status"],
       ["pipx", "uninstall", "code-review-graph"],
@@ -295,7 +318,7 @@ describe("crg plugin — install edge cases", () => {
     });
 
     await expect(crgPlugin.install(context)).rejects.toThrow(
-      "pipx reported success but the pipx venv is broken — run 'pipx reinstall code-review-graph'",
+      "pipx reported success but the pipx venv is broken — run 'pipx uninstall code-review-graph', then 'agemon'",
     );
   });
 
@@ -360,6 +383,10 @@ describe("crg plugin — install edge cases", () => {
           graphPresentAtUnregister.push(
             existsSync(join(repo, ".code-review-graph")),
           );
+          return { lingerKeptFor: null };
+        },
+        async readUnitWorkingDirectory() {
+          return repo;
         },
       },
     } as unknown as Context;
@@ -438,11 +465,12 @@ describe("crg plugin — detection and state", () => {
     expect(operations).toEqual([]);
     expect(await crgPlugin.detect(context)).toMatchObject({ present: true });
     expect(infos).toContain(
-      "pipx venv is broken — run 'pipx reinstall code-review-graph'",
+      "pipx venv is broken — run 'pipx uninstall code-review-graph', then 'agemon'",
     );
     expect(row).toMatchObject({
       state: "unknown",
-      detail: "pipx venv is broken — run 'pipx reinstall code-review-graph'",
+      detail:
+        "pipx venv is broken — run 'pipx uninstall code-review-graph', then 'agemon'",
     });
     expect(verification.ok).toBe(false);
     expect(calls).toEqual([]);
@@ -527,5 +555,100 @@ describe("crg plugin — nuke removes the graph agemon built", () => {
       "Would remove .code-review-graph/ (code graph, wiki/exports, embeddings — rebuildable with code-review-graph build)",
     );
     expect(existsSync(join(repo, ".code-review-graph"))).toBe(true);
+  });
+});
+
+describe("crg plugin — hash-locked install", () => {
+  it("copies the constraints to a content-addressed file under the state root and reuses it", async () => {
+    const { context, toolsRoot } = await createTestContext();
+    const copyPath = await shippedConstraintsCopyPath(toolsRoot);
+
+    await crgPlugin.install(context);
+    const firstCopy = await stat(copyPath);
+    await crgPlugin.install(context);
+
+    await expect(readFile(copyPath, "utf8")).resolves.toBe(
+      await readFile(SHIPPED_CONSTRAINTS, "utf8"),
+    );
+    expect((await stat(copyPath)).ino).toBe(firstCopy.ino);
+    expect((await stat(toolsRoot)).mode & 0o777).toBe(0o700);
+  });
+
+  it("replaces a constraints copy whose content differs", async () => {
+    const { context, toolsRoot } = await createTestContext();
+    const copyPath = await shippedConstraintsCopyPath(toolsRoot);
+    await mkdir(toolsRoot, { recursive: true });
+    await writeFile(copyPath, "requests==1.0\n", "utf8");
+
+    await crgPlugin.install(context);
+
+    await expect(readFile(copyPath, "utf8")).resolves.toBe(
+      await readFile(SHIPPED_CONSTRAINTS, "utf8"),
+    );
+  });
+
+  it("refuses a constraints copy that is a symlink", async () => {
+    const { context, toolsRoot, calls } = await createTestContext();
+    const copyPath = await shippedConstraintsCopyPath(toolsRoot);
+    await mkdir(toolsRoot, { recursive: true });
+    await symlink(SHIPPED_CONSTRAINTS, copyPath);
+
+    await expect(crgPlugin.install(context)).rejects.toThrow(copyPath);
+    expect(calls).toEqual([]);
+  });
+
+  it("dry-run does not write the constraints copy", async () => {
+    const { context, toolsRoot } = await createTestContext({ dryRun: true });
+
+    await crgPlugin.install(context);
+
+    expect(existsSync(toolsRoot)).toBe(false);
+  });
+
+  it("surfaces pipx's hash-mismatch stderr without terminal control characters", async () => {
+    const { context, run } = await createTestContext();
+    run.mockImplementation(async () => ({
+      code: 1,
+      stdout: "",
+      stderr:
+        "\u001b]0;title\u0007ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.",
+    }));
+
+    await expect(crgPlugin.install(context)).rejects.toThrow(
+      "?]0;title?ERROR: THESE PACKAGES DO NOT MATCH THE HASHES",
+    );
+  });
+
+  it("quotes a constraints path with spaces, quotes and newlines for pipx", () => {
+    expect(hashLockedPipArgs("/home/a b/it's\nhere/c.txt")).toBe(
+      "--pip-args=--require-hashes --only-binary=:all: -c '/home/a b/it'\\''s\nhere/c.txt'",
+    );
+  });
+
+  it("shipped constraints pin exactly the crg version and hash every requirement", async () => {
+    const lines = (await readFile(SHIPPED_CONSTRAINTS, "utf8"))
+      .split("\n")
+      .filter((line) => line !== "" && !line.startsWith("#"));
+    const requirement =
+      /^[a-z0-9][a-z0-9._-]*==[0-9][0-9a-z.+!-]*( ; [^\\]+)? \\$/;
+    const hash = /^ {4}--hash=sha256:[0-9a-f]{64}( \\)?$/;
+
+    const requirements: string[] = [];
+    let hashesForCurrent = 0;
+    for (const line of lines) {
+      if (requirement.test(line)) {
+        expect(requirements.length === 0 || hashesForCurrent > 0).toBe(true);
+        requirements.push(line.split(" ")[0]);
+        hashesForCurrent = 0;
+      } else {
+        expect(line).toMatch(hash);
+        hashesForCurrent += 1;
+      }
+    }
+    expect(hashesForCurrent).toBeGreaterThan(0);
+    expect(requirements).toContain(PINNED_SPEC);
+    expect(
+      requirements.filter((name) => name.startsWith("code-review-graph==")),
+    ).toEqual([PINNED_SPEC]);
   });
 });

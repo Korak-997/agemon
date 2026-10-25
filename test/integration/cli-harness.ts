@@ -35,6 +35,10 @@ export function normalize(output: string, repoDirectory: string): string {
     .replace(/plans\/[0-9a-f]{12,}\.json/g, "plans/<PLAN_ID>.json")
     .replace(/--plan [0-9a-f]{12,}\b/g, "--plan <PLAN_ID>")
     .replace(/\bagemon \d+\.\d+\.\d+/g, "agemon <VERSION>")
+    .replace(
+      /(agemon-crg-daemon-[a-z0-9-]+)-[0-9a-f]{8}\.service/g,
+      "$1-<REPO_HASH>.service",
+    )
     .replace(/ present \([^)]*\)/g, " present (<PATH>)")
     .replace(/\d{4}-\d{2}-\d{2}T[0-9:.]+Z/g, "<TIMESTAMP>")
     .replace(/ \d+\.\d+s\b/g, " <ELAPSED>")

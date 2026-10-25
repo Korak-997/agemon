@@ -22,14 +22,21 @@ export interface ServiceStatus {
   active: boolean;
 }
 
+export interface AutostartAttempt {
+  label: string;
+  unitContents: string;
+}
+
 export interface RegisterAutostartInput {
   unitName: string;
-  unitContents: string;
+  attempts: AutostartAttempt[];
 }
 
 export interface RegisterAutostartResult {
   unitPath: string;
   lingerEnabledByAgemon: boolean;
+  attemptLabel: string;
+  failedAttempts: string[];
 }
 
 export interface UnregisterAutostartInput {
@@ -37,18 +44,24 @@ export interface UnregisterAutostartInput {
   disableLinger: boolean;
 }
 
+export interface UnregisterAutostartResult {
+  lingerKeptFor: string | null;
+}
+
 export interface ServiceManager {
   isActive(unitName: string): Promise<ServiceStatus>;
   registerAutostart(
     input: RegisterAutostartInput,
   ): Promise<RegisterAutostartResult>;
-  unregisterAutostart(input: UnregisterAutostartInput): Promise<void>;
+  unregisterAutostart(
+    input: UnregisterAutostartInput,
+  ): Promise<UnregisterAutostartResult>;
+  readUnitWorkingDirectory(unitName: string): Promise<string | null>;
 }
 
 export interface CreateServiceManagerInput {
   os: "ubuntu";
   run: RunCommand;
-  homeDir?: string;
   user?: string;
 }
 
@@ -57,14 +70,12 @@ export function createServiceManager(
 ): ServiceManager {
   if (process.env.AGEMON_FAKE_SERVICES === "1") {
     return createFakeServiceManager({
-      homeDir: input.homeDir,
       user: input.user,
     });
   }
 
   return createLinuxServiceManager({
     run: input.run,
-    homeDir: input.homeDir,
     user: input.user,
   });
 }

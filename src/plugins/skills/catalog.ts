@@ -1,3 +1,4 @@
+import { resolveVendoredSkillPath } from "../../core/package-assets.js";
 import {
   ESSENTIALS_SKILLS_COMMIT,
   ESSENTIALS_SKILLS_REPOSITORY_URL,
@@ -6,7 +7,6 @@ import {
   type PinnedSkillsRepository,
   resolvePinnedSkillPath,
 } from "./pinned-source.js";
-import { resolveVendoredSkillPath } from "./vendored-path.js";
 
 export interface SkillBundleEntry {
   id: string;

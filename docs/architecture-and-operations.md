@@ -59,7 +59,14 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 ### `crg`
 
 - Installs `code-review-graph` via `pipx install code-review-graph==<pin>`
-  (`CODE_REVIEW_GRAPH_VERSION` in `src/plugins/pins.ts`).
+  (`CODE_REVIEW_GRAPH_VERSION` in `src/plugins/pins.ts`) with `--require-hashes
+  --only-binary=:all:` and the hash-locked constraints shipped in
+  `assets/tools/code-review-graph-constraints.txt`, so every dependency is pinned and
+  checked against its sha256 and no source build runs. The constraints are copied to
+  `<state>/agemon/tools/code-review-graph-constraints-<hash>.txt`, a path pipx records:
+  `pipx reinstall` and `pipx upgrade-all` reuse it (and fail closed if the file was
+  deleted; running agemon again recreates it). `pipx upgrade code-review-graph` drops the
+  lock. pipx itself still installs its shared `pip` from PyPI without hashes.
 - Finds the installed binary by reading pipx's `pipx_metadata.json` (no pipx subprocess),
   falling back to `code-review-graph` on `PATH` outside the repository.
 - Builds the graph with `<binary> build` and verifies with `<binary> status`, with
@@ -69,14 +76,30 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 
 ### `daemon`
 
-- Registers `agemon-crg-daemon-<slug>.service` with `systemd --user`, where `<slug>` is
-  derived from the current git repository's top-level directory name (`git rev-parse
-  --show-toplevel`), falling back to the plain working directory name outside a repo.
-  This keeps repos independent: a single fixed unit name would mean the second repo
-  bootstrapped on a machine silently overwrites and restarts the first repo's daemon.
-- Ensures `loginctl` linger enabled when needed.
+- Registers `agemon-crg-daemon-<slug>-<hash>.service` with `systemd --user`. `<slug>` is
+  the repository directory's name and `<hash>` is the first 8 hex digits of the SHA-256 of
+  its real path, so repos with the same name stay independent. No git command runs.
+- Revert uses the unit name recorded in the ledger (validated against the agemon unit
+  pattern), never a recomputed one. Before removing a unit it reads the unit's
+  `WorkingDirectory`; a unit that now runs for another existing repository is kept.
+- Units recorded under an old name are migrated by the next `agemon` run: the new unit is
+  registered and recorded first, then each old unit this repo owns is removed.
+- Linger is disabled only when agemon enabled it, this revert removed a unit, and no other
+  `agemon-crg-daemon-*.service` remains in the user unit directory.
+- Refuses to register when `.code-review-graph` exists but is not a real directory.
+- Runs the `code-review-graph` binary that the crg plugin locates, with the same
+  `CRG_HOME` and git safety settings as crg's own commands.
+- Tries a `strict` unit first and falls back to `compat`. `strict` makes the system and
+  home read-only, except for the repository (its `.git/` stays read-only) and
+  `~/.code-review-graph`. A repository that is or contains your home directory, or
+  `AGEMON_DAEMON_HARDENING=compat`, goes straight to `compat`. The profile used is
+  printed and recorded in the ledger.
+- Registration is one transaction: linger is read once and enabled when needed, then for
+  each profile the unit is written atomically, enabled and watched until it has stayed
+  `active` without restarts for 2 seconds (10-second limit). A failed attempt removes its
+  unit again. If every attempt fails, linger is switched back off when agemon switched it
+  on, and the error lists any cleanup command that also failed.
 - Verifies service active; `verify`'s detail includes the resolved unit name.
-- On uninstall, disables service and optionally disables linger if agemon enabled it.
 
 ### `skills`
 

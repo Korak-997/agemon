@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { isAbsolute } from "node:path";
+import { isSameOrInside } from "../core/repo-paths.js";
 import { isSafeIdentifier } from "../core/untrusted-text.js";
 
 export function isUsableAbsolutePath(value: string): boolean {
@@ -34,15 +35,28 @@ async function realpathOrNull(path: string): Promise<string | null> {
   }
 }
 
-export async function isHomeDirectory(realDirectory: string): Promise<boolean> {
+async function homeDirectoryRealpaths(): Promise<string[]> {
+  const realpaths: string[] = [];
   for (const candidate of [process.env.HOME, accountHomeDirectory()]) {
-    if (
-      candidate &&
-      isAbsolute(candidate) &&
-      (await realpathOrNull(candidate)) === realDirectory
-    ) {
-      return true;
+    const real =
+      candidate && isAbsolute(candidate)
+        ? await realpathOrNull(candidate)
+        : null;
+    if (real !== null) {
+      realpaths.push(real);
     }
   }
-  return false;
+  return realpaths;
+}
+
+export async function isHomeDirectory(realDirectory: string): Promise<boolean> {
+  return (await homeDirectoryRealpaths()).includes(realDirectory);
+}
+
+export async function containsHomeDirectory(
+  realDirectory: string,
+): Promise<boolean> {
+  return (await homeDirectoryRealpaths()).some((home) =>
+    isSameOrInside(home, realDirectory),
+  );
 }

@@ -11,8 +11,7 @@ Current v0.1 behavior is plugin-driven and runs in this order:
 
 1. `crg`: installs and verifies `code-review-graph`.
 2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user`, under a
-   unit name derived from the current git repo (or plain directory, outside a repo) —
-   see [Daemon naming](#daemon-naming).
+   unit name derived from the repository's path — see [Daemon naming](#daemon-naming).
 3. `skills`: installs bundled skills with a pinned copy of the `skills` CLI. Always installs the `essentials` group;
    additional groups (design, security, code quality, architecture, self-review, performance,
    team lead) are selected interactively, via `--skill-groups`, or skipped entirely in a
@@ -79,12 +78,16 @@ commit, and installs from it.
 
 ### Daemon naming
 
-The daemon's systemd unit is named `agemon-crg-daemon-<slug>.service`, where `<slug>` is
-derived from the current git repository's top-level directory name (or the plain working
-directory name outside a repo). This keeps repos independent — without it, running
-`agemon` in two different repos on the same machine would register the *same* systemd
-user unit, and the second repo would silently overwrite and restart the first repo's
-daemon on its own `WorkingDirectory`.
+The daemon's systemd unit is named `agemon-crg-daemon-<slug>-<hash>.service`. `<slug>` is
+the repository directory's name, and `<hash>` is the first 8 hex digits of the SHA-256 of
+the repository's real path. Two repositories with the same name therefore get separate
+units, so one never overwrites and restarts the other's daemon.
+
+The ledger records the unit name, and `nuke` removes the unit it recorded, even after the
+repository was renamed or moved. A unit that now runs for another existing repository is
+kept and reported. Units registered by older agemon versions (named without the hash) are
+replaced on the next `agemon` run. Linger is switched off only when agemon switched it
+on and no other agemon daemon unit is left.
 
 ## Requirements
 

@@ -49,10 +49,18 @@ function createNoOpServiceManager(): ServiceManager {
       return { active: false };
     },
     async registerAutostart() {
-      return { unitPath: "", lingerEnabledByAgemon: false };
+      return {
+        unitPath: "",
+        lingerEnabledByAgemon: false,
+        attemptLabel: "strict",
+        failedAttempts: [],
+      };
     },
     async unregisterAutostart() {
-      return;
+      return { lingerKeptFor: null };
+    },
+    async readUnitWorkingDirectory() {
+      return null;
     },
   };
 }
@@ -968,6 +976,50 @@ describe("uninstallPlugins", () => {
 
     await expect(uninstallPlugins(ctx, [prompting], {})).rejects.toThrow(
       "the nuke preview must not ask for consent",
+    );
+    expect(ledgerPlugins(ctx)).toEqual(["base"]);
+  });
+
+  it.each([
+    [
+      "a subprocess",
+      (previewCtx: Context) => previewCtx.run("git", ["status"]),
+    ],
+    [
+      "unregisterAutostart",
+      (previewCtx: Context) =>
+        previewCtx.serviceManager.unregisterAutostart({
+          unitName: "agemon-crg-daemon-x-01234567.service",
+          disableLinger: false,
+        }),
+    ],
+    [
+      "registerAutostart",
+      (previewCtx: Context) =>
+        previewCtx.serviceManager.registerAutostart({
+          unitName: "agemon-crg-daemon-x-01234567.service",
+          attempts: [],
+        }),
+    ],
+    [
+      "isActive",
+      (previewCtx: Context) =>
+        previewCtx.serviceManager.isActive(
+          "agemon-crg-daemon-x-01234567.service",
+        ),
+    ],
+  ])("nuke preview refuses %s", async (_case, act) => {
+    const { ctx } = await createNukeContext(["base"]);
+    ctx.yes = false;
+    const acting: AgemonPlugin = {
+      ...uninstallable("base", []).plugin,
+      async uninstall(previewCtx) {
+        await act(previewCtx);
+      },
+    };
+
+    await expect(uninstallPlugins(ctx, [acting], {})).rejects.toThrow(
+      "the nuke preview must not run commands",
     );
     expect(ledgerPlugins(ctx)).toEqual(["base"]);
   });

@@ -10,10 +10,12 @@ import {
 import { join } from "node:path";
 import type { Context, SubprocessResult } from "../../core/context.js";
 import { sha256Hex } from "../../core/fingerprint.js";
-import { resolveStateRoot } from "../../core/state-root.js";
-import { resolveSkillsToolsManifestDirectory } from "./vendored-path.js";
+import { resolveToolsManifestDirectory } from "../../core/package-assets.js";
+import {
+  resolveToolsRoot,
+  TOOLS_DIRECTORY_MODE,
+} from "../../core/state-root.js";
 
-const TOOLS_DIRECTORY_MODE = 0o700;
 const TOOLS_LOCK_HASH_LENGTH = 16;
 const TOOLS_INSTALL_TIMEOUT_MS = 180_000;
 const TOOLS_MANIFEST_FILES = ["package.json", "package-lock.json"];
@@ -103,11 +105,11 @@ async function installToolsDirectory(
 }
 
 export async function ensureSkillsCli(ctx: SkillsCliContext): Promise<string> {
-  const manifestDirectory = resolveSkillsToolsManifestDirectory();
+  const manifestDirectory = resolveToolsManifestDirectory();
   const lockHash = sha256Hex(
     await readFile(join(manifestDirectory, "package-lock.json")),
   ).slice(0, TOOLS_LOCK_HASH_LENGTH);
-  const toolsRoot = join(resolveStateRoot(), "agemon", "tools");
+  const toolsRoot = resolveToolsRoot();
   const toolsDirectory = join(toolsRoot, lockHash);
   const cliPath = join(toolsDirectory, SKILLS_CLI_PATH_IN_TOOLS_DIR);
 
