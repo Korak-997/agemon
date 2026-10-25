@@ -49,6 +49,7 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 | `performance` | `agemon-performance` | Algorithmic-complexity-first discipline: N+1 detection, hot-loop hygiene, when not to optimize. |
 | `commit` | `agemon-commit` | Staging review, commit message structure, and splitting unrelated changes into separate commits. |
 | `teamlead` | `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync. |
+| `geo-seo` | `geo` (`/geo audit <url>` and the other `/geo` commands), `geo-audit`, `geo-citability`, `geo-crawlers`, `geo-llmstxt`, `geo-brand-mentions`, `geo-platform-optimizer`, `geo-technical`, `geo-content`, `geo-report`, `geo-schema`, `geo-report-pdf` | GEO (generative engine optimization): audits how likely AI search (ChatGPT, Perplexity, Google AI Overviews) is to find and cite a website — citability, AI crawler access, llms.txt, schema, technical SEO, brand mentions — and writes client-ready reports. Upstream names kept; see [Vendored Skills](#vendored-skills--attribution). |
 
 Selection order:
 
@@ -68,7 +69,7 @@ fetched and installed under its original upstream name at bootstrap time — so 
 depend on GitHub being reachable and won't drift if an upstream repo changes. Vendored skills
 sourced from a third-party project are renamed under an `agemon-*` identity so they read as
 agemon's own; the `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` are original to
-this project and keep their `skill-*` names. See [Vendored Skills](#vendored-skills--attribution)
+this project and keep their `skill-*` names, and `geo-seo` keeps its upstream `geo-*` names. See [Vendored Skills](#vendored-skills--attribution)
 for sources and licenses.
 
 `essentials` is the one exception: `vercel-labs/agent-skills` carries no detected license, so
@@ -467,6 +468,7 @@ Useful sandbox flags:
 - `--quiet`: suppress captured terminal output.
 - `--skip-daemon`: skip daemon plugin in the run.
 - `--only <plugins>`: run selected plugins only.
+- `--skill-groups <ids>`: pass skill groups through to the install run.
 
 ## Detailed Docs
 
@@ -478,7 +480,7 @@ Useful sandbox flags:
 ## Vendored Skills & Attribution
 
 The `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`,
-and `teamlead` skill groups (see [Skill Groups](#skill-groups)) are vendored under
+`teamlead` and `geo-seo` skill groups (see [Skill Groups](#skill-groups)) are vendored under
 `assets/skills/<group>/<skill>/`.
 Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
 and a copy of its upstream `LICENSE`. Sources, all MIT-licensed:
@@ -488,6 +490,8 @@ Every skill vendored from a third-party project is renamed to an `agemon-*` iden
 elsewhere. Original upstream names are preserved only in each skill's `NOTICE.md`, for attribution.
 The project-authored `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` have no
 upstream to rename from and keep their original `skill-*` names — see the table below.
+The `geo-seo` group is the one deliberate exception: its skills keep their upstream `geo-*` names
+so `/geo audit` and the other commands match the upstream project's documentation.
 
 | Renamed to | Originally | Source |
 |---|---|---|
@@ -504,6 +508,25 @@ tooling (`ui-craft-detect`, the `ui-craft` MCP server's `route_task`), which gen
 by that name and isn't part of what agemon ships. Rewriting 33 files of someone else's authored
 guidance to scrub every mention was judged higher-risk than leaving a few internal citations
 intact; the skill's own identity (what gets installed, listed, and invoked) is fully renamed.
+
+`geo-seo` is vendored from [zubair-trabzada/geo-seo-claude](https://github.com/zubair-trabzada/geo-seo-claude)
+(MIT, commit `989cae0`). It ships 12 of upstream's skills; the self-updater, the Python scripts,
+the CRM/proposal skills and the examples are left out. These skills read untrusted website
+content, so agemon's copy changes them in ways each skill's `NOTICE.md` lists in full:
+
+- no skill pre-approves any tool, so every web fetch to a new domain, file write and shell
+  command asks for your approval;
+- every skill and subagent brief starts with an untrusted-content rule;
+- the five audit subagents run as general-purpose subagents from briefs in
+  `geo-audit/references/`, not as installed agents;
+- raw HTML and headers come from one fixed, read-only `curl` command that you approve per run;
+- the PDF step builds its cover from checked values in a metadata file, runs pandoc sandboxed
+  with raw HTML off, and prints with a sandboxed Chrome under a strict Content-Security-Policy.
+
+If you installed upstream geo-seo-claude as personal skills (`~/.claude/skills/geo*`), run its
+`uninstall.sh` first: Claude Code prefers personal skills over project skills of the same name,
+so `/geo` would otherwise run that copy. `geo-report-pdf` needs pandoc 3.0+ and Chrome or
+Chromium.
 
 ## Roadmap Notes
 

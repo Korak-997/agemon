@@ -20,7 +20,10 @@ import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
-import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
+import {
+  findSkillGroup,
+  SKILL_GROUPS,
+} from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 
 const createdTempDirectories: string[] = [];
@@ -199,6 +202,32 @@ describe("skills plugin drift detection", () => {
       (option: { value: string }) => option.value,
     );
     expect(offeredGroupIds).toContain("architecture");
+  });
+
+  it("offers geo-seo exactly once to a project installed before it existed", async () => {
+    const context = await createTestContext({ interactive: true });
+    await installAsPreUpgradeProject(context);
+    for (const group of SKILL_GROUPS.filter(({ id }) => id !== "geo-seo")) {
+      await context.manifest.recordAction({
+        plugin: "skills",
+        type: "offered-skill-group",
+        target: group.id,
+        preExisting: false,
+      });
+    }
+
+    clack.multiselect.mockResolvedValueOnce([]);
+    await skillsPlugin.install(context);
+
+    expect(clack.multiselect).toHaveBeenCalledTimes(1);
+    const offeredGroupIds = clack.multiselect.mock.calls[0][0].options.map(
+      (option: { value: string }) => option.value,
+    );
+    expect(offeredGroupIds).toEqual(["geo-seo"]);
+
+    await skillsPlugin.install(context);
+    expect(clack.multiselect).toHaveBeenCalledTimes(1);
+    expect(await planSkills(context)).toEqual([]);
   });
 
   it("does not re-offer a group once it has been declined", async () => {

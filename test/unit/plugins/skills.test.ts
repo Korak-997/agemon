@@ -269,6 +269,46 @@ describe("skills plugin", () => {
     ]);
   });
 
+  it("adds and removes every geo-seo skill through the pinned CLI with --skill-groups geo-seo", async () => {
+    const context = await createTestContext("geo-seo");
+    const skillsCliArgs: string[][] = [];
+    const runAndRecord = context.run;
+    context.run = async (command, args, options) => {
+      if (command === process.execPath) skillsCliArgs.push(args);
+      return runAndRecord(command, args, options);
+    };
+    const geoSeoSkills = findSkillGroup("geo-seo")?.skills ?? [];
+
+    await skillsPlugin.install(context);
+
+    for (const skill of geoSeoSkills) {
+      expect(skillsCliArgs).toContainEqual([
+        expect.any(String),
+        "add",
+        skill.source,
+        "--skill",
+        skill.skillName,
+        "--agent",
+        "claude-code",
+        "--yes",
+      ]);
+    }
+
+    await uninstallPlugins({ ...context, yes: true }, [skillsPlugin], {});
+
+    const removedSkillNames = skillsCliArgs
+      .filter((args) => args[1] === "remove")
+      .flatMap((args) => args.slice(2));
+    for (const skill of geoSeoSkills) {
+      expect(removedSkillNames).toContain(skill.skillName);
+    }
+    expect(
+      context.manifest
+        .getActions()
+        .filter((action) => action.plugin === "skills"),
+    ).toEqual([]);
+  });
+
   it("rejects an unknown skill group id", async () => {
     const context = await createTestContext("not-a-real-group");
 

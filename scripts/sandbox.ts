@@ -25,6 +25,7 @@ interface RunFlags {
   quiet: boolean;
   skipDaemon: boolean;
   only?: string;
+  skillGroups?: string;
   label?: string;
 }
 
@@ -46,6 +47,9 @@ function parseFlags(args: string[]): RunFlags {
     else if (arg === "--only") {
       i += 1;
       flags.only = args[i];
+    } else if (arg === "--skill-groups") {
+      i += 1;
+      flags.skillGroups = args[i];
     } else if (arg === "--label") {
       i += 1;
       flags.label = args[i];
@@ -59,6 +63,7 @@ function buildAgemonArgv(flags: RunFlags): string[] {
   if (flags.dryRun) argv.push("--dry-run");
   if (flags.skipDaemon) argv.push("--skip-daemon");
   if (flags.only) argv.push("--only", flags.only);
+  if (flags.skillGroups) argv.push("--skill-groups", flags.skillGroups);
   if (flags.quiet) argv.push("--quiet");
   if (flags.trace) argv.push("--verbose");
   return argv;

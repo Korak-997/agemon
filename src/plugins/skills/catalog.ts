@@ -155,6 +155,27 @@ export const SKILL_GROUPS: SkillGroup[] = [
       vendoredSkill("team-lead", "skill-tech-spike"),
     ],
   },
+  {
+    id: "geo-seo",
+    label: "GEO / AI Search SEO",
+    description:
+      "Audit and optimize websites for AI search citation (ChatGPT, Perplexity, Google AI Overviews): citability, AI crawlers, llms.txt, schema, technical SEO, reports.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("geo-seo", "geo"),
+      vendoredSkill("geo-seo", "geo-audit"),
+      vendoredSkill("geo-seo", "geo-citability"),
+      vendoredSkill("geo-seo", "geo-crawlers"),
+      vendoredSkill("geo-seo", "geo-llmstxt"),
+      vendoredSkill("geo-seo", "geo-brand-mentions"),
+      vendoredSkill("geo-seo", "geo-platform-optimizer"),
+      vendoredSkill("geo-seo", "geo-technical"),
+      vendoredSkill("geo-seo", "geo-content"),
+      vendoredSkill("geo-seo", "geo-report"),
+      vendoredSkill("geo-seo", "geo-schema"),
+      vendoredSkill("geo-seo", "geo-report-pdf"),
+    ],
+  },
 ];
 
 export function findSkillGroup(groupId: string): SkillGroup | undefined {
