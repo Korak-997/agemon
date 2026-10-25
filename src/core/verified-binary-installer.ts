@@ -1,31 +1,47 @@
+import { createHash } from "node:crypto";
 import {
   chmod,
   lstat,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { findBinaryPath } from "../platform/detect.js";
 import { errorMessage } from "./error-message.js";
+import { readRegularFileIfExists, sha256OfRegularFile } from "./files.js";
 import { sha256Hex } from "./fingerprint.js";
-import type { SubprocessResult } from "./subprocess-runner.js";
+import { resolveGlobalNpmRoot } from "./npm-global.js";
+import { resolveAgemonStateDirectory } from "./state-root.js";
+import {
+  agemonSubprocessEnvironment,
+  describeSubprocessFailure,
+} from "./subprocess-runner.js";
 import type { RunSubprocess } from "./subprocess-trace.js";
-import { isSafeIdentifier, printable } from "./untrusted-text.js";
+import { printable } from "./untrusted-text.js";
 
-const NPM_ROOT_TIMEOUT_MS = 20_000;
 const ARCHIVE_DOWNLOAD_TIMEOUT_MS = 120_000;
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const EXTRACT_TIMEOUT_MS = 60_000;
 const BINARY_PROBE_TIMEOUT_MS = 20_000;
 const DOWNLOADED_ARCHIVE_MODE = 0o600;
 const EXECUTABLE_MODE = 0o755;
+const NPM_INSTALL_TIMEOUT_MS = 180_000;
+const MAX_HASHED_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_NPM_TARBALL_BYTES = 20 * 1024 * 1024;
 
 export interface VerifiedArchiveCandidate {
   url: string;
   sha256: string;
+}
+
+export interface PinnedNpmTarball {
+  url: string;
+  integrity: string;
 }
 
 export interface VerifiedBinaryInstallRequest {
@@ -34,10 +50,27 @@ export interface VerifiedBinaryInstallRequest {
   binaryPathInPackage: string;
   archiveMemberName: string;
   candidates: VerifiedArchiveCandidate[];
+  packageTarball: PinnedNpmTarball;
 }
+
+export interface InstalledPackageInspectionRequest {
+  packageName: string;
+  commandName: string;
+  commandPathInPackage: string;
+  binaryPathInPackage: string;
+  packageFileSha256: Readonly<Record<string, string>>;
+  binarySha256: readonly string[];
+}
+
+export type InstalledPackageInspection =
+  | { kind: "absent" }
+  | { kind: "installed"; version: string | null; differences: string[] };
 
 export interface VerifiedBinaryInstaller {
   install(request: VerifiedBinaryInstallRequest): Promise<void>;
+  inspect(
+    request: InstalledPackageInspectionRequest,
+  ): Promise<InstalledPackageInspection>;
 }
 
 export interface InstallVerifiedArchiveInput {
@@ -52,10 +85,6 @@ export interface InstallVerifiedArchiveInput {
 export type VerifiedArchiveOutcome =
   | { binaryRuns: true }
   | { binaryRuns: false; probeFailure: string };
-
-function describeFailure(result: SubprocessResult, command: string): string {
-  return printable(result.stderr.trim()) || `${command} exited ${result.code}`;
-}
 
 export async function installVerifiedArchive(
   input: InstallVerifiedArchiveInput,
@@ -82,7 +111,7 @@ export async function installVerifiedArchive(
     );
     if (extractResult.code !== 0) {
       throw new Error(
-        `Extracting ${input.archiveMemberName} from the verified archive failed: ${describeFailure(extractResult, "tar")}`,
+        `Extracting ${input.archiveMemberName} from the verified archive failed: ${describeSubprocessFailure(extractResult, "tar")}`,
       );
     }
 
@@ -99,7 +128,7 @@ export async function installVerifiedArchive(
     if (probeResult.code !== 0) {
       return {
         binaryRuns: false,
-        probeFailure: describeFailure(
+        probeFailure: describeSubprocessFailure(
           probeResult,
           `${input.archiveMemberName} --version`,
         ),
@@ -109,14 +138,6 @@ export async function installVerifiedArchive(
     return { binaryRuns: true };
   } finally {
     await rm(extractionDirectory, { recursive: true, force: true });
-  }
-}
-
-async function isDirectory(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
   }
 }
 
@@ -134,55 +155,12 @@ async function readInstalledManifest(
   }
 }
 
-async function pathIsMissing(path: string): Promise<boolean> {
-  try {
-    await lstat(path);
-    return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT";
-  }
-}
-
-export async function resolveGlobalNpmRoot(
-  run: RunSubprocess,
-  options: { cwd?: string; mayNotExistYet?: boolean } = {},
-): Promise<string> {
-  const npmRootResult = await run("npm", ["root", "--global"], {
-    timeoutMs: NPM_ROOT_TIMEOUT_MS,
-    cwd: options.cwd,
-  });
-  if (npmRootResult.code !== 0) {
-    throw new Error(
-      `npm root --global failed: ${describeFailure(npmRootResult, "npm")}`,
-    );
-  }
-  const npmRoot = npmRootResult.stdout.trim();
-  if (!isAbsolute(npmRoot)) {
-    throw new Error(
-      `npm root --global returned ${printable(npmRoot)}, which is not an absolute path.`,
-    );
-  }
-  if (resolve(npmRoot) !== npmRoot || !isSafeIdentifier(npmRoot)) {
-    throw new Error(
-      `npm root --global returned ${printable(npmRoot)}, which is not a single normalised path.`,
-    );
-  }
-  if (options.mayNotExistYet && (await pathIsMissing(npmRoot))) {
-    return npmRoot;
-  }
-  if (!(await isDirectory(npmRoot))) {
-    throw new Error(
-      `npm root --global returned ${printable(npmRoot)}, which is not a directory. npm masks UUID-like path segments as ***; use an npm prefix without one.`,
-    );
-  }
-  return npmRoot;
-}
-
 async function resolveInstalledPackageDirectory(
   run: RunSubprocess,
   request: VerifiedBinaryInstallRequest,
+  cwd: string,
 ): Promise<string> {
-  const npmRoot = await resolveGlobalNpmRoot(run);
+  const npmRoot = await resolveGlobalNpmRoot(run, { cwd });
   const packageDirectory = join(npmRoot, request.packageName);
   const installedManifest = await readInstalledManifest(packageDirectory);
   if (installedManifest.version !== request.version) {
@@ -198,6 +176,7 @@ async function resolveInstalledPackageDirectory(
 async function readBoundedArchive(
   fetchArchive: typeof fetch,
   url: string,
+  maxBytes = MAX_ARCHIVE_BYTES,
 ): Promise<Uint8Array> {
   const response = await fetchArchive(url, {
     signal: AbortSignal.timeout(ARCHIVE_DOWNLOAD_TIMEOUT_MS),
@@ -210,10 +189,8 @@ async function readBoundedArchive(
   let receivedBytes = 0;
   for await (const chunk of response.body) {
     receivedBytes += chunk.byteLength;
-    if (receivedBytes > MAX_ARCHIVE_BYTES) {
-      throw new Error(
-        `the archive exceeded the ${MAX_ARCHIVE_BYTES}-byte limit`,
-      );
+    if (receivedBytes > maxBytes) {
+      throw new Error(`the archive exceeded the ${maxBytes}-byte limit`);
     }
     chunks.push(chunk);
   }
@@ -231,6 +208,163 @@ async function downloadArchive(
   }
 }
 
+function npmIntegrityOf(contents: Uint8Array): string {
+  return `sha512-${createHash("sha512").update(contents).digest("base64")}`;
+}
+
+async function installVerifiedNpmTarball(
+  input: { run: RunSubprocess; fetchArchive: typeof fetch },
+  request: VerifiedBinaryInstallRequest,
+  directory: string,
+): Promise<void> {
+  let tarball: Uint8Array;
+  try {
+    tarball = await readBoundedArchive(
+      input.fetchArchive,
+      request.packageTarball.url,
+      MAX_NPM_TARBALL_BYTES,
+    );
+  } catch (error) {
+    throw new Error(
+      `Could not download ${request.packageName} ${request.version} from ${request.packageTarball.url} (${errorMessage(error)}); agemon installs it only from there, verified by its pinned sha512.`,
+    );
+  }
+  if (npmIntegrityOf(tarball) !== request.packageTarball.integrity) {
+    throw new Error(
+      `The downloaded ${request.packageName} ${request.version} tarball does not match its pinned sha512; nothing was installed.`,
+    );
+  }
+  const tarballPath = join(
+    directory,
+    `${request.packageName}-${request.version}.tgz`,
+  );
+  await writeFile(tarballPath, tarball, { mode: DOWNLOADED_ARCHIVE_MODE });
+  const installResult = await input.run(
+    "npm",
+    [
+      "install",
+      "--global",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--no-update-notifier",
+      tarballPath,
+    ],
+    { cwd: directory, timeoutMs: NPM_INSTALL_TIMEOUT_MS },
+  );
+  if (installResult.code !== 0) {
+    throw new Error(
+      `npm global install of the verified ${request.packageName} ${request.version} tarball failed: ${describeSubprocessFailure(installResult, "npm install")}`,
+    );
+  }
+}
+
+async function readOnlyNpmCwd(): Promise<string> {
+  try {
+    const stateDirectory = (await resolveAgemonStateDirectory("check")).path;
+    await lstat(stateDirectory);
+    return stateDirectory;
+  } catch {
+    return homedir();
+  }
+}
+
+async function isRealDirectory(path: string): Promise<boolean> {
+  return (await lstat(path)).isDirectory();
+}
+
+async function hashOrReason(path: string): Promise<string> {
+  try {
+    return await sha256OfRegularFile(path, MAX_HASHED_FILE_BYTES);
+  } catch (error) {
+    return `unreadable (${errorMessage(error)})`;
+  }
+}
+
+async function readPackageVersion(
+  packageDirectory: string,
+): Promise<string | null> {
+  try {
+    const manifest = JSON.parse(
+      (await readRegularFileIfExists(join(packageDirectory, "package.json"))) ??
+        "null",
+    ) as { version?: unknown } | null;
+    return typeof manifest?.version === "string" ? manifest.version : null;
+  } catch {
+    return null;
+  }
+}
+
+async function inspectInstalledPackage(
+  run: RunSubprocess,
+  request: InstalledPackageInspectionRequest,
+): Promise<InstalledPackageInspection> {
+  let npmRoot: string;
+  try {
+    npmRoot = await realpath(
+      await resolveGlobalNpmRoot(run, { cwd: await readOnlyNpmCwd() }),
+    );
+  } catch (error) {
+    return {
+      kind: "installed",
+      version: null,
+      differences: [
+        `could not locate the global npm root (${errorMessage(error)})`,
+      ],
+    };
+  }
+  const packageDirectory = join(npmRoot, request.packageName);
+  try {
+    await lstat(packageDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { kind: "absent" };
+    }
+  }
+
+  const differences: string[] = [];
+  for (const directory of [packageDirectory, join(packageDirectory, "bin")]) {
+    if (!(await isRealDirectory(directory).catch(() => false))) {
+      differences.push(`${printable(directory)} is not a real directory`);
+    }
+  }
+  for (const [file, expected] of Object.entries(request.packageFileSha256)) {
+    const actual = await hashOrReason(join(packageDirectory, file));
+    if (actual !== expected) {
+      differences.push(
+        `${file} ${actual.startsWith("unreadable") ? actual : "differs"}`,
+      );
+    }
+  }
+  const binaryHash = await hashOrReason(
+    join(packageDirectory, request.binaryPathInPackage),
+  );
+  if (!request.binarySha256.includes(binaryHash)) {
+    differences.push(
+      `${request.binaryPathInPackage} ${binaryHash.startsWith("unreadable") ? binaryHash : "is not a pinned build"}`,
+    );
+  }
+  const commandOnPath = await findBinaryPath(
+    request.commandName,
+    agemonSubprocessEnvironment().PATH ?? "",
+  );
+  const expectedCommand = join(packageDirectory, request.commandPathInPackage);
+  const commandIsThisCopy =
+    commandOnPath !== undefined &&
+    (await realpath(commandOnPath).catch(() => null)) ===
+      (await realpath(expectedCommand).catch(() => expectedCommand));
+  if (!commandIsThisCopy) {
+    differences.push(
+      `${request.commandName} on PATH is not the npm copy at ${printable(packageDirectory)}`,
+    );
+  }
+  return {
+    kind: "installed",
+    version: await readPackageVersion(packageDirectory),
+    differences,
+  };
+}
+
 export interface CreateVerifiedBinaryInstallerInput {
   run: RunSubprocess;
   fetch?: typeof fetch;
@@ -241,10 +375,24 @@ export function createVerifiedBinaryInstaller(
 ): VerifiedBinaryInstaller {
   const fetchArchive = input.fetch ?? fetch;
   return {
+    inspect(request) {
+      return inspectInstalledPackage(input.run, request);
+    },
     async install(request) {
+      const downloadDirectory = await mkdtemp(join(tmpdir(), "agemon-npm-"));
+      try {
+        await installVerifiedNpmTarball(
+          { run: input.run, fetchArchive },
+          request,
+          downloadDirectory,
+        );
+      } finally {
+        await rm(downloadDirectory, { recursive: true, force: true });
+      }
       const packageDirectory = await resolveInstalledPackageDirectory(
         input.run,
         request,
+        await readOnlyNpmCwd(),
       );
       const targetPath = join(packageDirectory, request.binaryPathInPackage);
 

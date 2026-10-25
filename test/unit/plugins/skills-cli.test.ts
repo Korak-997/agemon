@@ -143,6 +143,32 @@ describe("ensureSkillsCli", () => {
     expect(existsSync(otherToolsDirectory)).toBe(true);
   });
 
+  it("removes staging and broken dirs a killed install left behind, keeping other lockfiles' dirs", async () => {
+    const otherToolsDirectory = join(toolsRoot(), "0000000000000000");
+    await writeSkillsCliInto(otherToolsDirectory);
+    const leftovers = [
+      join(toolsRoot(), "0000000000000000.tmp-AbC123"),
+      join(toolsRoot(), "1111111111111111.tmp-XyZ789.broken"),
+    ];
+    for (const leftover of leftovers) {
+      await mkdir(join(leftover, "node_modules"), { recursive: true });
+    }
+    const crgConstraintsInFlight = join(
+      toolsRoot(),
+      "code-review-graph-constraints-0123456789abcdef.txt.tmp-42-uuid",
+    );
+    await writeFile(crgConstraintsInFlight, "pinned", "utf8");
+    const { ctx } = createRunner();
+
+    await ensureSkillsCli(ctx);
+
+    for (const leftover of leftovers) {
+      expect(existsSync(leftover)).toBe(false);
+    }
+    expect(existsSync(otherToolsDirectory)).toBe(true);
+    expect(existsSync(crgConstraintsInFlight)).toBe(true);
+  });
+
   it("replaces a tools dir that has no skills CLI", async () => {
     const toolsDirectory = await expectedToolsDirectory();
     await mkdir(toolsDirectory, { recursive: true });

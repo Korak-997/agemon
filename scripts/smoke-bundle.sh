@@ -7,8 +7,32 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 export XDG_STATE_HOME="$WORK_DIR/state"
 
-npm pack --pack-destination "$WORK_DIR" >/dev/null
-tar -xzf "$WORK_DIR"/agemon-*.tgz -C "$WORK_DIR" --strip-components=1
+sh scripts/pack-release.sh "$WORK_DIR/agemon.tgz"
+tar -xzf "$WORK_DIR/agemon.tgz" -C "$WORK_DIR" --strip-components=1
+
+INSTALL_TIME_FIELDS="$(node - "$WORK_DIR/package.json" <<'NODE'
+const manifest = require(process.argv[2]);
+const fetchedFields = [
+  "dependencies",
+  "optionalDependencies",
+  "peerDependencies",
+  "bundleDependencies",
+  "bundledDependencies",
+];
+const installScripts = ["preinstall", "install", "postinstall", "prepare"];
+const declared = [
+  ...fetchedFields.filter((field) => manifest[field]),
+  ...installScripts.filter((name) => manifest.scripts?.[name]),
+];
+process.stdout.write(declared.join(" "));
+NODE
+)"
+
+if [ -n "$INSTALL_TIME_FIELDS" ]; then
+  echo "Bundle smoke test FAILED: the packed package.json still declares: ${INSTALL_TIME_FIELDS}." >&2
+  echo "npm would fetch or run that at install time, outside what the release checksums cover; pack with scripts/pack-release.sh." >&2
+  exit 1
+fi
 
 ACTUAL_VERSION="$(cd "$WORK_DIR" && node bin/agemon.js --version)" || ACTUAL_VERSION="<crashed>"
 
@@ -27,4 +51,4 @@ if [ "$VERSION_WITHOUT_ASSETS" != "$EXPECTED_VERSION" ]; then
   exit 1
 fi
 
-echo "Bundle smoke test passed: packaged CLI runs standalone and reports ${ACTUAL_VERSION}, with or without assets/skills."
+echo "Bundle smoke test passed: packaged CLI runs standalone, declares no install-time dependencies, and reports ${ACTUAL_VERSION}, with or without assets/skills."

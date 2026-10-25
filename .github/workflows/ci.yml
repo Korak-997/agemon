@@ -27,6 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         node-version:
+          - 22.x
           - 24.x
           - 26.x
 
@@ -63,6 +64,11 @@ jobs:
 
       - name: Smoke-test the packaged bundle
         run: npm run smoke
+
+      - name: Dry-run the npm publish
+        run: |
+          sh scripts/pack-release.sh "$RUNNER_TEMP/agemon.tgz"
+          npm publish --dry-run "$RUNNER_TEMP/agemon.tgz"
 
   sandbox:
     name: sandbox checks

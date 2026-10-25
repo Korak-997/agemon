@@ -89,13 +89,17 @@ function capabilityRow(row: CapabilityStatusRow): string[] {
   const health =
     row.health === null
       ? ""
-      : row.health.ok
-        ? badge("healthy", "ok")
-        : badge("unhealthy", "danger");
+      : !row.health.ok
+        ? badge("unhealthy", "danger")
+        : row.health.attention !== null
+          ? badge("needs attention", "warn")
+          : badge("healthy", "ok");
   const detail =
-    row.health !== null && !row.health.ok
-      ? row.health.detail
-      : (row.detail ?? "");
+    row.health === null
+      ? (row.detail ?? "")
+      : !row.health.ok
+        ? row.health.detail
+        : (row.detail ?? "");
   return [row.capabilityId, state, health, detail];
 }
 
@@ -148,6 +152,14 @@ export function renderStatusReport(report: StatusReport): string {
         ...report.capabilities.map(capabilityRow),
       ]),
     );
+    const attentionNotes = new Set(
+      report.capabilities.flatMap((row) =>
+        row.health?.attention
+          ? [`  ${row.capabilityId}: ${printable(row.health.attention)}`]
+          : [],
+      ),
+    );
+    lines.push(...attentionNotes);
   }
 
   lines.push(section("Shared tools"));

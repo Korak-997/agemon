@@ -3,12 +3,13 @@ import { join } from "node:path";
 import type { Context } from "../../core/context.js";
 import { errorMessage } from "../../core/error-message.js";
 import { readMachineLedger } from "../../core/machine-ledger.js";
+import { resolveGlobalNpmRoot } from "../../core/npm-global.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { resolveAgemonStateDirectory } from "../../core/state-root.js";
 import { printable } from "../../core/untrusted-text.js";
-import {
-  resolveGlobalNpmRoot,
-  type VerifiedArchiveCandidate,
+import type {
+  InstalledPackageInspection,
+  VerifiedArchiveCandidate,
 } from "../../core/verified-binary-installer.js";
 import { describeOperation } from "../proposed-operation.js";
 import {
@@ -18,6 +19,7 @@ import {
   isHeldByThisRepository,
   releaseSharedResource,
   repoLedgerUsesSharedResource,
+  wasInstalledByAgemon,
 } from "../shared-resource.js";
 import type {
   AgemonPlugin,
@@ -34,7 +36,6 @@ const ACTION_TYPE_INSTALLED_CLI_TOOL = "installed-cli-tool";
 const ACTION_TYPE_PREEXISTING_CLI_TOOL = "preexisting-cli-tool";
 
 const VERSION_CHECK_TIMEOUT_MS = 20_000;
-const INSTALL_TIMEOUT_MS = 180_000;
 const UNINSTALL_TIMEOUT_MS = 60_000;
 
 export function resolveVerifiedArchiveCandidates(
@@ -74,10 +75,73 @@ function hasManagedInstallRecord(ctx: Context, toolId: string): boolean {
   );
 }
 
-async function isToolBinaryAvailable(
+const inspectionsByContext = new WeakMap<
+  Context,
+  Map<string, Promise<InstalledPackageInspection>>
+>();
+
+function forgetInspections(ctx: Context): void {
+  inspectionsByContext.delete(ctx);
+}
+
+function inspectInstalledTool(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+  options: { fresh?: boolean } = {},
+): Promise<InstalledPackageInspection> {
+  const inspections = inspectionsByContext.get(ctx) ?? new Map();
+  inspectionsByContext.set(ctx, inspections);
+  const cached = options.fresh ? undefined : inspections.get(entry.id);
+  if (cached) {
+    return cached;
+  }
+  const inspection = ctx.verifiedBinaryInstaller.inspect({
+    packageName: entry.packageName,
+    commandName: entry.binaryName,
+    commandPathInPackage: entry.commandPathInPackage,
+    binaryPathInPackage: entry.binaryPathInPackage,
+    packageFileSha256: entry.packageFileSha256,
+    binarySha256: entry.binarySha256,
+  });
+  inspections.set(entry.id, inspection);
+  return inspection;
+}
+
+function isInstalledByAgemon(
   ctx: Context,
   entry: CliToolBundleEntry,
 ): Promise<boolean> {
+  return wasInstalledByAgemon(
+    entry.sharedResource,
+    hasManagedInstallRecord(ctx, entry.id),
+  );
+}
+
+async function unpinnedFilesOfAgemonInstall(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<string[]> {
+  if (!(await isInstalledByAgemon(ctx, entry))) {
+    return [];
+  }
+  const inspection = await inspectInstalledTool(ctx, entry);
+  return inspection.kind === "installed" ? inspection.differences : [];
+}
+
+async function isToolBinaryAvailable(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+  options: { fresh?: boolean } = {},
+): Promise<boolean> {
+  if (await isInstalledByAgemon(ctx, entry)) {
+    const inspection = await inspectInstalledTool(ctx, entry, options);
+    if (inspection.kind === "absent") {
+      return false;
+    }
+    if (inspection.differences.length > 0) {
+      return true;
+    }
+  }
   const result = await ctx.run(entry.binaryName, ["--version"], {
     timeoutMs: VERSION_CHECK_TIMEOUT_MS,
   });
@@ -115,14 +179,21 @@ async function describeCliToolsState(
       }
 
       const managed = hasManagedInstallRecord(ctx, entry.id);
+      const inspection = await inspectInstalledTool(ctx, entry);
+      const installed =
+        inspection.kind !== "installed"
+          ? entry.packageName
+          : inspection.version === null
+            ? `${entry.packageName}; agemon could not inspect it (${inspection.differences.join("; ")})`
+            : `${entry.packageName} ${inspection.version}${inspection.differences.length > 0 ? `, not the pinned ${entry.version} build` : ""}`;
       return {
         capabilityId: PLUGIN_ID,
         resourceId,
         label: entry.binaryName,
         state: managed ? "present-managed" : "present-adopted",
         detail: managed
-          ? `installed via npm (${entry.packageName})`
-          : "pre-existing install",
+          ? `installed via npm (${installed})`
+          : `pre-existing install (${installed})`,
       };
     }),
   );
@@ -140,7 +211,7 @@ function describeInstallOperation(
     requiresConsent: true,
     preview: {
       kind: "note",
-      text: `npm install --global --ignore-scripts ${pinnedPackageSpec(entry)}; binary from the v${entry.version} GitHub release, sha256-pinned`,
+      text: `npm install --global --ignore-scripts of the sha512-pinned ${pinnedPackageSpec(entry)} tarball; binary from the v${entry.version} GitHub release, sha256-pinned`,
     },
   });
 }
@@ -237,20 +308,6 @@ async function installPinnedCliTool(
     entry,
     `${process.platform}-${process.arch}`,
   );
-  const installResult = await ctx.run(
-    "npm",
-    ["install", "--global", "--ignore-scripts", pinnedPackageSpec(entry)],
-    {
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    },
-  );
-  if (installResult.code !== 0) {
-    throw new Error(
-      installResult.stderr ||
-        `npm global install failed for ${pinnedPackageSpec(entry)}`,
-    );
-  }
-
   try {
     await ctx.verifiedBinaryInstaller.install({
       packageName: entry.packageName,
@@ -258,6 +315,7 @@ async function installPinnedCliTool(
       binaryPathInPackage: entry.binaryPathInPackage,
       archiveMemberName: entry.archiveMemberName,
       candidates,
+      packageTarball: entry.packageTarball,
     });
   } catch (installError) {
     await removePartlyInstalledPackage(ctx, entry.packageName, installError);
@@ -274,13 +332,19 @@ async function installSharedCliTool(
 ): Promise<void> {
   if (ctx.dryRun) {
     ctx.ui.info(
-      `Would install ${pinnedPackageSpec(entry)} globally via npm, with its sha256-pinned binary`,
+      `Would install the sha512-pinned ${pinnedPackageSpec(entry)} tarball globally via npm, with its sha256-pinned binary`,
     );
     return;
   }
   await createSharedResource(ctx, PLUGIN_ID, entry.sharedResource, {
-    isPresent: () => isToolBinaryAvailable(ctx, entry),
-    create: () => installPinnedCliTool(ctx, entry),
+    isPresent: () => isToolBinaryAvailable(ctx, entry, { fresh: true }),
+    create: async () => {
+      try {
+        await installPinnedCliTool(ctx, entry);
+      } finally {
+        forgetInspections(ctx);
+      }
+    },
     async recordInstall() {
       await ctx.manifest.recordAction({
         plugin: PLUGIN_ID,
@@ -301,7 +365,7 @@ async function useInstalledCliTool(
     return;
   }
   await addSharedHolder(ctx, PLUGIN_ID, entry.sharedResource, {
-    isPresent: () => isToolBinaryAvailable(ctx, entry),
+    isPresent: () => isToolBinaryAvailable(ctx, entry, { fresh: true }),
     repoLedgerSaysInstalled: hasManagedInstallRecord(ctx, entry.id),
   });
 }
@@ -353,9 +417,20 @@ async function verifyCliTools(ctx: Context): Promise<PluginVerificationResult> {
     };
   }
 
+  const attention: string[] = [];
+  for (const entry of CLI_TOOL_BUNDLE) {
+    const differences = await unpinnedFilesOfAgemonInstall(ctx, entry);
+    if (differences.length > 0) {
+      attention.push(
+        `${entry.binaryName} is not the pinned ${entry.packageName} ${entry.version} build (${differences.join("; ")}); reinstall it: npm uninstall --global ${entry.packageName}, then run agemon`,
+      );
+    }
+  }
+
   return {
     ok: true,
     detail: `${CLI_TOOL_BUNDLE.length} CLI tool bundle entries present`,
+    ...(attention.length > 0 ? { attention: attention.join(" ") } : {}),
   };
 }
 
@@ -411,7 +486,10 @@ async function revertCliTools(
     await releaseSharedResource(ctx, entry.sharedResource, {
       releasingRepoInstalledIt: installedIt,
       isPresent: async () => true,
-      remove: () => uninstallGlobalPackage(ctx, entry.packageName),
+      remove: async () => {
+        await uninstallGlobalPackage(ctx, entry.packageName);
+        forgetInspections(ctx);
+      },
     });
   }
   if (ctx.dryRun && !releasedAny) {

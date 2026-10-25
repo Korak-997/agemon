@@ -1,11 +1,15 @@
-import { readFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { intro, outro } from "@clack/prompts";
 import { Command, CommanderError } from "commander";
 import { type AgemonConfig, loadConfig } from "../core/config.js";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
+import { assertRootUsesItsOwnEnvironment } from "../core/install-location.js";
+import {
+  readPackageVersion,
+  resolveInstallMethod,
+} from "../core/install-method.js";
 import { ApplyInterruptedError } from "../core/interruption.js";
 import {
   buildPlan,
@@ -21,6 +25,8 @@ import {
   recoverInterruptedApply,
 } from "../core/recover.js";
 import { resolveRepositoryRoot } from "../core/repo-paths.js";
+import { runSelfUninstall } from "../core/self-uninstall.js";
+import { runRollback, runUpgrade } from "../core/self-upgrade.js";
 import {
   checkAgemonStateDirectoryBeforeRun,
   withRepositoryRunLock,
@@ -43,24 +49,7 @@ import { createStepSpinner, type StepSpinner } from "../ui/spinner.js";
 import { symbol } from "../ui/symbols.js";
 import { theme } from "../ui/theme.js";
 
-const PACKAGE_JSON_SEARCH_DEPTH = 5;
-
-function resolvePackageVersion(): string {
-  let currentDir = dirname(fileURLToPath(import.meta.url));
-  for (let depth = 0; depth < PACKAGE_JSON_SEARCH_DEPTH; depth += 1) {
-    try {
-      const contents = readFileSync(join(currentDir, "package.json"), "utf8");
-      return JSON.parse(contents).version;
-    } catch {
-      currentDir = join(currentDir, "..");
-    }
-  }
-  throw new Error(
-    "Unable to locate agemon's package.json to resolve its version.",
-  );
-}
-
-const VERSION = resolvePackageVersion();
+const VERSION = readPackageVersion();
 const DESCRIPTION =
   "Bootstraps and reverses an AI coding agent's working environment in a repo.";
 
@@ -77,6 +66,8 @@ interface CliOptions {
   verbose?: boolean;
   checkAgentsUsable?: boolean;
   removeShared?: string;
+  print?: boolean;
+  rollback?: boolean;
 }
 
 const SILENT_SPINNER: StepSpinner = {
@@ -407,6 +398,39 @@ function lockingTheRepository(
   };
 }
 
+async function runUpgradeCommand(
+  requestedVersion: string | undefined,
+  options: CliOptions,
+): Promise<number> {
+  if (options.rollback && (requestedVersion !== undefined || options.print)) {
+    throw new Error("--rollback takes no version and no --print.");
+  }
+  assertRootUsesItsOwnEnvironment();
+  const method = await resolveInstallMethod();
+  if (options.rollback) {
+    return runRollback({ method, yes: Boolean(options.yes) });
+  }
+  return runUpgrade({
+    method,
+    runningVersion: VERSION,
+    version: requestedVersion,
+    print: Boolean(options.print),
+    yes: Boolean(options.yes),
+  });
+}
+
+async function runSelfUninstallCommand(options: CliOptions): Promise<number> {
+  assertRootUsesItsOwnEnvironment();
+  return runSelfUninstall({
+    method: await resolveInstallMethod(),
+    yes: Boolean(options.yes),
+    dryRun: Boolean(options.dryRun),
+    sharedTools: getRegisteredPlugins().flatMap(
+      (plugin) => plugin.sharedResources ?? [],
+    ),
+  });
+}
+
 async function runRecover(options: CliOptions): Promise<number> {
   const context = await createContext({
     repoRoot: await resolveRepositoryRootFor(options),
@@ -578,6 +602,50 @@ function createProgram(recordExitCode: (code: number) => void): Command {
     .addHelpText("after", `\n${RECOVER_LIMIT_NOTE}`)
     .action((_options: CliOptions, command: Command) =>
       record(lockingTheRepository(runRecover))({
+        ...command.parent?.opts(),
+        ...command.opts(),
+      }),
+    );
+
+  program
+    .command("upgrade")
+    .description(
+      "Install the latest agemon release (or the given version), the way this copy was installed",
+    )
+    .argument(
+      "[version]",
+      "release to install instead of the latest, e.g. 4.8.0",
+    )
+    .option(
+      "--print",
+      "print the verified install steps instead of running them (npm installs)",
+    )
+    .option(
+      "--rollback",
+      "switch back to the install the last upgrade replaced (install-script installs)",
+    )
+    .option("--yes", "skip confirmation prompts")
+    .action(
+      (
+        requestedVersion: string | undefined,
+        _options: CliOptions,
+        command: Command,
+      ) =>
+        record((options) => runUpgradeCommand(requestedVersion, options))({
+          ...command.parent?.opts(),
+          ...command.opts(),
+        }),
+    );
+
+  program
+    .command("self-uninstall")
+    .description(
+      "Remove agemon itself from this machine (never touches repositories)",
+    )
+    .option("--dry-run", "show what would be removed without removing it")
+    .option("--yes", "remove without asking")
+    .action((_options: CliOptions, command: Command) =>
+      record(runSelfUninstallCommand)({
         ...command.parent?.opts(),
         ...command.opts(),
       }),

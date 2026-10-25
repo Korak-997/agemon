@@ -210,6 +210,16 @@ export async function withoutReplacedOwner(
     : { origin: "pre-existing", holders: record.holders };
 }
 
+export async function withMachineLedgerLock<Result>(
+  work: () => Promise<Result>,
+): Promise<Result> {
+  return withAgemonStateLock(
+    MACHINE_LOCK_FILE_NAME,
+    () => work(),
+    MACHINE_LOCK_WAIT_MS,
+  );
+}
+
 export async function updateSharedResource<Result>(
   resourceId: SharedResourceId,
   change: (

@@ -99,8 +99,7 @@ jobs:
           set -euo pipefail
 
           mkdir release-assets
-          npm pack --pack-destination /tmp
-          mv /tmp/agemon-*.tgz release-assets/agemon.tgz
+          sh scripts/pack-release.sh release-assets/agemon.tgz
           cp install.sh release-assets/install.sh
 
           cd release-assets
@@ -172,3 +171,80 @@ jobs:
             --title "$TAG" \
             --generate-notes \
             $PRERELEASE_FLAG
+
+  npm:
+    name: publish to npm
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Download the published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern agemon.tgz --pattern SHA256SUMS
+
+      - name: Verify the tarball is the one the build job checksummed
+        env:
+          EXPECTED_CHECKSUMS_DIGEST: ${{ needs.build.outputs.checksums-digest }}
+        run: |
+          set -euo pipefail
+
+          ACTUAL_CHECKSUMS_DIGEST="$(sha256sum SHA256SUMS | cut -d' ' -f1)"
+          if [[ "$ACTUAL_CHECKSUMS_DIGEST" != "$EXPECTED_CHECKSUMS_DIGEST" ]]; then
+            echo "The release's SHA256SUMS is not the one the build job produced."
+            exit 1
+          fi
+          grep -E '^[0-9a-f]{64}  agemon\.tgz$' SHA256SUMS | sha256sum -c -
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+
+      - name: Require an npm that supports trusted publishing
+        run: |
+          set -euo pipefail
+
+          NPM_VERSION="$(npm --version)"
+          if [[ "$(printf '%s\n' 11.5.1 "$NPM_VERSION" | sort -V | head -n 1)" != "11.5.1" ]]; then
+            echo "npm ${NPM_VERSION} cannot publish with trusted publishing; 11.5.1 or later is required."
+            exit 1
+          fi
+
+      - name: Choose the dist-tag
+        run: |
+          set -euo pipefail
+
+          VERSION="${RELEASE_TAG#v}"
+          case "$RELEASE_TAG" in
+            *-alpha.* | *-beta.* | *-rc.*) DIST_TAG=next ;;
+            *) DIST_TAG=latest ;;
+          esac
+
+          if [[ "$DIST_TAG" == "latest" ]]; then
+            if ! PUBLISHED_LATEST="$(npm view agemon dist-tags.latest)" || [[ -z "$PUBLISHED_LATEST" ]]; then
+              echo "Could not read npm's latest dist-tag for agemon; re-run this job."
+              exit 1
+            fi
+            if [[ "$PUBLISHED_LATEST" != "$VERSION" &&
+              "$(printf '%s\n' "$PUBLISHED_LATEST" "$VERSION" | sort -V | tail -n 1)" == "$PUBLISHED_LATEST" ]]; then
+              echo "npm's latest is already ${PUBLISHED_LATEST}; publishing ${VERSION} would move it backwards."
+              exit 1
+            fi
+          fi
+          echo "DIST_TAG=${DIST_TAG}" >> "$GITHUB_ENV"
+
+      - name: Publish to npm
+        run: npm publish ./agemon.tgz --tag "$DIST_TAG"

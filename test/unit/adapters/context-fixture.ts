@@ -68,6 +68,9 @@ export async function createAdapterTestContext(
     run: runSubprocess,
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
-    verifiedBinaryInstaller: { install: async () => {} },
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
   };
 }

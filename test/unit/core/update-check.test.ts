@@ -1,18 +1,28 @@
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { InstallMethod } from "../../../src/core/install-method.js";
 
-const childProcess = vi.hoisted(() => ({ execFileSync: vi.fn() }));
 const prompt = vi.hoisted(() => ({
   isInteractiveTerminal: vi.fn(() => true),
   promptYesNo: vi.fn(async () => true),
 }));
+const selfUpgrade = vi.hoisted(() => ({
+  installRelease: vi.fn(async () => undefined),
+}));
+const installMethod = vi.hoisted(() => ({
+  resolveInstallMethod: vi.fn(
+    async (): Promise<InstallMethod> => ({
+      kind: "install-script",
+      installDir: "/home/u/.local/share/agemon",
+    }),
+  ),
+}));
 
-vi.mock("node:child_process", () => childProcess);
 vi.mock("../../../src/core/prompt.js", () => prompt);
+vi.mock("../../../src/core/self-upgrade.js", () => selfUpgrade);
+vi.mock("../../../src/core/install-method.js", () => installMethod);
 
 const { startUpdateCheck } = await import("../../../src/core/update-check.js");
 
@@ -38,45 +48,18 @@ const CURRENT_VERSION = "4.7.2";
 const LATEST_VERSION = "4.8.0";
 const LATEST_RELEASE_API_URL =
   "https://api.github.com/repos/Korak-997/agemon/releases/latest";
-const RELEASE_ASSET_BASE_URL = `https://github.com/Korak-997/agemon/releases/download/v${LATEST_VERSION}`;
-const INSTALLER_SCRIPT = "#!/usr/bin/env sh\necho installing\n";
 
 const createdTempDirectories: string[] = [];
 let cacheHome: string;
 let releaseAssets: Map<string, string>;
 
-function sha256(contents: string): string {
-  return createHash("sha256").update(contents).digest("hex");
-}
-
-function checksumLine(contents: string, assetName: string): string {
-  return `${sha256(contents)}  ${assetName}`;
-}
-
-function serveRelease(options: {
-  tagName?: unknown;
-  installer?: string;
-  checksums?: string;
-}): void {
+function serveRelease(options: { tagName?: unknown }): void {
   releaseAssets = new Map([
     [
       LATEST_RELEASE_API_URL,
       JSON.stringify({ tag_name: options.tagName ?? `v${LATEST_VERSION}` }),
     ],
-    [
-      `${RELEASE_ASSET_BASE_URL}/install.sh`,
-      options.installer ?? INSTALLER_SCRIPT,
-    ],
-    [
-      `${RELEASE_ASSET_BASE_URL}/SHA256SUMS`,
-      options.checksums ??
-        `${checksumLine("tarball", "agemon.tgz")}\n${checksumLine(INSTALLER_SCRIPT, "install.sh")}\n`,
-    ],
   ]);
-}
-
-function executedScriptPath(): string {
-  return childProcess.execFileSync.mock.calls[0][1][0];
 }
 
 beforeEach(async () => {
@@ -104,7 +87,8 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  childProcess.execFileSync.mockReset();
+  selfUpgrade.installRelease.mockReset();
+  installMethod.resolveInstallMethod.mockClear();
   prompt.promptYesNo.mockClear();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
@@ -174,82 +158,115 @@ describe("checkForUpdate release tag validation", () => {
         checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false }),
       ).resolves.toBe("not-updated");
       expect(prompt.promptYesNo).not.toHaveBeenCalled();
-      expect(childProcess.execFileSync).not.toHaveBeenCalled();
+      expect(selfUpgrade.installRelease).not.toHaveBeenCalled();
     },
   );
 });
 
-describe("checkForUpdate installer verification", () => {
-  it("runs the downloaded installer from a temp file when its checksum matches", async () => {
+describe("checkForUpdate offers the update the way this copy was installed", () => {
+  const NPM_GLOBAL: InstallMethod = {
+    kind: "npm-global",
+    packageRoot: "/usr/lib/node_modules/agemon",
+    prefix: "/usr",
+  };
+
+  it("installs through the shared upgrade path for an install-script copy", async () => {
     await expect(
       checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false }),
     ).resolves.toBe("updated");
 
-    expect(childProcess.execFileSync).toHaveBeenCalledTimes(1);
-    const [command, args, options] = childProcess.execFileSync.mock.calls[0];
-    expect(command).toBe("sh");
-    expect(args).toHaveLength(1);
-    expect(options.env.AGEMON_VERSION).toBe(LATEST_VERSION);
-    expect(existsSync(dirname(executedScriptPath()))).toBe(false);
+    expect(selfUpgrade.installRelease).toHaveBeenCalledWith(
+      { kind: "install-script", installDir: "/home/u/.local/share/agemon" },
+      LATEST_VERSION,
+      LATEST_VERSION,
+    );
+  });
+
+  it("installs an npm-global copy through npm's own route, never install.sh", async () => {
+    installMethod.resolveInstallMethod.mockResolvedValueOnce(NPM_GLOBAL);
+
+    await expect(
+      checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false }),
+    ).resolves.toBe("updated");
+
+    expect(selfUpgrade.installRelease).toHaveBeenCalledWith(
+      NPM_GLOBAL,
+      LATEST_VERSION,
+      LATEST_VERSION,
+    );
+  });
+
+  it("reports a failed install and points at agemon upgrade", async () => {
+    selfUpgrade.installRelease.mockRejectedValueOnce(
+      new Error("install.sh does not match the release's SHA256SUMS"),
+    );
+
+    await expect(
+      checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false }),
+    ).resolves.toBe("update-failed");
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Run 'agemon upgrade' to retry."),
+    );
   });
 
   it.each([
+    [{ kind: "npx" } as InstallMethod, "Run 'npx agemon@latest' to use it."],
     [
-      "the checksum does not match",
-      { installer: "#!/usr/bin/env sh\necho tampered\n" },
+      { kind: "dev" } as InstallMethod,
+      "Update this copy the way you installed it.",
     ],
     [
-      "SHA256SUMS has no install.sh line",
-      { checksums: `${checksumLine("tarball", "agemon.tgz")}\n` },
-    ],
-    [
-      "SHA256SUMS lists install.sh twice",
       {
-        checksums: `${checksumLine(INSTALLER_SCRIPT, "install.sh")}\n${checksumLine(INSTALLER_SCRIPT, "install.sh")}\n`,
-      },
+        kind: "unknown",
+        packageRoot: "/x/node_modules/agemon",
+      } as InstallMethod,
+      "Update this copy the way you installed it.",
     ],
-    [
-      "the checksum is upper-case",
-      { checksums: `${sha256(INSTALLER_SCRIPT).toUpperCase()}  install.sh\n` },
-    ],
-    [
-      "install.sh exceeds the size limit",
-      { installer: "x".repeat(1024 * 1024 + 1) },
-    ],
-  ])("fails without executing anything when %s", async (_label, release) => {
-    serveRelease(release);
+  ])("only prints a hint for a %o copy", async (method, hint) => {
+    installMethod.resolveInstallMethod.mockResolvedValueOnce(method);
 
     await expect(
       checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false }),
-    ).resolves.toBe("update-failed");
-    expect(childProcess.execFileSync).not.toHaveBeenCalled();
+    ).resolves.toBe("not-updated");
+
+    expect(prompt.promptYesNo).not.toHaveBeenCalled();
+    expect(selfUpgrade.installRelease).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining(hint));
   });
 
-  it("rejects an oversized install.sh by its declared length before reading it", async () => {
-    const declaredLengthFetch = vi.fn(
-      async (url: string) =>
-        new Response(releaseAssets.get(url) ?? "", {
-          status: 200,
-          headers: url.endsWith("/install.sh")
-            ? { "content-length": String(1024 * 1024 + 1) }
-            : {},
-        }),
-    );
-    vi.stubGlobal("fetch", declaredLengthFetch);
+  it("only prints the notice when root runs with another user's HOME", async () => {
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
 
     await expect(
       checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false }),
-    ).resolves.toBe("update-failed");
-    expect(childProcess.execFileSync).not.toHaveBeenCalled();
+    ).resolves.toBe("not-updated");
+
+    expect(installMethod.resolveInstallMethod).not.toHaveBeenCalled();
+    expect(prompt.promptYesNo).not.toHaveBeenCalled();
   });
 
-  it("fails without executing anything when the release has no SHA256SUMS", async () => {
-    releaseAssets.delete(`${RELEASE_ASSET_BASE_URL}/SHA256SUMS`);
+  it("never offers an update to a copy whose own version is not a release version", async () => {
+    await expect(
+      checkForUpdate({ currentVersion: "0.0.0-local", dryRun: false }),
+    ).resolves.toBe("not-updated");
+    expect(prompt.promptYesNo).not.toHaveBeenCalled();
+  });
+
+  it("offers the final release to someone on its release candidate", async () => {
+    serveRelease({ tagName: "v4.8.0" });
 
     await expect(
-      checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false }),
-    ).resolves.toBe("update-failed");
-    expect(childProcess.execFileSync).not.toHaveBeenCalled();
+      checkForUpdate({ currentVersion: "4.8.0-rc.1", dryRun: false }),
+    ).resolves.toBe("updated");
+  });
+
+  it("never offers an older stable release to someone on a newer candidate", async () => {
+    serveRelease({ tagName: "v4.7.2" });
+
+    await expect(
+      checkForUpdate({ currentVersion: "4.8.0-rc.1", dryRun: false }),
+    ).resolves.toBe("not-updated");
+    expect(installMethod.resolveInstallMethod).not.toHaveBeenCalled();
   });
 });
 
@@ -290,11 +307,11 @@ describe("startUpdateCheck lifecycle", () => {
 
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining(
-        `A new version of agemon is available: ${CURRENT_VERSION} -> ${LATEST_VERSION}.`,
+        `A new version of agemon is available: ${CURRENT_VERSION} -> ${LATEST_VERSION}. Run 'agemon upgrade' to install it.`,
       ),
     );
     expect(prompt.promptYesNo).not.toHaveBeenCalled();
-    expect(childProcess.execFileSync).not.toHaveBeenCalled();
+    expect(selfUpgrade.installRelease).not.toHaveBeenCalled();
   });
 
   it("aborts a lookup that has not finished and returns at once", async () => {

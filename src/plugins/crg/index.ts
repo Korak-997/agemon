@@ -12,6 +12,7 @@ import {
   isHeldByThisRepository,
   releaseSharedResource,
   repoLedgerUsesSharedResource,
+  wasInstalledByAgemon,
 } from "../shared-resource.js";
 import type {
   AgemonPlugin,
@@ -69,14 +70,35 @@ function hasManagedInstall(ctx: Context): boolean {
   );
 }
 
-function describeLocation(
-  location: Extract<CrgLocation, { status: "found" }>,
-): string {
+type FoundCrg = Extract<CrgLocation, { status: "found" }>;
+
+function describeLocation(location: FoundCrg): string {
   const installedAs =
     location.source === "pipx"
       ? `pipx ${location.version}`
       : `${printable(location.binaryPath)} ${location.version}`;
-  return location.onPath ? installedAs : `${installedAs}; ${NOT_ON_PATH_HINT}`;
+  const locked = location.hashLocked
+    ? installedAs
+    : `${installedAs}; dependencies not hash-locked`;
+  return location.onPath ? locked : `${locked}; ${NOT_ON_PATH_HINT}`;
+}
+
+async function hashLockAttention(
+  ctx: Context,
+  location: FoundCrg,
+): Promise<{ attention?: string }> {
+  if (
+    location.hashLocked ||
+    !(await wasInstalledByAgemon(CRG_SHARED_RESOURCE, hasManagedInstall(ctx)))
+  ) {
+    return {};
+  }
+  return {
+    attention:
+      location.source === "pipx"
+        ? `${PACKAGE_NAME}'s dependencies are not hash-locked (installed by an older agemon, by hand, or rewritten by 'pipx upgrade'); reinstall it: pipx uninstall ${PACKAGE_NAME}, then run agemon`
+        : `${PACKAGE_NAME} at ${printable(location.binaryPath)} is not a pipx install agemon can check for hash-locked dependencies; remove it, then run agemon to install the hash-locked one`,
+  };
 }
 
 async function detectCrgPresence(ctx: Context): Promise<PluginPresence> {
@@ -303,7 +325,11 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
           ok: false,
           detail: `${GRAPH_DIRECTORY}/ is missing — run agemon to build it again`,
         }
-      : { ok: true, detail: "installed; no graph built in this repository" };
+      : {
+          ok: true,
+          detail: "installed; no graph built in this repository",
+          ...(await hashLockAttention(ctx, location)),
+        };
   }
 
   const statusResult = await ctx.run(location.binaryPath, ["status"], {
@@ -318,7 +344,11 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
     };
   }
 
-  return { ok: true, detail: "status command passed" };
+  return {
+    ok: true,
+    detail: "status command passed",
+    ...(await hashLockAttention(ctx, location)),
+  };
 }
 
 function entriesHaveManagedInstall(entries: LedgerEntry[]): boolean {

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fsPromises from "node:fs/promises";
 import {
   chmod,
@@ -22,6 +23,7 @@ import {
   RefusedFileError,
   readRegularFileIfExists,
   saveVerifiedCopyBeside,
+  sha256OfRegularFile,
   writeFileAtomic,
 } from "../../../src/core/files.js";
 
@@ -124,6 +126,34 @@ describe("readRegularFileIfExists", () => {
 
     await expect(readRegularFileIfExists(join(cwd, "pipe.md"))).rejects.toThrow(
       /not a regular file/,
+    );
+  });
+});
+
+describe("sha256OfRegularFile", () => {
+  it("hashes the raw bytes of a file larger than the text-read cap", async () => {
+    const sandbox = await createSandbox();
+    const filePath = join(sandbox, "binary");
+    const contents = Buffer.alloc(9 * 1024 * 1024, 0xff);
+    contents[0] = 0x7f;
+    await writeFile(filePath, contents);
+
+    await expect(sha256OfRegularFile(filePath, 50 * 1024 * 1024)).resolves.toBe(
+      createHash("sha256").update(contents).digest("hex"),
+    );
+  });
+
+  it("refuses a symlink and a file over its cap", async () => {
+    const sandbox = await createSandbox();
+    const filePath = join(sandbox, "file");
+    await writeFile(filePath, "12345");
+    await symlink(filePath, join(sandbox, "link"));
+
+    await expect(
+      sha256OfRegularFile(join(sandbox, "link"), 100),
+    ).rejects.toBeInstanceOf(NotARegularFileError);
+    await expect(sha256OfRegularFile(filePath, 4)).rejects.toThrow(
+      /larger than expected/,
     );
   });
 });

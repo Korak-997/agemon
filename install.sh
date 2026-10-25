@@ -3,7 +3,8 @@
 # `curl | sh` download defines a partial function and runs nothing.
 set -eu
 
-MIN_NODE_MAJOR=24
+MIN_NODE_MAJOR=22
+MIN_NODE_MINOR=12
 REPO="Korak-997/agemon"
 BIN_NAME="agemon"
 LATEST_RELEASE_API_URL="https://api.github.com/repos/${REPO}/releases/latest"
@@ -230,6 +231,30 @@ cleanup() {
   return 0
 }
 
+is_installer_created() {
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -f "$1/${INSTALL_MARKER}" ] && [ ! -L "$1/${INSTALL_MARKER}" ]
+}
+
+keep_previous_install() {
+  PREVIOUS_DIR="${INSTALL_DIR}.prev"
+  is_installer_created "${ASIDE_DIR}/previous" || return 0
+  if [ -e "$PREVIOUS_DIR" ] || [ -L "$PREVIOUS_DIR" ]; then
+    if ! is_installer_created "$PREVIOUS_DIR"; then
+      print_info "Kept no rollback copy: ${PREVIOUS_DIR} exists and was not created by the agemon installer."
+      return 0
+    fi
+    if ! mv "$PREVIOUS_DIR" "${ASIDE_DIR}/older"; then
+      print_info "Kept no rollback copy: ${PREVIOUS_DIR} could not be replaced."
+      return 0
+    fi
+  fi
+  if [ -e "$PREVIOUS_DIR" ] || ! mv "${ASIDE_DIR}/previous" "$PREVIOUS_DIR"; then
+    print_info "Kept no rollback copy: the previous install could not be moved to ${PREVIOUS_DIR}."
+    return 0
+  fi
+  print_info "Kept the previous install at ${PREVIOUS_DIR}; 'agemon upgrade --rollback' switches back to it."
+}
+
 swap_into_place() {
   if [ -e "$INSTALL_DIR" ]; then
     ASIDE_DIR="$(mktemp -d "${INSTALL_DIR}.old-XXXXXX")"
@@ -243,6 +268,7 @@ swap_into_place() {
   SWAP_COMPLETED=1
   STAGE_DIR=""
   if [ -n "$ASIDE_DIR" ]; then
+    keep_previous_install
     rm -rf "$ASIDE_DIR"
     ASIDE_DIR=""
   fi
@@ -257,25 +283,28 @@ main() {
 
   if ! command -v node >/dev/null 2>&1; then
     print_error "Node.js is required but was not found on PATH."
-    print_error "Install Node.js ${MIN_NODE_MAJOR}+ from https://nodejs.org/ or via nvm/fnm, then retry."
+    print_error "Install Node.js ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}+ from https://nodejs.org/ or via nvm/fnm, then retry."
     exit 1
   fi
 
   NODE_VERSION_RAW="$(node --version 2>/dev/null || true)"
   NODE_VERSION_TRIMMED="${NODE_VERSION_RAW#v}"
   NODE_MAJOR="${NODE_VERSION_TRIMMED%%.*}"
+  NODE_MINOR_AND_REST="${NODE_VERSION_TRIMMED#*.}"
+  NODE_MINOR="${NODE_MINOR_AND_REST%%.*}"
 
-  case "$NODE_MAJOR" in
-    "" | *[!0-9]*)
+  case "${NODE_MAJOR}:${NODE_MINOR}" in
+    :* | *: | *[!0-9:]*)
       print_error "Unable to parse Node.js version from: ${NODE_VERSION_RAW}"
-      print_error "Expected Node.js ${MIN_NODE_MAJOR}+"
+      print_error "Expected Node.js ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}+"
       exit 1
       ;;
   esac
 
-  if [ "$NODE_MAJOR" -lt "$MIN_NODE_MAJOR" ]; then
+  if [ "$NODE_MAJOR" -lt "$MIN_NODE_MAJOR" ] ||
+    { [ "$NODE_MAJOR" -eq "$MIN_NODE_MAJOR" ] && [ "$NODE_MINOR" -lt "$MIN_NODE_MINOR" ]; }; then
     print_error "Node.js version is too old: ${NODE_VERSION_RAW}"
-    print_error "Required: Node.js ${MIN_NODE_MAJOR}+"
+    print_error "Required: Node.js ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}+"
     exit 1
   fi
 

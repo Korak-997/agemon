@@ -93,8 +93,8 @@ uses it and no other agemon daemon unit is left.
 ## Requirements
 
 - Linux with Ubuntu (`/etc/os-release` must report `ID=ubuntu`).
-- Node.js `>=24` (used to run the installed CLI; no other Node tooling needed).
-- `curl` and `tar` (used by the installer only).
+- Node.js `>=22.12` (used to run the installed CLI; no other Node tooling needed).
+- `curl` and `tar` (used by the installer script only).
 - Binaries checked at runtime: `python3`, `pip`, `pipx`, `uv`, `code-review-graph`.
 
 Notes:
@@ -103,7 +103,18 @@ Notes:
 
 ## Install
 
-Install `agemon` system-wide with the installer script:
+There are two install routes. Both install the same file: the release's `agemon.tgz`,
+whose SHA-256 is listed in that release's `SHA256SUMS`. The npm package carries npm
+provenance; the GitHub Release asset carries a GitHub build attestation. The package has
+no runtime dependencies (they are bundled), so npm fetches nothing else.
+
+**With npm:**
+
+```bash
+npm install --global agemon
+```
+
+**Without npm**, with the installer script:
 
 ```bash
 curl -fsSL https://github.com/Korak-997/agemon/releases/latest/download/install.sh | sh
@@ -128,6 +139,13 @@ Or, from a local clone:
 ```bash
 sh ./install.sh
 ```
+
+**Trying it once with `npx`:** `npx agemon` works, but only run it in a repository you
+trust. npx resolves and starts agemon using the repository's own `.npmrc` and
+`node_modules`, so a hostile checkout can run its code before agemon starts. agemon also
+ignores npm's injected configuration for the programs it runs itself in that mode,
+including an `NPM_CONFIG_PREFIX` you exported. Install it with one of the routes above
+for everyday use.
 
 Then run it in any repository you want to bootstrap — plain `agemon` *is* the install
 command, there is no separate `install` subcommand:
@@ -162,15 +180,63 @@ agemon
 - The CLI's self-update checks `install.sh` against `SHA256SUMS`; it verifies attestations
   only if you export `AGEMON_VERIFY_ATTESTATION=1`, which the installer it runs honours.
 
+### Upgrading and rolling back
+
+```bash
+agemon upgrade            # install the latest release
+agemon upgrade 4.8.0      # install that release (asks before a downgrade)
+agemon upgrade --rollback # switch back to the install the last upgrade replaced
+```
+
+`agemon upgrade` works out how the running copy was installed and upgrades it the same
+way:
+
+- **Install script:** it runs that release's `install.sh` after checking it against the
+  release's `SHA256SUMS`, for the same install dir (a custom `AGEMON_INSTALL_DIR` is kept).
+  The installer keeps the replaced install as `<install dir>.prev`, and
+  `agemon upgrade --rollback` swaps the two (run it again to swap back). A downgrade
+  always runs the newest release's installer, with the older version as its target.
+- **npm (`npm install --global`):** it downloads the release's `agemon.tgz`, checks it
+  against `SHA256SUMS` (and its attestation with `AGEMON_VERIFY_ATTESTATION=1`), and runs
+  `npm install --global --ignore-scripts --prefix <the running copy's prefix>` on that
+  file. `--print` prints these steps instead of running them. Upgrade with
+  `agemon upgrade`, not `npm update -g`: npm records the install as coming from a local
+  file. There is no `--rollback`; install the previous version by name.
+- **npx:** npx runs the version you ask for (`npx agemon@4.8.0`).
+- **A source checkout, Volta, `pnpm dlx`, `bun x` or a project-local install:** agemon
+  says it can't tell how it was installed; update it the way you installed it.
+
+`upgrade` without a version never downgrades: if the latest release is not newer, it
+reports that agemon is up to date. It refuses to replace an install another user owns
+(run it as that user: `sudo` for a root install, no `sudo` for your own), and refuses to
+run as root with another user's environment (`sudo -E`). Don't run two upgrades or
+rollbacks of the same install at once.
+
 ### Uninstalling agemon itself
 
 `agemon nuke` reverses changes `agemon` made *inside a repository* — it does not remove
-the `agemon` binary. To remove the CLI itself:
+the `agemon` binary. Run `agemon nuke` in each repository first, then remove agemon
+itself:
 
 ```bash
-rm -rf ~/.local/share/agemon ~/.local/bin/agemon   # user install
-sudo rm -rf /usr/local/lib/agemon /usr/local/bin/agemon   # root/system install
+agemon self-uninstall --dry-run   # show what would be removed
+agemon self-uninstall             # asks once; --yes skips the question
 ```
+
+For an install-script copy it removes the install dir, its `.prev` rollback copy, the
+`agemon` link that points into it, the update-check cache, and agemon's machine state
+(`${XDG_STATE_HOME:-~/.local/state}/agemon`: shared-tools ledger and tool caches). It
+keeps the machine state while a repository still uses a shared tool, an interrupted
+apply can still be recovered, or agemon is running somewhere else, and says which. It
+lists the repositories it knows still have agemon-managed files; agemon only knows
+repositories that use a shared tool, so check any others yourself. It never changes
+files inside repositories. Machine state is per user: run it as the user who installed
+agemon (with `sudo` for a root install).
+
+It refuses to start while an interrupted apply can still be recovered (run
+`agemon recover` first). For an npm install it prints
+`npm uninstall --global --prefix <prefix> agemon`. A copy run through npx has nothing to
+remove, and a source checkout or an install agemon can't identify is refused.
 
 ### Update checks
 
@@ -180,10 +246,12 @@ exists. The check never slows a command down:
 - the lookup starts in the background when the command starts, and its result is shown
   only **after** the command has finished and exited successfully. If the lookup has not
   finished by then, it is cancelled and tried again on a later run;
-- in an interactive terminal (without `--yes`) agemon then asks whether to install the
-  update. On yes, it downloads that release's `install.sh`, checks it against the
-  release's `SHA256SUMS`, and runs it. Nothing runs if a check fails;
-- with `--yes`, or without a terminal, it prints a one-line notice instead of asking.
+- in an interactive terminal (without `--yes`), for an install-script or npm install,
+  agemon then asks whether to install the update. On yes, it upgrades exactly as
+  `agemon upgrade` would (see above). Nothing runs if a check fails;
+- with `--yes`, without a terminal, or for any other install method, it prints a one-line
+  notice with the command to run instead of asking. A release candidate is offered its
+  final release; an older release is never offered.
 
 There is no check at all for `inspect`, `status`, `plan` or `recover`, with `--dry-run` or
 `--quiet`, when `CI` is set (to anything other than `0` or `false`), or when

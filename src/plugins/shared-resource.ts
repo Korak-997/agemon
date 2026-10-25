@@ -80,6 +80,17 @@ export async function isHeldByThisRepository(
   return record?.holders.includes(await realpath(ctx.cwd)) ?? false;
 }
 
+export async function wasInstalledByAgemon(
+  resource: SharedResourceDeclaration,
+  repoLedgerSaysInstalled: boolean,
+): Promise<boolean> {
+  if (repoLedgerSaysInstalled) {
+    return true;
+  }
+  const origin = (await readMachineLedger()).resources[resource.id]?.origin;
+  return origin === "installed" || origin === "migrated";
+}
+
 export function describeUseSharedOperation(
   capabilityId: string,
   resource: SharedResourceDeclaration,

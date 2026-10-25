@@ -19,6 +19,8 @@ interface WorkflowStep {
 interface WorkflowJob {
   permissions?: unknown;
   uses?: string;
+  needs?: string | string[];
+  environment?: unknown;
   steps?: WorkflowStep[];
 }
 
@@ -71,10 +73,18 @@ function unpinnedActions(workflow: Workflow): string[] {
   );
 }
 
-function privilegedThirdPartyJobs(workflow: Workflow): string[] {
+const NPM_PUBLISH_JOB = { file: "release.yml", job: "npm" } as const;
+
+function privilegedThirdPartyJobs(
+  workflow: Workflow,
+  exemptJobNames: readonly string[] = [],
+): string[] {
   return Object.entries(workflow.jobs)
     .filter(
-      ([, job]) => runsThirdPartyCode(job) && holdsWriteScope(workflow, job),
+      ([jobName, job]) =>
+        !exemptJobNames.includes(jobName) &&
+        runsThirdPartyCode(job) &&
+        holdsWriteScope(workflow, job),
     )
     .map(([jobName]) => jobName);
 }
@@ -147,7 +157,10 @@ describe(".github/workflows", () => {
 
   it("never runs third-party code in a job that holds a write token", () => {
     const offenders = [...workflows].flatMap(([file, workflow]) =>
-      privilegedThirdPartyJobs(workflow).map((jobName) => `${file}:${jobName}`),
+      privilegedThirdPartyJobs(
+        workflow,
+        file === NPM_PUBLISH_JOB.file ? [NPM_PUBLISH_JOB.job] : [],
+      ).map((jobName) => `${file}:${jobName}`),
     );
     expect(offenders).toEqual([]);
   });
@@ -226,4 +239,102 @@ describe(".github/workflows", () => {
       }
     },
   );
+
+  describe("the npm publish job, the one job allowed to run npm with id-token: write", () => {
+    const npmJob = workflows.get(NPM_PUBLISH_JOB.file)?.jobs[
+      NPM_PUBLISH_JOB.job
+    ] as WorkflowJob;
+    const runSteps = (npmJob?.steps ?? []).filter((step) => step.run);
+
+    it("holds only contents: read and id-token: write, behind the npm environment", () => {
+      expect(npmJob.permissions).toEqual({
+        contents: "read",
+        "id-token": "write",
+      });
+      expect(npmJob.environment).toBe("npm");
+      expect(npmJob.needs).toEqual(["build", "publish"]);
+    });
+
+    it("runs exactly the reviewed steps", () => {
+      expect(
+        (npmJob.steps ?? []).map((step) => (step as { name?: string }).name),
+      ).toEqual([
+        "Download the published release assets",
+        "Verify the tarball is the one the build job checksummed",
+        "Setup Node.js",
+        "Require an npm that supports trusted publishing",
+        "Choose the dist-tag",
+        "Publish to npm",
+      ]);
+      expect(
+        (npmJob.steps ?? []).flatMap((step) =>
+          step.uses ? [step.uses.split("@")[0]] : [],
+        ),
+      ).toEqual(["actions/setup-node"]);
+    });
+
+    it("never checks out the repository or restores a cache", () => {
+      expect(stepUsing(npmJob, "actions/checkout")).toBeUndefined();
+      expect(
+        stepUsing(npmJob, "actions/setup-node")?.with?.cache,
+      ).toBeUndefined();
+      for (const step of npmJob.steps ?? []) {
+        expect(
+          step.uses === undefined || step.uses.startsWith("actions/"),
+        ).toBe(true);
+      }
+    });
+
+    it("publishes the release's checksummed tarball, not a fresh build", () => {
+      const commands = runSteps.map((step) => step.run ?? "").join("\n");
+
+      expect(commands).toContain("gh release download");
+      expect(commands).toContain("EXPECTED_CHECKSUMS_DIGEST");
+      expect(commands).toMatch(/agemon\\\.tgz\$' SHA256SUMS \| sha256sum -c -/);
+      expect(commands).toContain('npm publish ./agemon.tgz --tag "$DIST_TAG"');
+      expect(commands).not.toMatch(/\bnpx\b|npm (ci|install|run)\b|\bnode\b/);
+    });
+
+    it("refuses an npm older than 11.5.1 and never moves latest backwards", () => {
+      const commands = runSteps.map((step) => step.run ?? "").join("\n");
+
+      expect(commands).toContain("11.5.1");
+      expect(commands).toContain("npm view agemon dist-tags.latest");
+      expect(commands).toContain("sort -V");
+    });
+
+    it("publishes prereleases under next and passes the tag through env", () => {
+      const tagStep = runSteps.find((step) => /DIST_TAG=/.test(step.run ?? ""));
+
+      expect(tagStep?.run).toMatch(/-alpha\.\*.*-beta\.\*.*-rc\.\*/s);
+      expect(tagStep?.run).toContain("DIST_TAG=next");
+      for (const step of runSteps) {
+        expect(step.run).not.toMatch(/\$\{\{/);
+      }
+    });
+  });
+
+  it("packs release and smoke-test tarballs with the dependency-stripping script", () => {
+    const buildJob = workflows.get("release.yml")?.jobs.build as WorkflowJob;
+
+    expect(stepRunning(buildJob, /pack-release\.sh/)?.run).toContain(
+      "sh scripts/pack-release.sh release-assets/agemon.tgz",
+    );
+    expect(stepRunning(buildJob, /npm pack/)).toBeUndefined();
+  });
+
+  it("tests every supported Node line and dry-runs the npm publish in CI", () => {
+    const qualityJob = workflows.get("ci.yml")?.jobs.quality as WorkflowJob & {
+      strategy: { matrix: { "node-version": string[] } };
+    };
+
+    expect(qualityJob.strategy.matrix["node-version"]).toEqual([
+      "22.x",
+      "24.x",
+      "26.x",
+    ]);
+    expect(stepRunning(qualityJob, /npm publish --dry-run/)?.run).toContain(
+      "pack-release.sh",
+    );
+  });
 });

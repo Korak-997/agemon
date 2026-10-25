@@ -76,6 +76,7 @@ interface VenvOptions {
   packageName?: string;
   packageVersion?: string;
   withPython?: boolean;
+  pipArgs?: unknown;
 }
 
 async function createPipxVenv(
@@ -99,6 +100,9 @@ async function createPipxVenv(
   }
   if (options.packageVersion !== undefined) {
     metadata.main_package.package_version = options.packageVersion;
+  }
+  if (options.pipArgs !== undefined) {
+    metadata.main_package.pip_args = options.pipArgs;
   }
   await writeFile(
     join(venv, "pipx_metadata.json"),
@@ -135,6 +139,7 @@ describe("locateCodeReviewGraph — pipx metadata", () => {
       binaryPath,
       version: "2.3.9",
       onPath: false,
+      hashLocked: false,
     });
     expect(run).not.toHaveBeenCalled();
   });
@@ -250,7 +255,71 @@ describe("locateCodeReviewGraph — pipx metadata", () => {
       binaryPath,
       version: "2.3.9",
       onPath: true,
+      hashLocked: false,
     });
+  });
+});
+
+describe("locateCodeReviewGraph — hash lock", () => {
+  function agemonPipArgs(constraintsPath: string): string[] {
+    return ["--require-hashes", "--only-binary=:all:", "-c", constraintsPath];
+  }
+
+  function toolsRoot(): string {
+    return join(process.env.XDG_STATE_HOME ?? "", "agemon", "tools");
+  }
+
+  it("is hash-locked only for the exact pip_args agemon writes", async () => {
+    const sandbox = await createSandbox();
+    await createPipxVenv(sandbox.defaultPipxHome, {
+      pipArgs: agemonPipArgs(
+        join(toolsRoot(), "code-review-graph-constraints-0123456789abcdef.txt"),
+      ),
+    });
+
+    const location = await locateCodeReviewGraph(
+      contextFor(sandbox.repo).context,
+    );
+
+    expect(location).toMatchObject({ status: "found", hashLocked: true });
+  });
+
+  it.each([
+    ["no pip_args", []],
+    ["a string instead of a list", "--require-hashes"],
+    [
+      "an extra package source",
+      [
+        ...["--require-hashes", "--only-binary=:all:", "-c"],
+        "/tmp/x.txt",
+        "--extra-index-url=https://evil",
+      ],
+    ],
+    [
+      "a constraints file outside the tools dir",
+      [
+        "--require-hashes",
+        "--only-binary=:all:",
+        "-c",
+        "/tmp/code-review-graph-constraints-0123456789abcdef.txt",
+      ],
+    ],
+    ["a path that climbs out of the tools dir", null],
+  ])("is not hash-locked with %s", async (_label, pipArgs) => {
+    const sandbox = await createSandbox();
+    await createPipxVenv(sandbox.defaultPipxHome, {
+      pipArgs:
+        pipArgs ??
+        agemonPipArgs(
+          `${toolsRoot()}/../tools/code-review-graph-constraints-0123456789abcdef.txt`,
+        ),
+    });
+
+    const location = await locateCodeReviewGraph(
+      contextFor(sandbox.repo).context,
+    );
+
+    expect(location).toMatchObject({ status: "found", hashLocked: false });
   });
 });
 
@@ -313,6 +382,7 @@ describe("locateCodeReviewGraph — PATH fallback", () => {
       binaryPath: join(binDirectory, "code-review-graph"),
       version: "2.3.9",
       onPath: true,
+      hashLocked: false,
     });
     expect(run).toHaveBeenCalledWith(
       join(binDirectory, "code-review-graph"),
@@ -348,6 +418,27 @@ describe("locateCodeReviewGraph — PATH fallback", () => {
     const repoBin = join(sandbox.repo, "node_modules", ".bin");
     await writeExecutable(join(repoBin, "code-review-graph"));
     vi.stubEnv("PATH", [repoBin, "node_modules/.bin"].join(delimiter));
+    const { context, run } = contextFor(sandbox.repo);
+
+    const location = await locateCodeReviewGraph(context);
+
+    expect(location).toEqual({ status: "absent" });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("PATH fallback skips npm-injected node_modules/.bin entries outside the repository when npm launched agemon", async () => {
+    const sandbox = await createSandbox();
+    const npxBin = join(
+      sandbox.home,
+      ".npm",
+      "_npx",
+      "0a1b",
+      "node_modules",
+      ".bin",
+    );
+    await writeExecutable(join(npxBin, "code-review-graph"));
+    vi.stubEnv("PATH", npxBin);
+    vi.stubEnv("npm_command", "exec");
     const { context, run } = contextFor(sandbox.repo);
 
     const location = await locateCodeReviewGraph(context);
@@ -407,6 +498,7 @@ describe("locateCodeReviewGraph — fake backend", () => {
       status: "found",
       source: "pipx",
       onPath: true,
+      hashLocked: false,
     });
     expect(
       (location as { binaryPath: string }).binaryPath.startsWith(

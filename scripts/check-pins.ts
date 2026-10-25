@@ -138,7 +138,7 @@ const PIN_CHECKS: PinCheck[] = [
         ),
       ),
     bumpReminder:
-      "a bump also needs the sha256 of every release archive in AGNIX_RELEASE_ARCHIVE_SHA256 (src/plugins/pins.ts)",
+      "a bump also needs, in src/plugins/pins.ts: the sha256 of every release archive (AGNIX_RELEASE_ARCHIVE_SHA256) and of the agnix binary inside each (AGNIX_BINARY_SHA256), the npm tarball's dist.integrity (AGNIX_NPM_TARBALL), and the sha256 of its package.json and bin/agnix after a real npm install (AGNIX_PACKAGE_FILE_SHA256)",
   },
   {
     name: "Essentials skills (vercel-labs/agent-skills)",

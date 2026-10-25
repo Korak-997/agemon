@@ -27,6 +27,7 @@ import {
 import { PLAN_SEGMENTS, type Plan, writePlan } from "./plan-store.js";
 import { resolveInsideRepo, resolveStateDirectory } from "./repo-paths.js";
 import { rollBackApply } from "./rollback.js";
+import { printable } from "./untrusted-text.js";
 
 export const FILE_TARGETING_ACTIONS: ReadonlySet<ProposedOperation["action"]> =
   new Set(["create", "replace", "merge-block", "merge-key", "adopt"]);
@@ -298,6 +299,9 @@ async function runCapabilityWork(
       verification.detail ??
         `Verification failed for '${plugin.id}' after apply.`,
     );
+  }
+  if (verification.attention) {
+    ctx.ui.info(`${plugin.id}: ${printable(verification.attention)}`);
   }
 
   for (const operation of operations) {

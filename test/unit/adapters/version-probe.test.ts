@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -103,6 +103,43 @@ describe("probeAgentInstallation", () => {
       version: null,
       evidence: [],
     });
+  });
+
+  it.each([
+    ["an npm-injected node_modules/.bin entry", "npm"],
+    ["a relative PATH entry", "relative"],
+  ])("never resolves an agent binary through %s", async (_label, layout) => {
+    const projectDirectory = await mkdtemp(join(tmpdir(), "agemon-project-"));
+    createdTempDirectories.push(projectDirectory);
+    const plantedBin = join(projectDirectory, "node_modules", ".bin");
+    await mkdir(plantedBin, { recursive: true });
+    await writeFile(join(plantedBin, "claude"), "#!/bin/sh\necho 9.9.9\n", {
+      mode: 0o755,
+    });
+    const previousCwd = process.cwd();
+    if (layout === "npm") {
+      process.env.PATH = plantedBin;
+      process.env.npm_command = "exec";
+    } else {
+      process.env.PATH = join("node_modules", ".bin");
+      process.chdir(projectDirectory);
+    }
+    const context = await createAdapterTestContext();
+    createdTempDirectories.push(context.cwd);
+
+    try {
+      const evidence = await probeAgentInstallation(context, {
+        binaryName: "claude",
+        versionArgs: ["--version"],
+        parseVersion: (stdout) => stdout.trim() || null,
+        timeoutMs: 1000,
+      });
+
+      expect(evidence.executablePath).toBeNull();
+    } finally {
+      process.chdir(previousCwd);
+      delete process.env.npm_command;
+    }
   });
 
   it("reports installed with the resolved path and version via the fake subprocess backend", async () => {

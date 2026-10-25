@@ -91,7 +91,10 @@ async function createSandboxContext(): Promise<Context> {
     run: async () => ({ code: 0, stdout: "", stderr: "" }),
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
-    verifiedBinaryInstaller: { install: async () => {} },
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
     confirm: async () => false,
     consent: async () => ({
       approved: [],
@@ -563,6 +566,47 @@ describe("applyPlan transaction protocol", () => {
     );
 
     expect(result.applied).toEqual([op]);
+    await expect(readFile(join(ctx.cwd, "res.txt"), "utf8")).resolves.toBe(
+      "done\n",
+    );
+  });
+
+  it("applies a capability whose verify passes with an attention note, printing it and rolling nothing back", async () => {
+    const ctx = await createSandboxContext();
+    const infos: string[] = [];
+    ctx.ui = { ...ctx.ui, info: (message: string) => infos.push(message) };
+    const op = operation();
+
+    const result = await applyPlan(
+      ctx,
+      [
+        {
+          ...createFilePlugin({
+            id: "cap",
+            onInstall: async (installCtx) => {
+              await writeFile(
+                join(installCtx.cwd, "res.txt"),
+                "done\n",
+                "utf8",
+              );
+            },
+          }),
+          async verify() {
+            return { ok: true, attention: "agnix is not the pinned build" };
+          },
+        },
+      ],
+      {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      },
+    );
+
+    expect(result.applied).toEqual([op]);
+    expect(infos).toContain("cap: agnix is not the pinned build");
     await expect(readFile(join(ctx.cwd, "res.txt"), "utf8")).resolves.toBe(
       "done\n",
     );

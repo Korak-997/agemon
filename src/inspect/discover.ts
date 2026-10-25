@@ -8,6 +8,7 @@ import {
   resolveInsideRepo,
   resolveRepoDirectory,
 } from "../core/repo-paths.js";
+import { agemonSubprocessEnvironment } from "../core/subprocess-runner.js";
 import { printable } from "../core/untrusted-text.js";
 import { isDenylistedPath } from "./redact.js";
 
@@ -251,6 +252,7 @@ async function listTrackedAgemonPaths(
         encoding: "utf8",
         timeout: GIT_LS_FILES_TIMEOUT_MS,
         maxBuffer: GIT_LS_FILES_MAX_OUTPUT_BYTES,
+        env: agemonSubprocessEnvironment(),
       },
     );
     return {

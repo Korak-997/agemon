@@ -47,9 +47,16 @@ async function writeExecutable(path: string): Promise<void> {
   await chmod(path, 0o755);
 }
 
+function pipArgsFrom(installArgs: string[]): string[] {
+  const flag = installArgs.find((arg) => arg.startsWith("--pip-args=")) ?? "";
+  return [...flag.slice("--pip-args=".length).matchAll(/'([^']*)'|(\S+)/g)].map(
+    (match) => match[1] ?? match[2],
+  );
+}
+
 async function createPipxVenv(
   pipxHome: string,
-  options: { withPython?: boolean } = {},
+  options: { withPython?: boolean; pipArgs?: string[] } = {},
 ): Promise<string> {
   const venv = join(pipxHome, "venvs", "code-review-graph");
   const binaryPath = join(venv, "bin", "code-review-graph");
@@ -57,11 +64,11 @@ async function createPipxVenv(
   if (options.withPython !== false) {
     await writeExecutable(join(venv, "bin", "python"));
   }
-  await writeFile(
-    join(venv, "pipx_metadata.json"),
+  const metadata = JSON.parse(
     (await readFile(METADATA_FIXTURE, "utf8")).replaceAll("__VENV__", venv),
-    "utf8",
   );
+  metadata.main_package.pip_args = options.pipArgs ?? [];
+  await writeFile(join(venv, "pipx_metadata.json"), JSON.stringify(metadata));
   return binaryPath;
 }
 
@@ -94,7 +101,7 @@ async function createTestContext(options: { dryRun?: boolean } = {}) {
     ): Promise<SubprocessResult> => {
       calls.push([command, args, runOptions]);
       if (command === "pipx" && args[0] === "install") {
-        await createPipxVenv(pipxHome);
+        await createPipxVenv(pipxHome, { pipArgs: pipArgsFrom(args) });
       }
       if (command.endsWith("code-review-graph") && args[0] === "build") {
         await mkdir(join(repo, ".code-review-graph"), { recursive: true });
@@ -425,7 +432,7 @@ describe("crg plugin — detection and state", () => {
       (await crgPlugin.describeState?.(pipxSetup.context)) ?? [];
     expect(pipxRow).toMatchObject({
       state: "present-adopted",
-      detail: "pipx 2.3.9",
+      detail: "pipx 2.3.9; dependencies not hash-locked",
     });
 
     const pathSetup = await createTestContext();
@@ -436,7 +443,7 @@ describe("crg plugin — detection and state", () => {
       (await crgPlugin.describeState?.(pathSetup.context)) ?? [];
     expect(pathRow).toMatchObject({
       state: "present-adopted",
-      detail: `${binaryPath} 2.3.9`,
+      detail: `${binaryPath} 2.3.9; dependencies not hash-locked`,
     });
   });
 
@@ -454,7 +461,7 @@ describe("crg plugin — detection and state", () => {
       infos.filter((line) => line.includes("pipx ensurepath")),
     ).toHaveLength(1);
     expect(row?.detail).toBe(
-      "pipx 2.3.9; not on PATH — run 'pipx ensurepath' and open a new shell",
+      "pipx 2.3.9; dependencies not hash-locked; not on PATH — run 'pipx ensurepath' and open a new shell",
     );
     expect(await crgPlugin.detect(context)).toMatchObject({ present: true });
   });
@@ -479,6 +486,57 @@ describe("crg plugin — detection and state", () => {
     });
     expect(verification.ok).toBe(false);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("crg plugin — hash-lock attention", () => {
+  it("needs no attention after agemon's own hash-locked install", async () => {
+    const { context } = await createTestContext();
+    await crgPlugin.install(context);
+
+    const verification = await crgPlugin.verify(context);
+
+    expect(verification.ok).toBe(true);
+    expect(verification.attention).toBeUndefined();
+  });
+
+  it("asks an agemon-installed crg without hash locking to be reinstalled through pipx", async () => {
+    const { context, pipxHome } = await createTestContext();
+    await crgPlugin.install(context);
+    await createPipxVenv(pipxHome, { pipArgs: [] });
+
+    const verification = await crgPlugin.verify(context);
+
+    expect(verification.ok).toBe(true);
+    expect(verification.attention).toBe(
+      "code-review-graph's dependencies are not hash-locked (installed by an older agemon, by hand, or rewritten by 'pipx upgrade'); reinstall it: pipx uninstall code-review-graph, then run agemon",
+    );
+  });
+
+  it("gives a PATH-only copy agemon recorded as installed advice that does not mention pipx uninstall", async () => {
+    const { context, home } = await createTestContext();
+    await context.manifest.recordAction({
+      plugin: "crg",
+      type: "installed-binary",
+      target: "code-review-graph (pipx)",
+      preExisting: false,
+    });
+    await writeExecutable(join(home, "bin", "code-review-graph"));
+    vi.stubEnv("PATH", join(home, "bin"));
+
+    const verification = await crgPlugin.verify(context);
+
+    expect(verification.attention).toContain("is not a pipx install");
+    expect(verification.attention).not.toContain("pipx uninstall");
+  });
+
+  it("only notes an adopted crg without hash locking", async () => {
+    const { context, pipxHome } = await createTestContext();
+    await createPipxVenv(pipxHome);
+
+    expect((await crgPlugin.verify(context)).attention).toBeUndefined();
+    const [row] = (await crgPlugin.describeState?.(context)) ?? [];
+    expect(row?.detail).toContain("dependencies not hash-locked");
   });
 });
 

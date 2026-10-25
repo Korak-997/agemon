@@ -1,9 +1,18 @@
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { basename, delimiter, isAbsolute, join } from "node:path";
+import {
+  basename,
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  resolve,
+} from "node:path";
 import type { Context } from "../../core/context.js";
 import { readRegularFileIfExists } from "../../core/files.js";
 import { isSameOrInside } from "../../core/repo-paths.js";
+import { resolveStateRoot } from "../../core/state-root.js";
+import { agemonSubprocessEnvironment } from "../../core/subprocess-runner.js";
 import { isSafeIdentifier, printable } from "../../core/untrusted-text.js";
 import { findBinaryPath } from "../../platform/detect.js";
 import {
@@ -27,12 +36,18 @@ export type CrgLocation =
       binaryPath: string;
       version: string;
       onPath: boolean;
+      hashLocked: boolean;
     }
   | { status: "broken-venv" }
   | { status: "absent" };
 
 type PipxLookup =
-  | { status: "found"; binaryPath: string; version: string }
+  | {
+      status: "found";
+      binaryPath: string;
+      version: string;
+      hashLocked: boolean;
+    }
   | { status: "broken-venv" }
   | null;
 type LocateContext = Pick<Context, "cwd" | "run">;
@@ -92,12 +107,37 @@ async function readPipxMetadata(pipxHome: string): Promise<unknown> {
   }
 }
 
+const CONSTRAINTS_FILE_NAME_PATTERN =
+  /^code-review-graph-constraints-[0-9a-f]{16}\.txt$/;
+
+function isAgemonHashLock(pipArgs: unknown): boolean {
+  if (!Array.isArray(pipArgs) || pipArgs.length !== 4) {
+    return false;
+  }
+  const [requireHashes, onlyBinary, constraintFlag, constraintsPath] = pipArgs;
+  return (
+    requireHashes === "--require-hashes" &&
+    onlyBinary === "--only-binary=:all:" &&
+    constraintFlag === "-c" &&
+    typeof constraintsPath === "string" &&
+    isAbsolute(constraintsPath) &&
+    resolve(constraintsPath) === constraintsPath &&
+    dirname(constraintsPath) === join(resolveStateRoot(), "agemon", "tools") &&
+    CONSTRAINTS_FILE_NAME_PATTERN.test(basename(constraintsPath))
+  );
+}
+
 function pipxAppPath(
   metadata: unknown,
-): { appPath: string; version: string } | null {
+): { appPath: string; version: string; hashLocked: boolean } | null {
   const mainPackage = (metadata as { main_package?: unknown } | null)
     ?.main_package as
-    | { package?: unknown; package_version?: unknown; app_paths?: unknown }
+    | {
+        package?: unknown;
+        package_version?: unknown;
+        app_paths?: unknown;
+        pip_args?: unknown;
+      }
     | undefined;
   if (
     mainPackage?.package !== PIPX_VENV_NAME ||
@@ -117,7 +157,13 @@ function pipxAppPath(
         isSafeIdentifier(path) &&
         basename(path) === CRG_BINARY_NAME,
     );
-  return appPath ? { appPath, version: mainPackage.package_version } : null;
+  return appPath
+    ? {
+        appPath,
+        version: mainPackage.package_version,
+        hashLocked: isAgemonHashLock(mainPackage.pip_args),
+      }
+    : null;
 }
 
 async function locateInPipx(
@@ -152,7 +198,12 @@ async function locateInPipx(
   } catch {
     return null;
   }
-  return { status: "found", binaryPath: realApp, version: app.version };
+  return {
+    status: "found",
+    binaryPath: realApp,
+    version: app.version,
+    hashLocked: app.hashLocked,
+  };
 }
 
 async function findOnPath(isAllowed: PathPolicy): Promise<string | undefined> {
@@ -164,7 +215,9 @@ async function findOnPath(isAllowed: PathPolicy): Promise<string | undefined> {
   }
 
   const allowedEntries: string[] = [];
-  for (const entry of (process.env.PATH ?? "").split(delimiter)) {
+  for (const entry of (agemonSubprocessEnvironment().PATH ?? "").split(
+    delimiter,
+  )) {
     if (!isAbsolute(entry)) {
       continue;
     }
@@ -226,6 +279,7 @@ export async function locateCodeReviewGraph(
       binaryPath: pipxLocation.binaryPath,
       version: pipxLocation.version,
       onPath: binaryOnPath !== undefined,
+      hashLocked: pipxLocation.hashLocked,
     };
   }
 
@@ -241,5 +295,6 @@ export async function locateCodeReviewGraph(
         binaryPath: binaryOnPath,
         version,
         onPath: true,
+        hashLocked: false,
       };
 }

@@ -99,7 +99,10 @@ async function createHarness(
       run: async () => ({ code: 0, stdout: "", stderr: "" }),
       manifest: await StateManifest.load(repo),
       serviceManager: createNoOpServiceManager(),
-      verifiedBinaryInstaller: { install: async () => {} },
+      verifiedBinaryInstaller: {
+        install: async () => {},
+        inspect: async () => ({ kind: "absent" }),
+      },
       confirm: async () => true,
       consent: async () => ({
         approved: [],

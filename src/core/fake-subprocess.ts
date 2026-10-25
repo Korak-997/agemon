@@ -23,9 +23,6 @@ import type {
 
 const FAKE_CRG_ON_PATH = "/fake/bin/code-review-graph";
 const PINNED_SKILLS_CLI_SUFFIX = `/${SKILLS_CLI_PATH_IN_TOOLS_DIR}`;
-const PINNED_GLOBAL_NPM_PACKAGE_SPECS: ReadonlyMap<string, string> = new Map([
-  [`agnix@${AGNIX_VERSION}`, "agnix"],
-]);
 
 function formatCommand(command: string, args: string[]): string {
   return [command, ...args].join(" ");
@@ -86,7 +83,16 @@ export function resetFakeSubprocessState(): void {
 export function createFakeVerifiedBinaryInstaller(): VerifiedBinaryInstaller {
   return {
     async install(request) {
+      initializeFakeStateIfNeeded();
       fakeVerifiedBinaryInstallRequests.push(request);
+      fakeInstalledGlobalNpmPackageNames?.add(request.packageName);
+      saveFakeGlobalNpmPackages();
+    },
+    async inspect(request) {
+      initializeFakeStateIfNeeded();
+      return fakeInstalledGlobalNpmPackageNames?.has(request.packageName)
+        ? { kind: "installed", version: AGNIX_VERSION, differences: [] }
+        : { kind: "absent" };
     },
   };
 }
@@ -240,7 +246,17 @@ export function fakeCodeReviewGraphOnPath(): string | undefined {
   return fakeCrgInstalledState ? FAKE_CRG_ON_PATH : undefined;
 }
 
-function writeFakeCrgVenv(): void {
+function splitPipArgs(args: string[]): string[] {
+  const pipArgsFlag = args.find((arg) => arg.startsWith("--pip-args="));
+  if (pipArgsFlag === undefined) {
+    return [];
+  }
+  return [
+    ...pipArgsFlag.slice("--pip-args=".length).matchAll(/'([^']*)'|(\S+)/g),
+  ].map((match) => match[1] ?? match[2]);
+}
+
+function writeFakeCrgVenv(pipArgs: string[]): void {
   const metadataPath = join(fakeCrgVenvPath(), "pipx_metadata.json");
   if (existsSync(metadataPath)) {
     return;
@@ -256,6 +272,7 @@ function writeFakeCrgVenv(): void {
       package: "code-review-graph",
       package_version: CODE_REVIEW_GRAPH_VERSION,
       app_paths: [{ __Path__: fakeCrgStubPath(), __type__: "Path" }],
+      pip_args: pipArgs,
     },
     pipx_metadata_version: "0.3",
   };
@@ -321,7 +338,7 @@ function buildFakePipxResponse(args: string[]): SubprocessResult | undefined {
     operation === "install" &&
     packageName === CODE_REVIEW_GRAPH_PACKAGE_SPEC
   ) {
-    writeFakeCrgVenv();
+    writeFakeCrgVenv(splitPipArgs(args));
     fakeCrgInstalledState = true;
     return {
       code: 0,
@@ -371,6 +388,18 @@ function buildFakeNpmCi(args: string[]): SubprocessResult {
   };
 }
 
+function assertNpmIgnoresProjectConfig(args: string[]): void {
+  const ignoresProjectConfig = args.some(
+    (arg) =>
+      arg === "--global" || arg === "--prefix" || arg.startsWith("--prefix="),
+  );
+  if (!ignoresProjectConfig) {
+    throw new Error(
+      `npm ${args.join(" ")} must pass --global or --prefix, so npm never reads a .npmrc from the repository it runs in.`,
+    );
+  }
+}
+
 function buildFakeNpmResponse(args: string[]): SubprocessResult | undefined {
   const operation = args[0];
   if (!operation) {
@@ -398,19 +427,9 @@ function buildFakeNpmResponse(args: string[]): SubprocessResult | undefined {
   const packageNames = parseGlobalNpmPackageNames(args);
 
   if (operation === "install") {
-    for (const packageSpec of packageNames) {
-      const pinnedPackageName =
-        PINNED_GLOBAL_NPM_PACKAGE_SPECS.get(packageSpec);
-      if (pinnedPackageName) {
-        fakeInstalledGlobalNpmPackageNames?.add(pinnedPackageName);
-      }
-    }
-    saveFakeGlobalNpmPackages();
-    return {
-      code: 0,
-      stdout: `installed ${packageNames.length} package(s) globally\n`,
-      stderr: "",
-    };
+    throw new Error(
+      `npm install --global ${packageNames.join(" ")} installs by name; agemon installs global npm packages only from a verified tarball (ctx.verifiedBinaryInstaller).`,
+    );
   }
 
   if (operation === "uninstall") {
@@ -541,6 +560,9 @@ export function runFakeSubprocess(
     return { code: 0, stdout: `${ESSENTIALS_SKILLS_COMMIT}\n`, stderr: "" };
   }
 
+  if (basename(command) === "npm") {
+    assertNpmIgnoresProjectConfig(args);
+  }
   if (command === "npm") {
     const npmResponse = buildFakeNpmResponse(args);
     if (npmResponse) {

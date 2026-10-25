@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../../src/cli/index.js";
 import { writeJournal } from "../../src/core/apply-journal.js";
 
@@ -320,6 +320,73 @@ describe("nuke", () => {
       expect(new Set(ledger.actions.map((entry) => entry.plugin))).toEqual(
         new Set(["master-prompt"]),
       );
+    });
+  });
+});
+
+describe("self-uninstall", () => {
+  it("refuses to remove a source checkout", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const run = await runFrom(repoDirectory, ["self-uninstall", "--yes"]);
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("source checkout");
+    });
+  });
+
+  it("refuses root with another user's HOME before finding out how agemon was installed", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const geteuid = vi.spyOn(process, "geteuid").mockReturnValue(0);
+      try {
+        const run = await runFrom(repoDirectory, [
+          "self-uninstall",
+          "--dry-run",
+        ]);
+
+        expect(run.exitCode).toBe(1);
+        expect(run.stderr).toContain("another user's environment");
+      } finally {
+        geteuid.mockRestore();
+      }
+    });
+  });
+});
+
+describe("upgrade", () => {
+  it("refuses to upgrade a source checkout, naming git", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const run = await runFrom(repoDirectory, ["upgrade", "4.8.0"]);
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("update it with git");
+    });
+  });
+
+  it("refuses root with another user's HOME before finding out how agemon was installed", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const geteuid = vi.spyOn(process, "geteuid").mockReturnValue(0);
+      try {
+        const run = await runFrom(repoDirectory, ["upgrade"]);
+
+        expect(run.exitCode).toBe(1);
+        expect(run.stderr).toContain("another user's environment");
+        expect(run.stderr).not.toContain("source checkout");
+      } finally {
+        geteuid.mockRestore();
+      }
+    });
+  });
+
+  it("refuses a version together with --rollback before looking anything up", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const run = await runFrom(repoDirectory, [
+        "upgrade",
+        "--rollback",
+        "4.8.0",
+      ]);
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("--rollback takes no version");
     });
   });
 });

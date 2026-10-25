@@ -76,7 +76,10 @@ async function createTestContext(): Promise<Context> {
         : { code: 0, stdout: "", stderr: "" },
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
-    verifiedBinaryInstaller: { install: async () => {} },
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
   };
 }
 

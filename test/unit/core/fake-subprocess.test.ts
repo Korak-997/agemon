@@ -100,20 +100,15 @@ describe("runFakeSubprocess", () => {
     }
   });
 
-  it("installs agnix only at the pinned version", () => {
-    runFakeSubprocess("npm", ["install", "--global", "agnix"]);
-    expect(runFakeSubprocess("agnix", ["--version"]).code).toBe(1);
-
-    runFakeSubprocess("npm", [
-      "install",
-      "--global",
-      "--ignore-scripts",
-      `agnix@${AGNIX_VERSION}`,
-    ]);
-    expect(runFakeSubprocess("agnix", ["--version"]).code).toBe(0);
-
-    runFakeSubprocess("npm", ["uninstall", "--global", "agnix"]);
-    expect(runFakeSubprocess("agnix", ["--version"]).code).toBe(1);
+  it("refuses a global npm install by package name", () => {
+    expect(() =>
+      runFakeSubprocess("npm", [
+        "install",
+        "--global",
+        "--ignore-scripts",
+        `agnix@${AGNIX_VERSION}`,
+      ]),
+    ).toThrow(/only from a verified tarball/);
   });
 
   it("leaves an installed skills CLI behind a fake npm ci, as the real one does", async () => {
@@ -127,6 +122,13 @@ describe("runFakeSubprocess", () => {
     } finally {
       await rm(prefix, { recursive: true, force: true });
     }
+  });
+
+  it("refuses an npm call that could read the repository's .npmrc", () => {
+    expect(() => runFakeSubprocess("npm", ["install", "agnix"])).toThrow(
+      /--global or --prefix/,
+    );
+    expect(() => runFakeSubprocess("npm", ["root", "--global"])).not.toThrow();
   });
 
   it("reports the pinned Essentials commit as the fetched HEAD", () => {
@@ -144,11 +146,46 @@ describe("createFakeVerifiedBinaryInstaller", () => {
       binaryPathInPackage: "bin/agnix-binary",
       archiveMemberName: "agnix",
       candidates: [{ url: "https://example.test/a", sha256: "0".repeat(64) }],
+      packageTarball: {
+        url: "https://example.test/agnix.tgz",
+        integrity: "sha512-x",
+      },
     };
 
     await createFakeVerifiedBinaryInstaller().install(request);
 
     expect(takeFakeVerifiedBinaryInstallRequests()).toEqual([request]);
     expect(takeFakeVerifiedBinaryInstallRequests()).toEqual([]);
+  });
+
+  it("reports a package as installed only once the fake installer installed it", async () => {
+    const installer = createFakeVerifiedBinaryInstaller();
+    const inspectRequest = {
+      packageName: "agnix",
+      commandName: "agnix",
+      commandPathInPackage: "bin/agnix",
+      binaryPathInPackage: "bin/agnix-binary",
+      packageFileSha256: {},
+      binarySha256: [],
+    };
+
+    await expect(installer.inspect(inspectRequest)).resolves.toEqual({
+      kind: "absent",
+    });
+    await installer.install({
+      packageName: "agnix",
+      version: AGNIX_VERSION,
+      binaryPathInPackage: "bin/agnix-binary",
+      archiveMemberName: "agnix",
+      candidates: [],
+      packageTarball: {
+        url: "https://example.test/agnix.tgz",
+        integrity: "sha512-x",
+      },
+    });
+    await expect(installer.inspect(inspectRequest)).resolves.toMatchObject({
+      kind: "installed",
+      differences: [],
+    });
   });
 });

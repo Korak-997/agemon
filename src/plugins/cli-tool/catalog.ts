@@ -1,4 +1,11 @@
-import { AGNIX_RELEASE_ARCHIVE_SHA256, AGNIX_VERSION } from "../pins.js";
+import type { PinnedNpmTarball } from "../../core/verified-binary-installer.js";
+import {
+  AGNIX_BINARY_SHA256,
+  AGNIX_NPM_TARBALL,
+  AGNIX_PACKAGE_FILE_SHA256,
+  AGNIX_RELEASE_ARCHIVE_SHA256,
+  AGNIX_VERSION,
+} from "../pins.js";
 import type { SharedResourceDeclaration } from "../types.js";
 
 export interface PinnedReleaseArchive {
@@ -11,7 +18,11 @@ export interface CliToolBundleEntry {
   packageName: string;
   version: string;
   binaryName: string;
+  commandPathInPackage: string;
   binaryPathInPackage: string;
+  packageTarball: PinnedNpmTarball;
+  packageFileSha256: Readonly<Record<string, string>>;
+  binarySha256: readonly string[];
   archiveMemberName: string;
   releaseDownloadUrl: string;
   releaseArchivesByPlatform: Record<string, PinnedReleaseArchive[]>;
@@ -30,7 +41,11 @@ export const CLI_TOOL_BUNDLE: CliToolBundleEntry[] = [
     packageName: "agnix",
     version: AGNIX_VERSION,
     binaryName: "agnix",
+    commandPathInPackage: "bin/agnix",
     binaryPathInPackage: "bin/agnix-binary",
+    packageTarball: AGNIX_NPM_TARBALL,
+    packageFileSha256: AGNIX_PACKAGE_FILE_SHA256,
+    binarySha256: AGNIX_BINARY_SHA256,
     archiveMemberName: "agnix",
     releaseDownloadUrl: `https://github.com/agent-sh/agnix/releases/download/v${AGNIX_VERSION}`,
     releaseArchivesByPlatform: {

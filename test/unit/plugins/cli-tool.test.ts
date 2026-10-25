@@ -3,11 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
-import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
+import {
+  createFakeVerifiedBinaryInstaller,
+  resetFakeSubprocessState,
+} from "../../../src/core/fake-subprocess.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
+import { resolveAgemonStateDirectory } from "../../../src/core/state-root.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
-import type { VerifiedBinaryInstallRequest } from "../../../src/core/verified-binary-installer.js";
+import type {
+  InstalledPackageInspection,
+  VerifiedBinaryInstallRequest,
+} from "../../../src/core/verified-binary-installer.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { CLI_TOOL_BUNDLE } from "../../../src/plugins/cli-tool/catalog.js";
 import {
@@ -15,6 +22,7 @@ import {
   resolveVerifiedArchiveCandidates,
 } from "../../../src/plugins/cli-tool/index.js";
 import {
+  AGNIX_NPM_TARBALL,
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
 } from "../../../src/plugins/pins.js";
@@ -73,10 +81,45 @@ function createNoOpUi(): Context["ui"] {
 }
 
 const installRequests: VerifiedBinaryInstallRequest[] = [];
+const fakeInstaller = createFakeVerifiedBinaryInstaller();
 
-afterEach(() => {
+const UNPINNED_AGNIX: InstalledPackageInspection = {
+  kind: "installed",
+  version: "0.41.0",
+  differences: ["bin/agnix-binary is not a pinned build"],
+};
+
+function inspectAs(context: Context, inspection: InstalledPackageInspection) {
+  context.verifiedBinaryInstaller = {
+    ...context.verifiedBinaryInstaller,
+    inspect: async () => inspection,
+  };
+}
+
+async function writeMachineLedger(resources: object): Promise<void> {
+  const { writeFile: write } = await import("node:fs/promises");
+  await write(
+    join((await resolveAgemonStateDirectory("prepare")).path, "machine.json"),
+    JSON.stringify({ version: 1, resources }),
+    { mode: 0o600 },
+  );
+}
+
+async function recordAgemonInstall(context: Context): Promise<void> {
+  await context.manifest.recordAction({
+    plugin: "cli-tool",
+    type: "installed-cli-tool",
+    target: "agnix",
+    preExisting: false,
+  });
+}
+
+afterEach(async () => {
   installRequests.splice(0);
   resetFakeSubprocessState();
+  await rm(join(process.env.XDG_STATE_HOME ?? "", "agemon", "machine.json"), {
+    force: true,
+  });
 });
 
 async function createTestContext(
@@ -117,7 +160,9 @@ async function createTestContext(
     verifiedBinaryInstaller: {
       async install(request) {
         installRequests.push(request);
+        await fakeInstaller.install(request);
       },
+      inspect: (request) => fakeInstaller.inspect(request),
     },
   };
 }
@@ -168,19 +213,17 @@ describe("cli-tool plugin", () => {
     expect(actionsAfterUninstall).toEqual([]);
   });
 
-  it("installs the pinned npm package without scripts, then its verified binary", async () => {
+  it("installs agnix only through the verified installer, from the sha512-pinned tarball", async () => {
     const context = await createTestContext();
     const commands = recordCommands(context);
 
     await cliToolPlugin.install(context);
 
-    expect(commands).toContainEqual([
-      "npm",
-      "install",
-      "--global",
-      "--ignore-scripts",
-      `agnix@${AGNIX_VERSION}`,
-    ]);
+    expect(
+      commands.some(
+        (command) => command[0] === "npm" && command[1] === "install",
+      ),
+    ).toBe(false);
     expect(installRequests).toEqual([
       {
         packageName: "agnix",
@@ -191,8 +234,108 @@ describe("cli-tool plugin", () => {
           AGNIX,
           `${process.platform}-${process.arch}`,
         ),
+        packageTarball: AGNIX_NPM_TARBALL,
       },
     ]);
+  });
+
+  it("flags an agemon-installed agnix that is not the pinned build in verify, without running it", async () => {
+    const context = await createTestContext("agnix");
+    await recordAgemonInstall(context);
+    inspectAs(context, UNPINNED_AGNIX);
+    const commands = recordCommands(context);
+
+    const verification = await cliToolPlugin.verify(context);
+
+    expect(verification.ok).toBe(true);
+    expect(verification.attention).toContain(
+      "agnix is not the pinned agnix 0.58.0 build (bin/agnix-binary is not a pinned build); reinstall it: npm uninstall --global agnix, then run agemon",
+    );
+    expect(commands.some((command) => command[0] === "agnix")).toBe(false);
+  });
+
+  it("counts a migrated shared-tools record as agemon-installed", async () => {
+    const context = await createTestContext("agnix");
+    await writeMachineLedger({
+      "npm-global:agnix": {
+        origin: "migrated",
+        claimedBy: context.cwd,
+        ownerDirectoryId: "1:2:3",
+        holders: [context.cwd],
+      },
+    });
+    inspectAs(context, UNPINNED_AGNIX);
+
+    expect((await cliToolPlugin.verify(context)).attention).toBeDefined();
+  });
+
+  it("only notes an adopted agnix that is not the pinned build", async () => {
+    const context = await createTestContext("agnix");
+    await writeMachineLedger({
+      "npm-global:agnix": { origin: "pre-existing", holders: [context.cwd] },
+    });
+    inspectAs(context, UNPINNED_AGNIX);
+
+    expect((await cliToolPlugin.verify(context)).attention).toBeUndefined();
+    const [row] = (await cliToolPlugin.describeState?.(context)) ?? [];
+    expect(row?.state).toBe("present-adopted");
+    expect(row?.detail).toBe(
+      "pre-existing install (agnix 0.41.0, not the pinned 0.58.0 build)",
+    );
+  });
+
+  it("says when agemon could not inspect an agnix", async () => {
+    const context = await createTestContext("agnix");
+    inspectAs(context, {
+      kind: "installed",
+      version: null,
+      differences: ["could not locate the global npm root (npm broke)"],
+    });
+
+    const [row] = (await cliToolPlugin.describeState?.(context)) ?? [];
+
+    expect(row?.detail).toBe(
+      "pre-existing install (agnix; agemon could not inspect it (could not locate the global npm root (npm broke)))",
+    );
+  });
+
+  it("reinstalls a flagged agemon-installed agnix the user removed, and then verifies it", async () => {
+    const context = await createTestContext();
+    await recordAgemonInstall(context);
+
+    expect((await cliToolPlugin.detect(context)).present).toBe(false);
+    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+    expect(operations.map((operation) => operation.action)).toEqual([
+      "install-package",
+    ]);
+    await cliToolPlugin.apply?.(context, operations);
+
+    const verification = await cliToolPlugin.verify(context);
+    expect(verification).toMatchObject({ ok: true });
+    expect(verification.attention).toBeUndefined();
+    expect(installRequests).toHaveLength(1);
+  });
+
+  it("inspects an agemon-installed agnix once per run, and afresh under the lock", async () => {
+    const context = await createTestContext("agnix");
+    await recordAgemonInstall(context);
+    let inspections = 0;
+    context.verifiedBinaryInstaller = {
+      ...context.verifiedBinaryInstaller,
+      inspect: async () => {
+        inspections += 1;
+        return { kind: "installed", version: AGNIX_VERSION, differences: [] };
+      },
+    };
+
+    await cliToolPlugin.detect(context);
+    await cliToolPlugin.plan?.(context);
+    await cliToolPlugin.verify(context);
+    expect(inspections).toBe(1);
+
+    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+    await cliToolPlugin.apply?.(context, operations);
+    expect(inspections).toBeGreaterThan(1);
   });
 
   it("uninstalls the package and records nothing when the verified binary install fails", async () => {
@@ -202,6 +345,7 @@ describe("cli-tool plugin", () => {
       async install() {
         throw new Error("Downloaded archive does not match its pinned sha256");
       },
+      inspect: async () => ({ kind: "absent" }),
     };
 
     await expect(cliToolPlugin.install(context)).rejects.toThrow(
@@ -224,6 +368,7 @@ describe("cli-tool plugin", () => {
       async install() {
         throw new Error("No pinned agnix 0.58.0 build runs on this host.");
       },
+      inspect: async () => ({ kind: "absent" }),
     };
 
     await expect(cliToolPlugin.install(context)).rejects.toThrow(
@@ -247,7 +392,7 @@ describe("cli-tool plugin", () => {
 
     expect(operation?.preview).toEqual({
       kind: "note",
-      text: `npm install --global --ignore-scripts agnix@${AGNIX_VERSION}; binary from the v${AGNIX_VERSION} GitHub release, sha256-pinned`,
+      text: `npm install --global --ignore-scripts of the sha512-pinned agnix@${AGNIX_VERSION} tarball; binary from the v${AGNIX_VERSION} GitHub release, sha256-pinned`,
     });
   });
 
@@ -404,11 +549,7 @@ describe("cli-tool plugin", () => {
 
     await cliToolPlugin.apply?.(context, operations);
 
-    expect(
-      commands.some(
-        (command) => command[0] === "npm" && command[1] === "install",
-      ),
-    ).toBe(true);
+    expect(installRequests).toHaveLength(1);
     await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
   });
 

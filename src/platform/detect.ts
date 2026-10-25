@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { agemonSubprocessEnvironment } from "../core/subprocess-runner.js";
 
 export const REQUIRED_BINARIES = [
   "python3",
@@ -75,7 +76,7 @@ function parseOsReleaseId(osReleaseContents: string): string {
 }
 
 export async function findBinaryPath(
-  binaryName: RequiredBinary,
+  binaryName: string,
   pathEnv: string,
 ): Promise<string | undefined> {
   for (const pathEntry of pathEnv.split(delimiter)) {
@@ -134,6 +135,8 @@ export async function detectPlatform(
   return {
     os: "ubuntu",
     osReleasePath,
-    binaries: await detectBinaries(input.pathEnv ?? process.env.PATH ?? ""),
+    binaries: await detectBinaries(
+      input.pathEnv ?? agemonSubprocessEnvironment().PATH ?? "",
+    ),
   };
 }

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
@@ -96,6 +96,48 @@ export async function readRegularFileIfExists(
       throw new NotARegularFileError("read", filePath);
     }
     return await readAtMostCap(handle, filePath);
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function sha256OfRegularFile(
+  filePath: string,
+  maxBytes: number,
+): Promise<string> {
+  let handle: FileHandle;
+  try {
+    handle = await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new NotARegularFileError("read", filePath);
+    }
+    throw error;
+  }
+
+  try {
+    if (!(await handle.stat()).isFile()) {
+      throw new NotARegularFileError("read", filePath);
+    }
+    const hash = createHash("sha256");
+    let totalBytes = 0;
+    const buffer = Buffer.alloc(READ_CHUNK_BYTES);
+    for (;;) {
+      const { bytesRead } = await handle.read({ buffer });
+      if (bytesRead === 0) {
+        return hash.digest("hex");
+      }
+      totalBytes += bytesRead;
+      if (totalBytes > maxBytes) {
+        throw new Error(
+          `Refusing to hash ${filePath}: it is larger than expected.`,
+        );
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+    }
   } finally {
     await handle.close();
   }

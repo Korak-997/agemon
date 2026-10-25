@@ -338,7 +338,10 @@ describe.skipIf(!SHA256SUM_AVAILABLE)(
         readFileSync(join(installDir, ".agemon-install"), "utf8").trim(),
       ).toBe(RELEASE_VERSION);
       expect(statSync(installDir).mode & 0o777).toBe(0o755);
-      expect(readdirSync(join(sandbox.root, "custom"))).toEqual(["agemon"]);
+      expect(readdirSync(join(sandbox.root, "custom")).sort()).toEqual([
+        "agemon",
+        "agemon.prev",
+      ]);
     });
 
     it("upgrades a legacy install at the default path", () => {
@@ -675,5 +678,106 @@ describe.skipIf(!SHA256SUM_AVAILABLE)("install.sh fixture sanity", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(installedVersion(installDir)).toBe(RELEASE_VERSION);
+  });
+});
+
+describe.skipIf(!SHA256SUM_AVAILABLE)("install.sh Node.js version gate", () => {
+  function reportNodeVersion(version: string): void {
+    const nodeLink = join(sandbox.toolsDir, "node");
+    const realNode = resolveTool("node");
+    rmSync(nodeLink);
+    writeFileSync(
+      nodeLink,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi\nexec "${realNode}" "$@"\n`,
+      { mode: 0o755 },
+    );
+  }
+
+  it.each(["v22.12.0", "v22.23.2", "v24.0.0"])("accepts Node %s", (version) => {
+    reportNodeVersion(version);
+
+    const result = runInstaller({
+      AGEMON_INSTALL_DIR: join(sandbox.root, "agemon"),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each(["v21.7.3", "v22.11.0", "v20.20.2"])("rejects Node %s", (version) => {
+    reportNodeVersion(version);
+
+    const result = runInstaller({
+      AGEMON_INSTALL_DIR: join(sandbox.root, "agemon"),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Required: Node.js 22.12+");
+    expect(curlCalls()).toBe("");
+  });
+});
+
+describe.skipIf(!SHA256SUM_AVAILABLE)("install.sh rollback copy", () => {
+  const customDir = () => join(sandbox.root, "custom");
+  const installDir = () => join(customDir(), "agemon");
+  const previousDir = () => `${installDir()}.prev`;
+
+  it("keeps the replaced install as .prev", () => {
+    createMarkedInstall(installDir());
+
+    const result = runInstaller({ AGEMON_INSTALL_DIR: installDir() });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(installedVersion(installDir())).toBe(RELEASE_VERSION);
+    expect(installedVersion(previousDir())).toBe(PREVIOUS_VERSION);
+    expect(result.stdout).toContain(
+      `Kept the previous install at ${previousDir()}`,
+    );
+  });
+
+  it("replaces an older rollback copy the installer made", () => {
+    createMarkedInstall(installDir());
+    createMarkedInstall(previousDir(), "8.0.0");
+
+    const result = runInstaller({ AGEMON_INSTALL_DIR: installDir() });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(installedVersion(previousDir())).toBe(PREVIOUS_VERSION);
+    expect(readdirSync(customDir()).sort()).toEqual(["agemon", "agemon.prev"]);
+  });
+
+  it("leaves a .prev it did not create alone and says so", () => {
+    createMarkedInstall(installDir());
+    mkdirSync(previousDir(), { recursive: true });
+    writeFileSync(join(previousDir(), "notes.txt"), "mine");
+
+    const result = runInstaller({ AGEMON_INSTALL_DIR: installDir() });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readdirSync(previousDir())).toEqual(["notes.txt"]);
+    expect(result.stdout).toContain("Kept no rollback copy");
+    expect(readdirSync(customDir()).sort()).toEqual(["agemon", "agemon.prev"]);
+  });
+
+  it("leaves a symlinked .prev alone", () => {
+    createMarkedInstall(installDir());
+    const target = join(sandbox.root, "elsewhere");
+    createMarkedInstall(target, "8.0.0");
+    symlinkSync(target, previousDir());
+
+    const result = runInstaller({ AGEMON_INSTALL_DIR: installDir() });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(installedVersion(target)).toBe("8.0.0");
+    expect(result.stdout).toContain("Kept no rollback copy");
+  });
+
+  it("keeps no rollback copy on a first install or over an empty directory", () => {
+    mkdirSync(installDir(), { recursive: true });
+
+    const result = runInstaller({ AGEMON_INSTALL_DIR: installDir() });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(previousDir())).toBe(false);
+    expect(readdirSync(customDir())).toEqual(["agemon"]);
   });
 });

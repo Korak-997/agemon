@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  agemonSubprocessEnvironment,
   DEFAULT_SUBPROCESS_TIMEOUT_MS,
   MAX_CAPTURED_CHARACTERS_PER_STREAM,
   runSubprocess,
@@ -15,6 +16,7 @@ const LONE_SURROGATE = /\p{Cs}/u;
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
@@ -143,4 +145,70 @@ describe("runSubprocess", () => {
     },
     GRANDCHILD_TEST_TIMEOUT_MS,
   );
+});
+
+describe("agemonSubprocessEnvironment", () => {
+  const NPM_LAUNCH_VARIABLES = [
+    ["npm_command", "exec"],
+    ["npm_execpath", "/usr/lib/node_modules/npm/bin/npm-cli.js"],
+    ["npm_config_user_agent", "pnpm/9.0.0 npm/? node/v22.12.0 linux x64"],
+  ] as const;
+
+  it("drops empty and relative PATH entries in every launch mode", () => {
+    const environment = agemonSubprocessEnvironment({
+      PATH: "/usr/bin::.:bin:/home/u/.local/bin:",
+    });
+
+    expect(environment.PATH).toBe("/usr/bin:/home/u/.local/bin");
+  });
+
+  it("keeps a user's own npm config when npm did not launch agemon", () => {
+    const environment = agemonSubprocessEnvironment({
+      PATH: "/usr/bin:/home/u/project/node_modules/.bin",
+      NPM_CONFIG_PREFIX: "/home/u/.npm-global",
+      npm_config_cafile: "/etc/ssl/corp.pem",
+    });
+
+    expect(environment).toEqual({
+      PATH: "/usr/bin:/home/u/project/node_modules/.bin",
+      NPM_CONFIG_PREFIX: "/home/u/.npm-global",
+      npm_config_cafile: "/etc/ssl/corp.pem",
+    });
+  });
+
+  it.each(NPM_LAUNCH_VARIABLES)(
+    "drops npm's injected variables and bin dirs when %s shows an npm launch",
+    (name, value) => {
+      const environment = agemonSubprocessEnvironment({
+        [name]: value,
+        PATH: "/repo/node_modules/.bin:/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin:/usr/bin",
+        npm_config_registry: "https://evil.example/",
+        NPM_CONFIG_USERCONFIG: "/repo/.npmrc",
+        npm_package_name: "hostile",
+        npm_lifecycle_event: "postinstall",
+        INIT_CWD: "/repo",
+        NODE: "/usr/bin/node",
+        HOME: "/home/u",
+        NODE_OPTIONS: "--max-old-space-size=4096",
+      });
+
+      expect(environment).toEqual({
+        PATH: "/usr/bin",
+        HOME: "/home/u",
+        NODE_OPTIONS: "--max-old-space-size=4096",
+      });
+    },
+  );
+
+  it("is the base environment every child process gets", async () => {
+    vi.stubEnv("npm_command", "exec");
+    vi.stubEnv("npm_config_registry", "https://evil.example/");
+
+    const result = await runSubprocess("sh", [
+      "-c",
+      "printenv npm_config_registry || echo unset",
+    ]);
+
+    expect(result.stdout.trim()).toBe("unset");
+  });
 });

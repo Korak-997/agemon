@@ -1,5 +1,12 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import {
+  copyFile,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { join } from "node:path";
 import type { Context, SubprocessResult } from "../../core/context.js";
 import { sha256Hex } from "../../core/fingerprint.js";
@@ -58,6 +65,18 @@ async function promoteStagingDirectory(
   await renameUnlessAnotherRunWon(stagingDirectory, toolsDirectory);
 }
 
+const ABANDONED_TOOLS_DIRECTORY_PATTERN = /^[0-9a-f]{16}\.tmp-[^/]+$/;
+
+async function removeAbandonedToolsDirectories(
+  toolsRoot: string,
+): Promise<void> {
+  for (const entry of await readdir(toolsRoot)) {
+    if (ABANDONED_TOOLS_DIRECTORY_PATTERN.test(entry)) {
+      await rm(join(toolsRoot, entry), { recursive: true, force: true });
+    }
+  }
+}
+
 async function installToolsDirectory(
   ctx: SkillsCliContext,
   toolsRoot: string,
@@ -65,6 +84,7 @@ async function installToolsDirectory(
   toolsDirectory: string,
   cliPath: string,
 ): Promise<void> {
+  await removeAbandonedToolsDirectories(toolsRoot);
   const stagingDirectory = await mkdtemp(`${toolsDirectory}.tmp-`);
   try {
     for (const fileName of TOOLS_MANIFEST_FILES) {

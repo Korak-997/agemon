@@ -26,6 +26,16 @@ Context is created in `src/core/context.ts` and includes:
 - `run`: subprocess runner abstraction (`src/core/subprocess-runner.ts`). Calls without
   `timeoutMs` time out after 5 minutes; each output stream is capped at 10 Mi characters
   and marked `…[truncated]` beyond that.
+  Every child gets `agemonSubprocessEnvironment()` as its base environment, and so do the
+  two direct `execFile` calls (`inspect`'s `git ls-files` and the self-update's
+  `sh install.sh`). That function always drops empty and relative `PATH` entries, which
+  would make a bare `git` resolve inside the repository. When npm, pnpm, yarn or bun
+  launched agemon (`npm_command`, `npm_execpath` or `npm_config_user_agent` is set), it
+  also drops every `npm_*` variable (any case), `INIT_CWD`, `NODE`, and the
+  `node_modules/.bin` and `node-gyp-bin` entries on `PATH`. That is the repository's npm
+  configuration and bins, injected by the launcher. Every `npm` call agemon makes passes
+  `--global` or `--prefix`, so npm never reads a `.npmrc` from the repository it runs in;
+  the fake subprocess backend throws on any `npm` call without one of them.
 - `manifest`: `.agemon/state.json` handler.
 - `serviceManager`: platform-specific daemon manager.
 - `confirm`: shared mid-run confirmation policy (`src/core/prompt.ts`) — resolves `true`
@@ -66,7 +76,20 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
   `<state>/agemon/tools/code-review-graph-constraints-<hash>.txt`, a path pipx records:
   `pipx reinstall` and `pipx upgrade-all` reuse it (and fail closed if the file was
   deleted; running agemon again recreates it). `pipx upgrade code-review-graph` drops the
-  lock. pipx itself still installs its shared `pip` from PyPI without hashes.
+  lock. When pipx creates its shared venv, and on each 30-day refresh, it installs pip
+  without hashes from the configured package index; the hash-locked crg install holds
+  only if that pip is genuine (owner decision D11: a uv-based install, planned after
+  P11).
+- Reports whether the found install is hash-locked: `main_package.pip_args` must be
+  exactly `--require-hashes`, `--only-binary=:all:`, `-c` and a
+  `code-review-graph-constraints-<16 hex>.txt` directly in `<state>/agemon/tools/`. For
+  an install agemon made (repo ledger `installed-binary`, or a shared-tools record of
+  origin `installed`/`migrated`) that fails this, `verify` passes with an **attention**
+  note that names the reinstall (`pipx uninstall code-review-graph`, then agemon; a
+  PATH-only copy is told to remove it instead). `status` reports it as needing
+  attention and exits 2; `apply` prints it and goes on. An adopted crg only gets
+  "dependencies not hash-locked" in its detail. `pipx inject` adds packages without
+  changing `pip_args`, which this check cannot see.
 - Finds the installed binary by reading pipx's `pipx_metadata.json` (no pipx subprocess),
   falling back to `code-review-graph` on `PATH` outside the repository.
 - Builds the graph with `<binary> build` and verifies with `<binary> status`, with
@@ -135,17 +158,33 @@ Current bundle (`src/plugins/skills/catalog.ts`):
 
 ### `cli-tool`
 
-- Detects tool binaries via `--version` checks.
-- Installs missing tools globally through npm, at the pinned version and with
-  `--ignore-scripts`.
-- Installs each tool's binary through `ctx.verifiedBinaryInstaller`
-  (`src/core/verified-binary-installer.ts`): it downloads the release archive for the
+- Detects tool binaries via `--version` checks. For an agnix agemon installed (repo
+  ledger `installed-cli-tool`, or a shared-tools record of origin `installed`/`migrated`)
+  it first inspects the installed files, at most once per run: a missing package is
+  absent (the install is planned again), and a package that differs from the pins is
+  not run at all.
+- Installs everything through `ctx.verifiedBinaryInstaller`
+  (`src/core/verified-binary-installer.ts`). It downloads the npm tarball from the fixed
+  registry URL in `AGNIX_NPM_TARBALL`, checks its sha512 (`dist.integrity`) in memory,
+  writes it into a private `mkdtemp` dir and runs
+  `npm install --global --ignore-scripts --no-audit --no-fund --no-update-notifier
+  <tarball>` there, so npm links only the `bin` entries of the verified `package.json`
+  and fetches nothing else (agnix has no dependencies). Then it downloads the release archive for the
   platform (30 s timeout, 50 MiB cap) and checks it against the sha256 pinned in
   `src/plugins/pins.ts` before anything touches it. It then extracts the one named member
   inside the package dir, runs `--version` on it, and renames it into place. If the gnu
   build does not run on linux-x64, the musl build is tried. On any failure, the npm package
   is uninstalled and nothing is recorded.
-- Under `AGEMON_FAKE_SUBPROCESS=1`, the installer is a fake that only records the request.
+- `inspect` hashes `package.json`, `bin/agnix` and `bin/agnix-binary` (streamed,
+  `O_NOFOLLOW`, regular files only, 50 MiB cap) against `AGNIX_PACKAGE_FILE_SHA256` and
+  `AGNIX_BINARY_SHA256`, refuses a symlinked package or `bin` dir, and checks that
+  `agnix` on the cleaned PATH resolves to that package's `bin/agnix`. Any read error is
+  reported as a difference. For an agemon-installed agnix that differs, `verify` passes
+  with an attention note naming the reinstall (`npm uninstall --global agnix`, then
+  agemon). An adopted agnix only gets "not the pinned … build" in its detail.
+- Under `AGEMON_FAKE_SUBPROCESS=1`, the installer is a fake that records the request and
+  marks the fake global package installed; its `inspect` reports that package as pinned.
+  The fake npm refuses any `npm install --global <name>`.
 - Before `npm install --global`, it runs `npm root --global` and refuses to install when
   a global `agnix` entry already exists there (the binary is then just off your PATH or
   broken), so it never overwrites or uninstalls a user's own copy.
@@ -155,8 +194,9 @@ Current bundle (`src/plugins/skills/catalog.ts`):
 
 Current bundle (`src/plugins/cli-tool/catalog.ts`):
 
-- `agnix` (`npm install --global --ignore-scripts agnix@<pin>`, then the verified binary
-  at `<npm root>/agnix/bin/agnix-binary`; linux-x64 and linux-arm64)
+- `agnix` (the sha512-verified `agnix-<pin>.tgz` installed by `npm install --global
+  --ignore-scripts`, then the verified binary at `<npm root>/agnix/bin/agnix-binary`;
+  linux-x64 and linux-arm64)
 
 ### `master-prompt`
 
@@ -235,6 +275,44 @@ input:
   and bidi characters (real paths can), but no other control character. A ledger that
   fails names the entry and field. agemon never writes such an entry, so the fix is to
   restore `.agemon/state.json` from git or remove that entry.
+
+## Self-Uninstall
+
+`src/core/self-uninstall.ts`, behind `agemon self-uninstall [--dry-run] [--yes]`:
+
+- Refuses root with another user's environment, an install dir without a regular
+  `.agemon-install` (or without `package.json` named `agemon` and `bin/agemon.js`), and a
+  protected dir: the same list `install.sh` refuses (a test keeps both in sync), or any
+  dir that contains a home directory.
+- Plans everything before deleting anything: each target must be owned by the effective
+  uid and sit in a writable parent, or nothing is removed and every reason is listed.
+- Targets, in removal order: the `~/.local/bin/agemon` and `/usr/local/bin/agemon`
+  links, only when they resolve to `<install dir>/bin/agemon.js`; `<install dir>.prev`,
+  only when it is a marker'd install tree; the machine state dir; the update-check cache
+  dir (only a private dir of this user under an absolute `XDG_CACHE_HOME` or
+  `~/.cache`, holding nothing but `update-check.json`, which is deleted before the dir);
+  and the install dir last.
+- A recoverable interrupted apply (any file under `journals/`) refuses the whole
+  uninstall, so `agemon recover` still exists to run.
+- The machine state dir (from `resolveAgemonStateDirectory("check")`, so a symlinked or
+  foreign dir is refused, not followed) is removed only when no shared tool in
+  `machine.json` has a live holder, no `runs/*.lock` is held (each is try-acquired with
+  no wait), and it holds only entries agemon creates (`machine.json`, `tools/`,
+  `skills-src/`, `journals/`, `runs/` and their locks). A read error other than "missing"
+  keeps it. This is checked again under `machine.lock`
+  right before everything but the lock file is deleted; the dir itself is removed after
+  the lock is released, and kept if anything reappeared.
+- Shared tools whose holders are all gone get their manual uninstall command printed
+  (`installed`, and `migrated` as "may have been installed by an older agemon").
+- A partial failure lists every path still present and exits 1.
+- Accepted window: a repository run that starts after the last run-lock probe and before
+  the deletion loses its lock file and journal; its own `assertStillHeld` then stops it.
+  The run-lock probe also holds each run lock for a moment, so a repository run that
+  starts at that instant fails at once (run locks never wait) and can simply be re-run.
+
+The skills plugin's tools install (under `tools.lock`) first removes
+`<16-hex-hash>.tmp-*` siblings left in `tools/` by a killed install, and nothing else in
+that directory.
 
 ## Two Ledgers
 
@@ -343,6 +421,23 @@ Key behavior:
 - Non-interactive/`NO_COLOR`: plain line output.
 - Commander supports `--no-color`, `--verbose`, `--quiet` flags.
 
+## Install Methods
+
+`src/core/install-method.ts` `resolveInstallMethod()` decides how the running copy was
+installed, from the realpath of the nearest `package.json` named `agemon` above the
+running module (`resolvePackageRoot()`; the CLI also reads its version from there):
+
+1. `dev` — `AGEMON_DEV=1`, or the package root has `.git` or `src/` (a source checkout).
+2. `install-script` — the package root holds a regular `.agemon-install` file, which
+   `install.sh` writes (its content is the installed version).
+3. `npx` — the package root is under npm's exec cache (a `_npx` path segment).
+4. `npm-global` — the package root is `<npm root --global>/agemon` (both realpathed)
+   and that root is `<prefix>/lib/node_modules`. `npm root --global` runs only for a
+   package root directly inside a `node_modules` dir, through the shared
+   `src/core/npm-global.ts` `resolveGlobalNpmRoot` (absolute, normalised, existing).
+5. `unknown` — anything else, for example a project-local `npm install agemon`, Volta,
+   or `pnpm dlx` / `bun x`.
+
 ## Update Checking
 
 `src/core/update-check.ts`, invoked at the top of both `install` and `nuke` action
@@ -350,21 +445,52 @@ handlers in `src/cli/index.ts`:
 
 - Skipped entirely when `--dry-run`, `AGEMON_DEV=1`, or `AGEMON_NO_UPDATE_CHECK=1`.
 - Queries `GET /repos/Korak-997/agemon/releases/latest` (GitHub API), cached in
-  `$XDG_CACHE_HOME/agemon/update-check.json` (or `~/.cache/...`) for 24h to avoid a
+  `$XDG_CACHE_HOME/agemon/update-check.json` (only an absolute `XDG_CACHE_HOME`; otherwise `~/.cache/...`) for 24h to avoid a
   network round-trip on every invocation and avoid rate-limiting.
 - Network/cache failures are swallowed silently — never blocks the actual command.
 - Non-interactive stdin/stdout (CI, piped output): prints a one-line notice only, never
   prompts.
-- Interactive TTY with a newer version available: prompts to update; on yes, downloads
-  `install.sh` and `SHA256SUMS` from that exact release (`releases/download/vX.Y.Z/`),
-  writes the script to a private temp directory, re-hashes the file on disk, and runs it
-  with `sh <path>` (no shell string, no pipe) and `AGEMON_VERSION` set, only when the hash
-  matches. The installer then verifies the tarball's checksum itself; build-provenance
-  attestations are checked only when `AGEMON_VERIFY_ATTESTATION=1` is exported, because the
-  updater passes its environment through. The CLI returns `updated` so the
-  caller stops instead of proceeding with code that was just replaced on disk.
+- Versions compare by release precedence (`compareReleaseVersions` in
+  `src/core/github-release.ts`): a prerelease sorts below its release, and
+  `alpha < beta < rc`.
+- Interactive TTY with a newer version, for an `install-script` or `npm-global` copy
+  (`resolveInstallMethod`, called only once a newer version is known): prompts to update;
+  on yes it calls `installRelease` from `src/core/self-upgrade.ts`, the same path
+  `agemon upgrade` uses. The prompt runs only after the command has finished, so no
+  code runs after the copy on disk is replaced. Other methods, and root running with
+  another user's environment, get a one-line hint instead.
 - The tag from the API and the cached version must look like a release version
   (`X.Y.Z` with an optional `-alpha.N`/`-beta.N`/`-rc.N`); anything else is ignored.
+
+## Self-Upgrade
+
+`src/core/self-upgrade.ts`, behind `agemon upgrade [version]` and the update prompt:
+
+- `installRelease` first refuses root with another user's environment
+  (`HOME` not root's passwd home, or `XDG_STATE_HOME`/`XDG_CACHE_HOME` set) and an install
+  whose owner is not the effective uid, or which (or whose parent) is not writable
+  (`src/core/install-location.ts`).
+- `install-script`: downloads `install.sh` and `SHA256SUMS` from the newer of the target
+  and the latest release, writes the script to a private temp directory, re-hashes the
+  file on disk, and runs `sh <path>` (no shell string, no pipe) with the cleaned
+  subprocess environment, `AGEMON_VERSION=<target>`, any inherited `AGEMON_INSTALL_DIR`
+  removed, and `AGEMON_INSTALL_DIR=<install dir>` only when the install dir is not the
+  default for this uid (compared by realpath). The installer verifies the tarball itself
+  and honours `AGEMON_VERIFY_ATTESTATION=1`.
+- `npm-global`: downloads the target's `agemon.tgz` (20 MiB limit) and `SHA256SUMS`
+  (1 MiB), checks the hash, runs `gh attestation verify` when
+  `AGEMON_VERIFY_ATTESTATION=1`, then
+  `npm install --global --ignore-scripts --prefix <prefix> <tarball>` and checks that
+  `<prefix>/bin/agemon --version` reports the target.
+- `--rollback` (install-script only) checks that `<install dir>.prev` is a real directory
+  with a regular `.agemon-install`, a `package.json` named `agemon` and
+  `bin/agemon.js`, and that it runs and reports the version its marker names. It then
+  swaps the two directories with three renames in the same parent. A failed second rename
+  puts the current install back. The swap is the last thing the process does, so no
+  module of the other version is loaded.
+- `install.sh` moves the replaced install to `<install dir>.prev` after a successful swap,
+  but only when the replaced dir carries the marker. It replaces an existing `.prev` only
+  when that is also a real, marker'd directory; otherwise it keeps none and says so.
 
 ## Sandbox Harness
 

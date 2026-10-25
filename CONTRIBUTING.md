@@ -50,7 +50,7 @@ Use `--real` only when you intentionally want to exercise host-coupled tooling.
 
 ## Code Style
 
-- Node.js `>=24`
+- Node.js `>=22.12`
 - TypeScript + ESM
 - Biome for formatting and linting
 

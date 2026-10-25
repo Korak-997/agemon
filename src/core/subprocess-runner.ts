@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { isAbsolute } from "node:path";
+import { printable } from "./untrusted-text.js";
 
 export interface SubprocessResult {
   code: number;
@@ -11,6 +13,69 @@ export interface RunSubprocessOptions {
   killSignal?: NodeJS.Signals;
   cwd?: string;
   env?: Record<string, string>;
+}
+
+export function describeSubprocessFailure(
+  result: SubprocessResult,
+  command: string,
+): string {
+  return printable(result.stderr.trim()) || `${command} exited ${result.code}`;
+}
+
+const NPM_LAUNCH_MARKERS = [
+  "npm_command",
+  "npm_execpath",
+  "npm_config_user_agent",
+];
+const NPM_INJECTED_VARIABLES = ["init_cwd", "node"];
+const NPM_INJECTED_PATH_SUFFIXES = ["/node_modules/.bin", "/node-gyp-bin"];
+
+function wasLaunchedByNpm(names: string[]): boolean {
+  return names.some((name) => NPM_LAUNCH_MARKERS.includes(name.toLowerCase()));
+}
+
+function isNpmInjectedVariable(name: string): boolean {
+  const lowerCaseName = name.toLowerCase();
+  return (
+    lowerCaseName.startsWith("npm_") ||
+    NPM_INJECTED_VARIABLES.includes(lowerCaseName)
+  );
+}
+
+function keepSearchPathEntries(
+  searchPath: string,
+  launchedByNpm: boolean,
+): string {
+  return searchPath
+    .split(":")
+    .filter(
+      (entry) =>
+        isAbsolute(entry) &&
+        !(
+          launchedByNpm &&
+          NPM_INJECTED_PATH_SUFFIXES.some((suffix) =>
+            entry.replace(/\/+$/, "").endsWith(suffix),
+          )
+        ),
+    )
+    .join(":");
+}
+
+export function agemonSubprocessEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const names = Object.keys(environment);
+  const launchedByNpm = wasLaunchedByNpm(names);
+  const kept: Record<string, string> = {};
+  for (const name of names) {
+    const value = environment[name];
+    if (value === undefined || (launchedByNpm && isNpmInjectedVariable(name))) {
+      continue;
+    }
+    kept[name] =
+      name === "PATH" ? keepSearchPathEntries(value, launchedByNpm) : value;
+  }
+  return kept;
 }
 
 export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 300_000;
@@ -134,7 +199,7 @@ export async function runSubprocess(
 
     const childProcess = spawn(command, args, {
       cwd: options.cwd ?? process.cwd(),
-      env: options.env ? { ...process.env, ...options.env } : process.env,
+      env: { ...agemonSubprocessEnvironment(), ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

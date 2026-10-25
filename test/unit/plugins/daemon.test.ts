@@ -217,7 +217,10 @@ async function createTestContext(options: {
     run: createRun(calls),
     manifest: await StateManifest.load(options.cwd),
     serviceManager: options.serviceManager,
-    verifiedBinaryInstaller: { install: async () => {} },
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
   };
   return { ctx, calls, infos };
 }

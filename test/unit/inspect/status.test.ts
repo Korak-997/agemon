@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { writeJournal } from "../../../src/core/apply-journal.js";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
@@ -28,6 +28,7 @@ import { renderStatusReport } from "../../../src/ui/status-view.js";
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
@@ -84,7 +85,10 @@ async function createStatusContext(): Promise<Context> {
     run: async () => ({ code: 0, stdout: "", stderr: "" }),
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
-    verifiedBinaryInstaller: { install: async () => {} },
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
   };
 }
 
@@ -233,8 +237,53 @@ describe("status", () => {
     expect(report.capabilities[0].health).toEqual({
       ok: false,
       detail: "unit is not active",
+      attention: null,
     });
     expect(report.healthy).toBe(false);
+  });
+
+  it("reports a working capability that needs attention as unhealthy, with its warning", async () => {
+    const context = await createStatusContext();
+    const flaggedTool: AgemonPlugin = {
+      id: "cli-tool",
+      async detect() {
+        return { present: true, preExisting: false };
+      },
+      async describeState() {
+        return [
+          {
+            capabilityId: "cli-tool",
+            resourceId: "package:agnix",
+            label: "agnix",
+            state: "present-managed" as const,
+            detail: "installed via npm (agnix 0.41.0)",
+          },
+        ];
+      },
+      async install() {},
+      async verify() {
+        return {
+          ok: true,
+          detail: "1 CLI tool bundle entries present",
+          attention: "agnix is not the pinned agnix 0.58.0 build",
+        };
+      },
+      async uninstall() {},
+    };
+    await context.manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-cli-tool",
+      target: "agnix",
+      preExisting: false,
+    });
+
+    const report = await buildStatusReport(context, [flaggedTool]);
+
+    expect(report.healthy).toBe(false);
+    expect(renderStatusReport(report)).toContain(
+      "agnix is not the pinned agnix 0.58.0 build",
+    );
+    expect(renderStatusReport(report)).toContain("needs attention");
   });
 
   it("does not report agemon's own pointer files as duplication", async () => {
@@ -399,6 +448,26 @@ describe("discoverRepository git tracking check", () => {
     const hook = join(context.cwd, "hook.sh");
     await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
     git(context.cwd, ["config", "core.fsmonitor", hook]);
+
+    const discovery = await discoverRepository(context);
+
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(discovery.isolation.trackingCheckError).toBeNull();
+  });
+
+  it("never runs a git planted in the repository's node_modules/.bin when npm launched agemon", async () => {
+    const context = await createStatusContext();
+    git(context.cwd, ["init", "-q"]);
+    const plantedBin = join(context.cwd, "node_modules", ".bin");
+    const marker = join(context.cwd, "planted-git-ran");
+    await mkdir(plantedBin, { recursive: true });
+    await writeFile(join(plantedBin, "git"), `#!/bin/sh\ntouch '${marker}'\n`, {
+      mode: 0o755,
+    });
+    vi.stubEnv("npm_command", "exec");
+    vi.stubEnv("PATH", `${plantedBin}:${process.env.PATH}`);
 
     const discovery = await discoverRepository(context);
 

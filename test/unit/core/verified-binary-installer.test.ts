@@ -8,11 +8,12 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type RunSubprocessOptions,
   runSubprocess,
@@ -29,6 +30,12 @@ const PACKAGE_VERSION = "0.58.0";
 const BINARY_PATH_IN_PACKAGE = join("bin", "agnix-binary");
 const RUNNING_BINARY = "#!/bin/sh\necho 'agnix fixture'\n";
 const FAILING_BINARY = "#!/bin/sh\nexit 1\n";
+const TARBALL_URL = "https://registry.npmjs.org/agnix/-/agnix-0.58.0.tgz";
+const TARBALL = Buffer.from("agnix tarball bytes");
+
+function npmIntegrity(contents: Buffer): string {
+  return `sha512-${createHash("sha512").update(contents).digest("base64")}`;
+}
 
 let workDirectory: string;
 let npmRoot: string;
@@ -91,14 +98,24 @@ function createRunner(
     if (command === "npm" && args.join(" ") === "root --global") {
       return npmRootResult;
     }
+    if (command === "npm" && args[0] === "install") {
+      return { code: 0, stdout: "", stderr: "" };
+    }
     return runSubprocess(command, args, options);
   };
   return { run, calls };
 }
 
+function withTarball(fetchArchive: typeof fetch): typeof fetch {
+  return async (input, init) =>
+    String(input) === TARBALL_URL
+      ? new Response(TARBALL)
+      : fetchArchive(input, init);
+}
+
 function fetchServing(archivesByUrl: Record<string, Buffer>): typeof fetch {
   return async (input) => {
-    const archive = archivesByUrl[String(input)];
+    const archive = { [TARBALL_URL]: TARBALL, ...archivesByUrl }[String(input)];
     if (!archive) {
       return new Response("not found", { status: 404 });
     }
@@ -115,6 +132,7 @@ function requestFor(
     binaryPathInPackage: BINARY_PATH_IN_PACKAGE,
     archiveMemberName: "agnix",
     candidates,
+    packageTarball: { url: TARBALL_URL, integrity: npmIntegrity(TARBALL) },
   };
 }
 
@@ -291,7 +309,7 @@ describe("createVerifiedBinaryInstaller", () => {
     });
     const installer = createVerifiedBinaryInstaller({
       run: createRunner().run,
-      fetch: async () => new Response(endlessArchive),
+      fetch: withTarball(async () => new Response(endlessArchive)),
     });
 
     await expect(
@@ -315,7 +333,7 @@ describe("createVerifiedBinaryInstaller", () => {
     });
     const installer = createVerifiedBinaryInstaller({
       run: createRunner().run,
-      fetch: async () => new Response(droppingArchive),
+      fetch: withTarball(async () => new Response(droppingArchive)),
     });
 
     await expect(
@@ -356,14 +374,14 @@ describe("createVerifiedBinaryInstaller", () => {
     ).rejects.toThrow("does not hold an npm-installed package");
   });
 
-  it("fails before downloading when npm root --global fails", async () => {
+  it("fails before downloading the binary archive when npm root --global fails", async () => {
     let fetched = false;
     const installer = createVerifiedBinaryInstaller({
       run: createRunner({ code: 1, stdout: "", stderr: "npm is broken" }).run,
-      fetch: async () => {
+      fetch: withTarball(async () => {
         fetched = true;
         return new Response("");
-      },
+      }),
     });
 
     await expect(
@@ -399,5 +417,189 @@ describe("createVerifiedBinaryInstaller", () => {
         requestFor([{ url: "https://example.test/a", sha256: "0".repeat(64) }]),
       ),
     ).rejects.toThrow("holds agnix 0.59.3, expected 0.58.0");
+  });
+});
+
+describe("createVerifiedBinaryInstaller npm tarball", () => {
+  it("installs agnix from the sha512-verified tarball by path, never by name", async () => {
+    const archive = await buildFixtureArchive(RUNNING_BINARY);
+    const { run, calls } = createRunner();
+    const installer = createVerifiedBinaryInstaller({
+      run,
+      fetch: fetchServing({ "https://example.test/a.tgz": archive }),
+    });
+
+    await installer.install(
+      requestFor([
+        { url: "https://example.test/a.tgz", sha256: sha256(archive) },
+      ]),
+    );
+
+    const npmInstall = calls.find(
+      ([command, args]) => command === "npm" && args[0] === "install",
+    );
+    expect(npmInstall?.[1].slice(0, 6)).toEqual([
+      "install",
+      "--global",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--no-update-notifier",
+    ]);
+    const tarballPath = npmInstall?.[1].at(-1) ?? "";
+    expect(tarballPath).toMatch(/\/agnix-0\.58\.0\.tgz$/);
+    expect(npmInstall?.[2]?.cwd).toBe(join(tarballPath, ".."));
+    expect(existsSync(tarballPath)).toBe(false);
+  });
+
+  it("refuses a tarball whose integrity differs and runs no npm install", async () => {
+    const { run, calls } = createRunner();
+    const installer = createVerifiedBinaryInstaller({
+      run,
+      fetch: fetchServing({ [TARBALL_URL]: Buffer.from("tampered") }),
+    });
+
+    await expect(installer.install(requestFor([]))).rejects.toThrow(
+      /does not match its pinned sha512; nothing was installed/,
+    );
+    expect(
+      calls.some(
+        ([command, args]) => command === "npm" && args[0] === "install",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("createVerifiedBinaryInstaller inspect", () => {
+  const WRAPPER = "#!/usr/bin/env node\n// wrapper\n";
+  let binaryContents: Buffer;
+  let pathDirectory: string;
+
+  function inspectRequest(overrides: { binarySha256?: string[] } = {}) {
+    return {
+      packageName: PACKAGE_NAME,
+      commandName: "agnix",
+      commandPathInPackage: join("bin", "agnix"),
+      binaryPathInPackage: BINARY_PATH_IN_PACKAGE,
+      packageFileSha256: {
+        "package.json": sha256(
+          Buffer.from(
+            JSON.stringify({ name: PACKAGE_NAME, version: PACKAGE_VERSION }),
+          ),
+        ),
+        "bin/agnix": sha256(Buffer.from(WRAPPER)),
+      },
+      binarySha256: overrides.binarySha256 ?? [sha256(binaryContents)],
+    };
+  }
+
+  beforeEach(async () => {
+    binaryContents = Buffer.alloc(9 * 1024 * 1024, 0x41);
+    await writeFile(join(packageDirectory, "bin", "agnix"), WRAPPER, {
+      mode: 0o755,
+    });
+    await writeFile(
+      join(packageDirectory, BINARY_PATH_IN_PACKAGE),
+      binaryContents,
+      {
+        mode: 0o755,
+      },
+    );
+    pathDirectory = join(workDirectory, "path-bin");
+    await mkdir(pathDirectory);
+    await symlink(
+      join(packageDirectory, "bin", "agnix"),
+      join(pathDirectory, "agnix"),
+    );
+    vi.stubEnv("PATH", pathDirectory);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function inspect(overrides: Parameters<typeof inspectRequest>[0] = {}) {
+    return createVerifiedBinaryInstaller({ run: createRunner().run }).inspect(
+      inspectRequest(overrides),
+    );
+  }
+
+  it("finds a pinned install, hashing a binary larger than 8 MiB", async () => {
+    await expect(inspect()).resolves.toEqual({
+      kind: "installed",
+      version: PACKAGE_VERSION,
+      differences: [],
+    });
+  });
+
+  it("reports a binary that is not a pinned build", async () => {
+    const inspection = await inspect({ binarySha256: ["0".repeat(64)] });
+
+    expect(inspection).toMatchObject({
+      differences: [`${BINARY_PATH_IN_PACKAGE} is not a pinned build`],
+    });
+  });
+
+  it("reports a differing package.json", async () => {
+    await writePackageManifest("0.58.0-evil");
+
+    expect(await inspect()).toMatchObject({
+      version: "0.58.0-evil",
+      differences: ["package.json differs"],
+    });
+  });
+
+  it("reports a symlinked bin/agnix as unreadable", async () => {
+    const elsewhere = join(workDirectory, "wrapper-elsewhere");
+    await writeFile(elsewhere, WRAPPER);
+    await rm(join(packageDirectory, "bin", "agnix"));
+    await symlink(elsewhere, join(packageDirectory, "bin", "agnix"));
+
+    const inspection = await inspect();
+
+    expect(
+      inspection.kind === "installed" && inspection.differences[0],
+    ).toMatch(/^bin\/agnix unreadable/);
+  });
+
+  it("reports a symlinked package directory", async () => {
+    const realPackage = join(workDirectory, "real-agnix");
+    const { rename } = await import("node:fs/promises");
+    await rename(packageDirectory, realPackage);
+    await symlink(realPackage, packageDirectory);
+
+    const inspection = await inspect();
+
+    expect(inspection.kind === "installed" && inspection.differences).toContain(
+      `${packageDirectory} is not a real directory`,
+    );
+  });
+
+  it("reports an agnix on PATH that is not the npm copy", async () => {
+    await rm(join(pathDirectory, "agnix"));
+    await writeFile(join(pathDirectory, "agnix"), WRAPPER, { mode: 0o755 });
+
+    expect(await inspect()).toMatchObject({
+      differences: [`agnix on PATH is not the npm copy at ${packageDirectory}`],
+    });
+  });
+
+  it("reports an absent package", async () => {
+    await rm(packageDirectory, { recursive: true });
+
+    await expect(inspect()).resolves.toEqual({ kind: "absent" });
+  });
+
+  it("reports a failing npm root as a difference instead of throwing", async () => {
+    const installer = createVerifiedBinaryInstaller({
+      run: createRunner({ code: 1, stdout: "", stderr: "npm broke" }).run,
+    });
+
+    await expect(installer.inspect(inspectRequest())).resolves.toMatchObject({
+      kind: "installed",
+      differences: [
+        expect.stringContaining("could not locate the global npm root"),
+      ],
+    });
   });
 });

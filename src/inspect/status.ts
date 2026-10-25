@@ -37,6 +37,7 @@ export interface ManagedResourceStatus {
 export interface CapabilityHealth {
   ok: boolean;
   detail: string;
+  attention: string | null;
 }
 
 export interface CapabilityStatusRow extends CapabilityStateRow {
@@ -273,7 +274,10 @@ export async function buildStatusReport(
       (resource) => resource.health === "managed-current",
     ) &&
     duplication.length === 0 &&
-    capabilities.every((row) => row.health === null || row.health.ok) &&
+    capabilities.every(
+      (row) =>
+        row.health === null || (row.health.ok && row.health.attention === null),
+    ) &&
     trackedAgemonPaths.length === 0 &&
     interruptedApply === null;
 
@@ -317,6 +321,7 @@ async function buildCapabilityStatusRows(
         ok: verification.ok,
         detail:
           verification.detail ?? (verification.ok ? "healthy" : "unhealthy"),
+        attention: verification.attention ?? null,
       };
     }
     healthByCapability.set(capabilityId, health);

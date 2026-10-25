@@ -10,6 +10,7 @@ export interface PluginPresence {
 export interface PluginVerificationResult {
   ok: boolean;
   detail?: string;
+  attention?: string;
 }
 
 export const RISK_CLASSES = [
