@@ -48,7 +48,8 @@
     "sandbox:roundtrip": "tsx scripts/sandbox.ts roundtrip",
     "sandbox:reset": "tsx scripts/sandbox.ts reset",
     "ui:preview": "tsx scripts/ui-preview.ts",
-    "deploy": "tsx scripts/deploy.ts"
+    "deploy": "tsx scripts/deploy.ts",
+    "check-pins": "tsx scripts/check-pins.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.0",

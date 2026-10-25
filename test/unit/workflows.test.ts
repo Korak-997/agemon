@@ -195,7 +195,27 @@ describe(".github/workflows", () => {
     expect(runsThirdPartyCode(publishJob)).toBe(false);
   });
 
-  it.each(["release.yml", "cut-release.yml"])(
+  it("checks pin freshness read-only, with the token on the check step only", () => {
+    const checkJob = workflows.get("pin-freshness.yml")?.jobs[
+      "check-pins"
+    ] as WorkflowJob;
+    const credentialSteps = (checkJob.steps ?? []).filter((step) =>
+      CREDENTIAL_EXPRESSION_PATTERN.test(JSON.stringify(step)),
+    );
+
+    expect(checkJob.permissions).toEqual({ contents: "read" });
+    expect(
+      stepUsing(checkJob, "actions/checkout")?.with?.["persist-credentials"],
+    ).toBe(false);
+    expect(stepRunning(checkJob, /npm ci/)?.run).toBe(
+      "npm ci --ignore-scripts",
+    );
+    expect(credentialSteps.map((step) => step.run)).toEqual([
+      "npm run check-pins",
+    ]);
+  });
+
+  it.each(["release.yml", "cut-release.yml", "pin-freshness.yml"])(
     "%s restores no dependency cache",
     (file) => {
       const workflow = workflows.get(file) as Workflow;

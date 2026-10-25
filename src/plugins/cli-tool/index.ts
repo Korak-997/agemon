@@ -1,6 +1,8 @@
 import type { Context } from "../../core/context.js";
+import { errorMessage } from "../../core/error-message.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { printable } from "../../core/untrusted-text.js";
+import type { VerifiedArchiveCandidate } from "../../core/verified-binary-installer.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -19,6 +21,28 @@ const ACTION_TYPE_PREEXISTING_CLI_TOOL = "preexisting-cli-tool";
 const VERSION_CHECK_TIMEOUT_MS = 20_000;
 const INSTALL_TIMEOUT_MS = 180_000;
 const UNINSTALL_TIMEOUT_MS = 60_000;
+
+export function resolveVerifiedArchiveCandidates(
+  entry: CliToolBundleEntry,
+  platformKey: string,
+): VerifiedArchiveCandidate[] {
+  const archives = Object.hasOwn(entry.releaseArchivesByPlatform, platformKey)
+    ? entry.releaseArchivesByPlatform[platformKey]
+    : undefined;
+  if (!archives) {
+    throw new Error(
+      `${entry.packageName} has no pinned build for ${platformKey}.`,
+    );
+  }
+  return archives.map(({ asset, sha256 }) => ({
+    url: `${entry.releaseDownloadUrl}/${asset}`,
+    sha256,
+  }));
+}
+
+function pinnedPackageSpec(entry: CliToolBundleEntry): string {
+  return `${entry.packageName}@${entry.version}`;
+}
 
 function getPluginActions(ctx: Context) {
   return ctx.manifest
@@ -146,16 +170,90 @@ async function planCliTools(ctx: Context): Promise<ProposedOperation[]> {
       requiresConsent: true,
       preview: {
         kind: "note",
-        text: `npm install --global ${entry.packageName}`,
+        text: `npm install --global --ignore-scripts ${pinnedPackageSpec(entry)}; binary from the v${entry.version} GitHub release, sha256-pinned`,
       },
     }),
   );
 }
 
+async function uninstallGlobalPackage(
+  ctx: Context,
+  packageName: string,
+): Promise<void> {
+  const uninstallResult = await ctx.run(
+    "npm",
+    ["uninstall", "--global", packageName],
+    {
+      timeoutMs: UNINSTALL_TIMEOUT_MS,
+    },
+  );
+  if (uninstallResult.code !== 0) {
+    throw new Error(
+      uninstallResult.stderr ||
+        `npm global uninstall failed for ${packageName}`,
+    );
+  }
+}
+
+async function removePartlyInstalledPackage(
+  ctx: Context,
+  packageName: string,
+  installError: unknown,
+): Promise<void> {
+  try {
+    await uninstallGlobalPackage(ctx, packageName);
+  } catch (uninstallError) {
+    throw new Error(
+      `${errorMessage(installError)} Removing the partly installed ${packageName} also failed (${errorMessage(uninstallError)}); run: npm uninstall --global ${packageName}`,
+    );
+  }
+}
+
+async function installPinnedCliTool(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<void> {
+  const candidates = resolveVerifiedArchiveCandidates(
+    entry,
+    `${process.platform}-${process.arch}`,
+  );
+  const installResult = await ctx.run(
+    "npm",
+    ["install", "--global", "--ignore-scripts", pinnedPackageSpec(entry)],
+    {
+      timeoutMs: INSTALL_TIMEOUT_MS,
+    },
+  );
+  if (installResult.code !== 0) {
+    throw new Error(
+      installResult.stderr ||
+        `npm global install failed for ${pinnedPackageSpec(entry)}`,
+    );
+  }
+
+  try {
+    await ctx.verifiedBinaryInstaller.install({
+      packageName: entry.packageName,
+      version: entry.version,
+      binaryPathInPackage: entry.binaryPathInPackage,
+      archiveMemberName: entry.archiveMemberName,
+      candidates,
+    });
+  } catch (installError) {
+    await removePartlyInstalledPackage(ctx, entry.packageName, installError);
+    throw new Error(
+      `${errorMessage(installError)} agemon uninstalled the global npm package ${entry.packageName} again, so nothing is left half-installed.`,
+      { cause: installError },
+    );
+  }
+}
+
 async function installCliTools(ctx: Context): Promise<void> {
   if (ctx.dryRun) {
     for (const entry of CLI_TOOL_BUNDLE) {
-      ctx.ui.info(`Would install ${entry.packageName} globally via npm`);
+      ctx.ui.info(
+        `Would install ${pinnedPackageSpec(entry)} globally via npm, with its sha256-pinned binary`,
+      );
     }
     return;
   }
@@ -174,20 +272,7 @@ async function installCliTools(ctx: Context): Promise<void> {
       continue;
     }
 
-    const installResult = await ctx.run(
-      "npm",
-      ["install", "--global", entry.packageName],
-      {
-        timeoutMs: INSTALL_TIMEOUT_MS,
-      },
-    );
-    if (installResult.code !== 0) {
-      throw new Error(
-        installResult.stderr ||
-          `npm global install failed for ${entry.packageName}`,
-      );
-    }
-
+    await installPinnedCliTool(ctx, entry);
     await ctx.manifest.recordAction({
       plugin: PLUGIN_ID,
       type: ACTION_TYPE_INSTALLED_CLI_TOOL,
@@ -258,19 +343,7 @@ async function revertCliTools(
   }
 
   for (const packageName of managedPackageNames) {
-    const uninstallResult = await ctx.run(
-      "npm",
-      ["uninstall", "--global", packageName],
-      {
-        timeoutMs: UNINSTALL_TIMEOUT_MS,
-      },
-    );
-    if (uninstallResult.code !== 0) {
-      throw new Error(
-        uninstallResult.stderr ||
-          `npm global uninstall failed for ${packageName}`,
-      );
-    }
+    await uninstallGlobalPackage(ctx, packageName);
   }
 }
 

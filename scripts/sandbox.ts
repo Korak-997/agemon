@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, rm, watch } from "node:fs/promises";
 import { join } from "node:path";
 import { runCli } from "../src/cli/index.js";
+import { takeFakeVerifiedBinaryInstallRequests } from "../src/core/fake-subprocess.js";
+import { AGNIX_VERSION } from "../src/plugins/pins.js";
 import {
   type DiffLine,
   diffSnapshots,
@@ -236,13 +238,13 @@ function isSkillsToolsCacheFile(line: DiffLine): boolean {
   return line.path.startsWith(SKILLS_TOOLS_CACHE_DIRECTORY);
 }
 
-function skillsPluginRan(flags: RunFlags): boolean {
+function pluginRan(flags: RunFlags, pluginId: string): boolean {
   return (
     !flags.only ||
     flags.only
       .split(",")
-      .map((pluginId) => pluginId.trim())
-      .includes("skills")
+      .map((selectedPluginId) => selectedPluginId.trim())
+      .includes(pluginId)
   );
 }
 
@@ -252,8 +254,9 @@ async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
 
   const beforeInstall = await snapshotTree(runDir);
 
+  takeFakeVerifiedBinaryInstallRequests();
   const install = await invokeAgemon(
-    buildAgemonArgv({ ...flags, dryRun: false }),
+    ["--yes", ...buildAgemonArgv({ ...flags, dryRun: false })],
     repoDir,
     homeDir,
     flags.real,
@@ -264,6 +267,7 @@ async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
       `install exited with code ${install.exitCode}:\n${install.output}`,
     );
   }
+  const verifiedBinaryInstalls = takeFakeVerifiedBinaryInstallRequests();
 
   const nuke = await invokeAgemon(
     buildNukeArgv(flags),
@@ -284,11 +288,23 @@ async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
   console.log(`\nRoundtrip: ${label}`);
   if (
     !flags.real &&
-    skillsPluginRan(flags) &&
+    pluginRan(flags, "skills") &&
     !keptMachineCache.some(isSkillsToolsCacheFile)
   ) {
     throw new Error(
       "roundtrip failed — skills calls did not go through the pinned tools dir",
+    );
+  }
+  if (
+    !flags.real &&
+    pluginRan(flags, "cli-tool") &&
+    !verifiedBinaryInstalls.some(
+      (request) =>
+        request.packageName === "agnix" && request.version === AGNIX_VERSION,
+    )
+  ) {
+    throw new Error(
+      "roundtrip failed — agnix did not go through the verified binary installer",
     );
   }
   if (diff.length === 0) {

@@ -412,7 +412,10 @@ By default, agemon may manage these paths:
 
 It also invokes external installers (`pipx`, `npm -g`, the pinned `skills` CLI) when required.
 Every third-party tool and source is pinned to an exact version or commit
-(`src/plugins/pins.ts`, `assets/tools/package-lock.json`).
+(`src/plugins/pins.ts`, `assets/tools/package-lock.json`). agnix is installed with
+`npm install --global --ignore-scripts agnix@<pin>`, so its own download script never runs;
+agemon then downloads the binary from the matching GitHub release itself and installs it only
+if the archive matches a sha256 pinned in `src/plugins/pins.ts`.
 
 Machine-level caches outside the repo, under `${XDG_STATE_HOME:-~/.local/state}/agemon/`, are
 kept by `nuke` because every repo on the machine shares them:

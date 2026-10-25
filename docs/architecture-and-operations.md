@@ -23,7 +23,9 @@ Context is created in `src/core/context.ts` and includes:
 - `os`: currently `ubuntu` only.
 - `binaries`: runtime checks for `python3`, `pip`, `pipx`, `uv`, `crg`.
 - `dryRun`, `yes`.
-- `run`: subprocess runner abstraction.
+- `run`: subprocess runner abstraction (`src/core/subprocess-runner.ts`). Calls without
+  `timeoutMs` time out after 5 minutes; each output stream is capped at 10 Mi characters
+  and marked `…[truncated]` beyond that.
 - `manifest`: `.agemon/state.json` handler.
 - `serviceManager`: platform-specific daemon manager.
 - `confirm`: shared mid-run confirmation policy (`src/core/prompt.ts`) — resolves `true`
@@ -56,8 +58,9 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 
 ### `crg`
 
-- Installs `code-review-graph` via `pipx install code-review-graph`.
-- Builds graph via `pipx run --spec code-review-graph code-review-graph build`.
+- Installs `code-review-graph` via `pipx install code-review-graph==<pin>`
+  (`CODE_REVIEW_GRAPH_VERSION` in `src/plugins/pins.ts`).
+- Builds graph via `pipx run --spec code-review-graph==<pin> code-review-graph build`.
 - Verifies with `... status`.
 - Preserves pre-existing installs using manifest metadata.
 
@@ -74,8 +77,18 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 
 ### `skills`
 
-- Uses `npx skills list --json` to detect current skills.
-- Installs skill bundle entries via `npx skills add ...`.
+- Runs a pinned `skills` CLI, never `npx`. On first use, agemon installs the shipped
+  `assets/tools/package-lock.json` with `npm ci --ignore-scripts` into
+  `<state>/agemon/tools/<lock hash>/`, so every package is checked against its lockfile
+  integrity. It then runs `node <tools>/node_modules/skills/bin/cli.mjs` with the repo as
+  `cwd`. A tools dir without the CLI is reinstalled. Dependabot bumps the lockfile, with
+  a 7-day cooldown.
+- Uses `skills list --json` to detect current skills.
+- Installs skill bundle entries via `skills add <source> ...`. Vendored groups install
+  from `assets/skills/`. Essentials installs from `<state>/agemon/skills-src/<commit>/`:
+  agemon fetches that directory fresh before each install (`git fetch --depth 1 <url>
+  <commit>`), requires `HEAD` to equal the pinned commit, and refuses any skill that
+  contains a symlink.
 - Removes only managed skill entries on uninstall.
 - Tracks generated `skills-lock.json` when created by install, and adds
   `/skills-lock.json` to the repo `.gitignore` so it is never committed.
@@ -88,12 +101,22 @@ Current bundle (`src/plugins/skills/catalog.ts`):
 ### `cli-tool`
 
 - Detects tool binaries via `--version` checks.
-- Installs missing tools globally through npm.
+- Installs missing tools globally through npm, at the pinned version and with
+  `--ignore-scripts`.
+- Installs each tool's binary through `ctx.verifiedBinaryInstaller`
+  (`src/core/verified-binary-installer.ts`): it downloads the release archive for the
+  platform (30 s timeout, 50 MiB cap) and checks it against the sha256 pinned in
+  `src/plugins/pins.ts` before anything touches it. It then extracts the one named member
+  inside the package dir, runs `--version` on it, and renames it into place. If the gnu
+  build does not run on linux-x64, the musl build is tried. On any failure, the npm package
+  is uninstalled and nothing is recorded.
+- Under `AGEMON_FAKE_SUBPROCESS=1`, the installer is a fake that only records the request.
 - Removes only tools installed by agemon.
 
 Current bundle (`src/plugins/cli-tool/catalog.ts`):
 
-- `agnix` (`npm install --global agnix`)
+- `agnix` (`npm install --global --ignore-scripts agnix@<pin>`, then the verified binary
+  at `<npm root>/agnix/bin/agnix-binary`; linux-x64 and linux-arm64)
 
 ### `master-prompt`
 
@@ -236,7 +259,8 @@ Used for sandbox and unit/integration tests:
 - `AGEMON_OS_RELEASE_PATH=<path>`
 
 `src/core/dev-mode.ts` enforces that fake backends cannot be used outside
-`AGEMON_DEV=1`.
+`AGEMON_DEV=1`. The fake subprocess backends live in `src/core/fake-subprocess.ts`, which
+the runner loads with a dynamic `import()` only when `AGEMON_FAKE_SUBPROCESS=1`.
 
 ## Operational Commands
 
@@ -259,6 +283,10 @@ npm run lint
 npm test
 npm run sandbox -- run clean-repo --dry-run
 npm run sandbox -- roundtrip clean-repo
+
+# compare the pins in src/plugins/pins.ts with upstream releases that are 7+ days old
+# (also run monthly by .github/workflows/pin-freshness.yml)
+npm run check-pins
 ```
 
 ## Known Gaps

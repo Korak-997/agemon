@@ -99,6 +99,7 @@ async function createTestContext(overrides: {
     run: runSubprocess,
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    verifiedBinaryInstaller: { install: async () => {} },
     skillGroupsOption: undefined,
   };
 }

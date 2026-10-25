@@ -25,7 +25,7 @@ export function resolvePinnedSkillsSourceDirectory(commit: string): string {
   return join(resolveStateRoot(), "agemon", "skills-src", commit);
 }
 
-function skillPathInRepository(skillName: string): string {
+export function skillPathInRepository(skillName: string): string {
   return `skills/${skillName}`;
 }
 

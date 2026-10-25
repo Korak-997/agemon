@@ -1,13 +1,21 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
+  AGNIX_VERSION,
   CODE_REVIEW_GRAPH_PACKAGE_SPEC,
   ESSENTIALS_SKILLS_COMMIT,
 } from "../plugins/pins.js";
 import { SKILLS_CLI_PATH_IN_TOOLS_DIR } from "../plugins/skills/skills-cli.js";
 import type { SubprocessResult } from "./subprocess-runner.js";
+import type {
+  VerifiedBinaryInstaller,
+  VerifiedBinaryInstallRequest,
+} from "./verified-binary-installer.js";
 
 const PINNED_SKILLS_CLI_SUFFIX = `/${SKILLS_CLI_PATH_IN_TOOLS_DIR}`;
+const PINNED_GLOBAL_NPM_PACKAGE_SPECS: ReadonlyMap<string, string> = new Map([
+  [`agnix@${AGNIX_VERSION}`, "agnix"],
+]);
 
 function formatCommand(command: string, args: string[]): string {
   return [command, ...args].join(" ");
@@ -19,6 +27,7 @@ let fakeInstalledGlobalNpmPackageNames: Set<string> | null = null;
 let fakeVersionedAgentBinaryNames: Set<string> | null = null;
 let fakeUsableAgentBinaryNames: Set<string> | null = null;
 let fakeStateSignature: string | null = null;
+let fakeVerifiedBinaryInstallRequests: VerifiedBinaryInstallRequest[] = [];
 
 function buildFakeStateSignature(): string {
   return [
@@ -37,6 +46,19 @@ export function resetFakeSubprocessState(): void {
   fakeVersionedAgentBinaryNames = null;
   fakeUsableAgentBinaryNames = null;
   fakeStateSignature = null;
+  fakeVerifiedBinaryInstallRequests = [];
+}
+
+export function createFakeVerifiedBinaryInstaller(): VerifiedBinaryInstaller {
+  return {
+    async install(request) {
+      fakeVerifiedBinaryInstallRequests.push(request);
+    },
+  };
+}
+
+export function takeFakeVerifiedBinaryInstallRequests(): VerifiedBinaryInstallRequest[] {
+  return fakeVerifiedBinaryInstallRequests.splice(0);
 }
 
 function initializeFakeStateIfNeeded(): void {
@@ -281,8 +303,12 @@ function buildFakeNpmResponse(args: string[]): SubprocessResult | undefined {
   const packageNames = parseGlobalNpmPackageNames(args);
 
   if (operation === "install") {
-    for (const packageName of packageNames) {
-      fakeInstalledGlobalNpmPackageNames?.add(packageName);
+    for (const packageSpec of packageNames) {
+      const pinnedPackageName =
+        PINNED_GLOBAL_NPM_PACKAGE_SPECS.get(packageSpec);
+      if (pinnedPackageName) {
+        fakeInstalledGlobalNpmPackageNames?.add(pinnedPackageName);
+      }
     }
     return {
       code: 0,

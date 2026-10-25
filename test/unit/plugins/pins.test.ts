@@ -26,6 +26,16 @@ describe("pins", () => {
     expect(pins.ESSENTIALS_SKILLS_COMMIT).toMatch(FULL_COMMIT_PATTERN);
     expect(pins.ESSENTIALS_SKILLS_REPOSITORY_URL).toMatch(/^https:\/\//u);
   });
+
+  it("pins agnix to an exact version and every release archive by sha256", () => {
+    expect(pins.AGNIX_VERSION).toMatch(EXACT_VERSION_PATTERN);
+    const archiveHashes = Object.entries(pins.AGNIX_RELEASE_ARCHIVE_SHA256);
+    expect(archiveHashes.length).toBeGreaterThan(0);
+    for (const [asset, sha256] of archiveHashes) {
+      expect(asset).toMatch(/^agnix-[a-z0-9_-]+\.tar\.gz$/u);
+      expect(sha256, asset).toMatch(/^[0-9a-f]{64}$/u);
+    }
+  });
 });
 
 describe("assets/tools lockfile", () => {

@@ -3,11 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
+import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
+import type { VerifiedBinaryInstallRequest } from "../../../src/core/verified-binary-installer.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
-import { cliToolPlugin } from "../../../src/plugins/cli-tool/index.js";
+import { CLI_TOOL_BUNDLE } from "../../../src/plugins/cli-tool/catalog.js";
+import {
+  cliToolPlugin,
+  resolveVerifiedArchiveCandidates,
+} from "../../../src/plugins/cli-tool/index.js";
+import {
+  AGNIX_RELEASE_ARCHIVE_SHA256,
+  AGNIX_VERSION,
+} from "../../../src/plugins/pins.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -51,6 +61,13 @@ function createNoOpUi(): Context["ui"] {
   };
 }
 
+const installRequests: VerifiedBinaryInstallRequest[] = [];
+
+afterEach(() => {
+  installRequests.splice(0);
+  resetFakeSubprocessState();
+});
+
 async function createTestContext(
   preinstalledPackages?: string,
 ): Promise<Context> {
@@ -86,8 +103,29 @@ async function createTestContext(
     run: runSubprocess,
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    verifiedBinaryInstaller: {
+      async install(request) {
+        installRequests.push(request);
+      },
+    },
   };
 }
+
+function recordCommands(context: Context): string[][] {
+  const commands: string[][] = [];
+  const run = context.run;
+  context.run = async (command, args, options) => {
+    commands.push([command, ...args]);
+    return run(command, args, options);
+  };
+  return commands;
+}
+
+const AGNIX = CLI_TOOL_BUNDLE.find((entry) => entry.id === "agnix");
+if (!AGNIX) {
+  throw new Error("agnix is missing from the CLI tool bundle");
+}
+const AGNIX_RELEASE_URL = `https://github.com/agent-sh/agnix/releases/download/v${AGNIX_VERSION}`;
 
 describe("cli-tool plugin", () => {
   it("installs, verifies, and uninstalls managed CLI tools", async () => {
@@ -117,6 +155,124 @@ describe("cli-tool plugin", () => {
       .getActions()
       .filter((action) => action.plugin === "cli-tool");
     expect(actionsAfterUninstall).toEqual([]);
+  });
+
+  it("installs the pinned npm package without scripts, then its verified binary", async () => {
+    const context = await createTestContext();
+    const commands = recordCommands(context);
+
+    await cliToolPlugin.install(context);
+
+    expect(commands).toContainEqual([
+      "npm",
+      "install",
+      "--global",
+      "--ignore-scripts",
+      `agnix@${AGNIX_VERSION}`,
+    ]);
+    expect(installRequests).toEqual([
+      {
+        packageName: "agnix",
+        version: AGNIX_VERSION,
+        binaryPathInPackage: "bin/agnix-binary",
+        archiveMemberName: "agnix",
+        candidates: resolveVerifiedArchiveCandidates(
+          AGNIX,
+          `${process.platform}-${process.arch}`,
+        ),
+      },
+    ]);
+  });
+
+  it("uninstalls the package and records nothing when the verified binary install fails", async () => {
+    const context = await createTestContext();
+    const commands = recordCommands(context);
+    context.verifiedBinaryInstaller = {
+      async install() {
+        throw new Error("Downloaded archive does not match its pinned sha256");
+      },
+    };
+
+    await expect(cliToolPlugin.install(context)).rejects.toThrow(
+      "Downloaded archive does not match its pinned sha256 agemon uninstalled the global npm package agnix again",
+    );
+
+    expect(commands).toContainEqual(["npm", "uninstall", "--global", "agnix"]);
+    expect(context.manifest.getActions()).toEqual([]);
+    expect((await cliToolPlugin.verify(context)).ok).toBe(false);
+  });
+
+  it("names the manual cleanup when removing a partly installed package fails", async () => {
+    const context = await createTestContext();
+    const run = context.run;
+    context.run = async (command, args, options) =>
+      args[0] === "uninstall"
+        ? { code: 1, stdout: "", stderr: "EACCES" }
+        : run(command, args, options);
+    context.verifiedBinaryInstaller = {
+      async install() {
+        throw new Error("No pinned agnix 0.58.0 build runs on this host.");
+      },
+    };
+
+    await expect(cliToolPlugin.install(context)).rejects.toThrow(
+      "No pinned agnix 0.58.0 build runs on this host. Removing the partly installed agnix also failed (EACCES); run: npm uninstall --global agnix",
+    );
+    expect(context.manifest.getActions()).toEqual([]);
+  });
+
+  it("downloads nothing for a pre-existing agnix", async () => {
+    const context = await createTestContext("agnix");
+
+    await cliToolPlugin.install(context);
+
+    expect(installRequests).toEqual([]);
+  });
+
+  it("previews the pinned, script-free npm install", async () => {
+    const context = await createTestContext();
+
+    const [operation] = (await cliToolPlugin.plan?.(context)) ?? [];
+
+    expect(operation?.preview).toEqual({
+      kind: "note",
+      text: `npm install --global --ignore-scripts agnix@${AGNIX_VERSION}; binary from the v${AGNIX_VERSION} GitHub release, sha256-pinned`,
+    });
+  });
+
+  it("maps linux-x64 to the gnu archive, then the musl fallback", () => {
+    expect(resolveVerifiedArchiveCandidates(AGNIX, "linux-x64")).toEqual([
+      {
+        url: `${AGNIX_RELEASE_URL}/agnix-x86_64-unknown-linux-gnu.tar.gz`,
+        sha256:
+          AGNIX_RELEASE_ARCHIVE_SHA256["agnix-x86_64-unknown-linux-gnu.tar.gz"],
+      },
+      {
+        url: `${AGNIX_RELEASE_URL}/agnix-x86_64-unknown-linux-musl.tar.gz`,
+        sha256:
+          AGNIX_RELEASE_ARCHIVE_SHA256[
+            "agnix-x86_64-unknown-linux-musl.tar.gz"
+          ],
+      },
+    ]);
+  });
+
+  it("maps linux-arm64 to the aarch64 gnu archive", () => {
+    expect(resolveVerifiedArchiveCandidates(AGNIX, "linux-arm64")).toEqual([
+      {
+        url: `${AGNIX_RELEASE_URL}/agnix-aarch64-unknown-linux-gnu.tar.gz`,
+        sha256:
+          AGNIX_RELEASE_ARCHIVE_SHA256[
+            "agnix-aarch64-unknown-linux-gnu.tar.gz"
+          ],
+      },
+    ]);
+  });
+
+  it("refuses a platform without a pinned build", () => {
+    expect(() =>
+      resolveVerifiedArchiveCandidates(AGNIX, "darwin-arm64"),
+    ).toThrow("agnix has no pinned build for darwin-arm64");
   });
 
   it("leaves the ledger to the orchestrator when uninstalled directly", async () => {

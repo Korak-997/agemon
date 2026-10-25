@@ -84,6 +84,7 @@ async function createTestContext(skillGroupsOption?: string): Promise<Context> {
     run: runSubprocess,
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    verifiedBinaryInstaller: { install: async () => {} },
     skillGroupsOption,
   };
 }

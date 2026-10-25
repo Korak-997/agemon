@@ -8,6 +8,7 @@ import {
   type ConsentGate,
   resolveConsent,
 } from "./consent.js";
+import { assertFakeBackendsAreDevOnly } from "./dev-mode.js";
 import { createConfirmer, isInteractiveTerminal } from "./prompt.js";
 import { clackPrompts } from "./prompt-clack.js";
 import { StateManifest } from "./state-manifest.js";
@@ -20,6 +21,10 @@ import {
   type RunSubprocess,
   traceSubprocessCalls,
 } from "./subprocess-trace.js";
+import {
+  createVerifiedBinaryInstaller,
+  type VerifiedBinaryInstaller,
+} from "./verified-binary-installer.js";
 
 export type { SubprocessResult } from "./subprocess-runner.js";
 
@@ -46,6 +51,7 @@ export interface Context {
   ) => Promise<SubprocessResult>;
   manifest: StateManifest;
   serviceManager: ServiceManager;
+  verifiedBinaryInstaller: VerifiedBinaryInstaller;
 
   confirm: (message: string) => Promise<boolean>;
   consent: (
@@ -67,15 +73,31 @@ export interface CreateContextInput {
   verbose?: boolean;
 }
 
+async function selectVerifiedBinaryInstaller(
+  run: RunSubprocess,
+): Promise<VerifiedBinaryInstaller> {
+  if (process.env.AGEMON_FAKE_SUBPROCESS === "1") {
+    const { createFakeVerifiedBinaryInstaller } = await import(
+      "./fake-subprocess.js"
+    );
+    return createFakeVerifiedBinaryInstaller();
+  }
+  return createVerifiedBinaryInstaller({ run });
+}
+
 export async function createContext(
   input: CreateContextInput,
 ): Promise<Context> {
+  assertFakeBackendsAreDevOnly();
   const platform = await detectPlatform({
     osReleasePath: process.env.AGEMON_OS_RELEASE_PATH,
   });
   const interactive = isInteractiveTerminal();
   const runInRepo: RunSubprocess = (command, args, options) =>
     runSubprocess(command, args, { cwd: input.repoRoot, ...options });
+  const run = input.verbose
+    ? traceSubprocessCalls(runInRepo, input.ui)
+    : runInRepo;
 
   const checkedBinaries = REQUIRED_BINARIES.map(
     (name) => platform.binaries[name],
@@ -104,7 +126,7 @@ export async function createContext(
     log: console,
     ui: input.ui,
     progress: input.progress,
-    run: input.verbose ? traceSubprocessCalls(runInRepo, input.ui) : runInRepo,
+    run,
     manifest: await StateManifest.load(input.repoRoot),
     serviceManager: createServiceManager({
       os: platform.os,
@@ -112,6 +134,7 @@ export async function createContext(
       homeDir: process.env.HOME,
       user: process.env.USER,
     }),
+    verifiedBinaryInstaller: await selectVerifiedBinaryInstaller(run),
     confirm: createConfirmer({ yes: input.yes }),
     consent: (gates, options) =>
       resolveConsent({

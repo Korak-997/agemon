@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  createFakeVerifiedBinaryInstaller,
   resetFakeSubprocessState,
   runFakeSubprocess,
+  takeFakeVerifiedBinaryInstallRequests,
 } from "../../../src/core/fake-subprocess.js";
 import {
+  AGNIX_VERSION,
   CODE_REVIEW_GRAPH_VERSION,
   ESSENTIALS_SKILLS_COMMIT,
 } from "../../../src/plugins/pins.js";
@@ -89,6 +92,22 @@ describe("runFakeSubprocess", () => {
     expect(afterPinned.stdout).toContain("Nodes:");
   });
 
+  it("installs agnix only at the pinned version", () => {
+    runFakeSubprocess("npm", ["install", "--global", "agnix"]);
+    expect(runFakeSubprocess("agnix", ["--version"]).code).toBe(1);
+
+    runFakeSubprocess("npm", [
+      "install",
+      "--global",
+      "--ignore-scripts",
+      `agnix@${AGNIX_VERSION}`,
+    ]);
+    expect(runFakeSubprocess("agnix", ["--version"]).code).toBe(0);
+
+    runFakeSubprocess("npm", ["uninstall", "--global", "agnix"]);
+    expect(runFakeSubprocess("agnix", ["--version"]).code).toBe(1);
+  });
+
   it("leaves an installed skills CLI behind a fake npm ci, as the real one does", async () => {
     const prefix = await mkdtemp(join(tmpdir(), "agemon-fake-npm-ci-"));
     try {
@@ -106,5 +125,22 @@ describe("runFakeSubprocess", () => {
     const result = runFakeSubprocess("git", ["rev-parse", "HEAD"]);
 
     expect(result.stdout.trim()).toBe(ESSENTIALS_SKILLS_COMMIT);
+  });
+});
+
+describe("createFakeVerifiedBinaryInstaller", () => {
+  it("records each request without downloading anything", async () => {
+    const request = {
+      packageName: "agnix",
+      version: AGNIX_VERSION,
+      binaryPathInPackage: "bin/agnix-binary",
+      archiveMemberName: "agnix",
+      candidates: [{ url: "https://example.test/a", sha256: "0".repeat(64) }],
+    };
+
+    await createFakeVerifiedBinaryInstaller().install(request);
+
+    expect(takeFakeVerifiedBinaryInstallRequests()).toEqual([request]);
+    expect(takeFakeVerifiedBinaryInstallRequests()).toEqual([]);
   });
 });

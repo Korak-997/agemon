@@ -70,6 +70,7 @@ async function createStatusContext(): Promise<Context> {
     run: async () => ({ code: 0, stdout: "", stderr: "" }),
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    verifiedBinaryInstaller: { install: async () => {} },
   };
 }
 

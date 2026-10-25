@@ -109,6 +109,7 @@ async function createTestContext(options: {
     run: createGitAwareRun(options.gitToplevel, crgExecutablePath),
     manifest: await StateManifest.load(options.cwd),
     serviceManager: options.serviceManager,
+    verifiedBinaryInstaller: { install: async () => {} },
   };
 }
 

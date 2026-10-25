@@ -46,7 +46,7 @@ describe("non-interactive output contract", () => {
 
       cli-tool
         v  agnix                    [executes]
-             npm install --global agnix
+             npm install --global --ignore-scripts agnix@0.58.0; binary from the v0.58.0 GitHub release, sha256-pinned
 
       master-prompt
         +  AGENTS.md                [writes-config]
@@ -152,7 +152,7 @@ describe("non-interactive output contract", () => {
 
       cli-tool
         v  agnix                    [executes]
-             npm install --global agnix
+             npm install --global --ignore-scripts agnix@0.58.0; binary from the v0.58.0 GitHub release, sha256-pinned
 
       master-prompt
         +  AGENTS.md                [writes-config]
@@ -299,7 +299,7 @@ describe("non-interactive output contract", () => {
 
       cli-tool
         v  agnix                    [executes]
-             npm install --global agnix
+             npm install --global --ignore-scripts agnix@0.58.0; binary from the v0.58.0 GitHub release, sha256-pinned
 
       master-prompt
         +  AGENTS.md                [writes-config]
