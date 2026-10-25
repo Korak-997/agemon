@@ -1,5 +1,8 @@
+import { lstat, rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { Context } from "../../core/context.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
+import { printable } from "../../core/untrusted-text.js";
 import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../pins.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
@@ -9,25 +12,30 @@ import type {
   PluginVerificationResult,
   ProposedOperation,
 } from "../types.js";
+import { crgSubprocessEnvironment, resolveCrgHome } from "./environment.js";
+import {
+  type CrgLocation,
+  locateCodeReviewGraph,
+  pipxMetadataPath,
+  resolvePipxHome,
+} from "./locate.js";
 
 const PLUGIN_ID = "crg";
 const PACKAGE_NAME = "code-review-graph";
-const PIPX_RUN_PREFIX = [
-  "run",
-  "--spec",
-  CODE_REVIEW_GRAPH_PACKAGE_SPEC,
-  "code-review-graph",
-];
+const GRAPH_DIRECTORY = ".code-review-graph";
 
-const VERSION_CHECK_TIMEOUT_MS = 20_000;
 const INSTALL_TIMEOUT_MS = 180_000;
 const BUILD_TIMEOUT_MS = 300_000;
 const STATUS_TIMEOUT_MS = 30_000;
 const UNINSTALL_TIMEOUT_MS = 120_000;
 
 const ACTION_TYPE_INSTALLED_BINARY = "installed-binary";
-const ACTION_TYPE_PREEXISTING_BINARY = "preexisting-binary";
 const ACTION_TYPE_GRAPH_BUILT = "graph-built";
+
+const BROKEN_VENV_HINT = `pipx venv is broken — run 'pipx reinstall ${PACKAGE_NAME}'`;
+const GRAPH_ENTRY_NOT_DIRECTORY = `${GRAPH_DIRECTORY} is a symlink or file, not a directory; remove it, then run code-review-graph build`;
+const NOT_ON_PATH_HINT =
+  "not on PATH — run 'pipx ensurepath' and open a new shell";
 
 function getPluginActions(ctx: Context) {
   return ctx.manifest
@@ -43,75 +51,59 @@ function hasManagedInstall(ctx: Context): boolean {
   );
 }
 
-function hasPreexistingRecord(ctx: Context): boolean {
-  return getPluginActions(ctx).some(
-    (action) =>
-      action.type === ACTION_TYPE_PREEXISTING_BINARY &&
-      action.preExisting === true,
-  );
+function describeLocation(
+  location: Extract<CrgLocation, { status: "found" }>,
+): string {
+  const installedAs =
+    location.source === "pipx"
+      ? `pipx ${location.version}`
+      : `${printable(location.binaryPath)} ${location.version}`;
+  return location.onPath ? installedAs : `${installedAs}; ${NOT_ON_PATH_HINT}`;
 }
 
 async function detectCrgPresence(ctx: Context): Promise<PluginPresence> {
-  const versionCheck = await ctx.run("code-review-graph", ["--version"], {
-    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
-  });
-  const commandIsAvailable = versionCheck.code === 0;
-
-  if (!commandIsAvailable) {
+  const location = await locateCodeReviewGraph(ctx);
+  if (location.status === "absent") {
     return { present: false, preExisting: false };
   }
-
-  if (hasManagedInstall(ctx)) {
-    return { present: true, preExisting: false };
-  }
-
-  if (!hasPreexistingRecord(ctx) && !ctx.dryRun) {
-    await ctx.manifest.recordAction({
-      plugin: PLUGIN_ID,
-      type: ACTION_TYPE_PREEXISTING_BINARY,
-      target: PACKAGE_NAME,
-      preExisting: true,
-    });
-  }
-
-  return { present: true, preExisting: true };
+  return { present: true, preExisting: !hasManagedInstall(ctx) };
 }
 
 async function describeCrgState(ctx: Context): Promise<CapabilityStateRow[]> {
-  const versionCheck = await ctx.run("code-review-graph", ["--version"], {
-    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
-  });
-  const resourceId = `package:${PACKAGE_NAME}`;
+  const location = await locateCodeReviewGraph(ctx);
+  const row = {
+    capabilityId: PLUGIN_ID,
+    resourceId: `package:${PACKAGE_NAME}`,
+    label: PACKAGE_NAME,
+  };
 
-  if (versionCheck.code !== 0) {
-    return [
-      {
-        capabilityId: PLUGIN_ID,
-        resourceId,
-        label: PACKAGE_NAME,
-        state: "absent",
-        detail: null,
-      },
-    ];
+  if (location.status === "absent") {
+    return [{ ...row, state: "absent", detail: null }];
   }
-
-  const managed = hasManagedInstall(ctx);
+  if (location.status === "broken-venv") {
+    return [{ ...row, state: "unknown", detail: BROKEN_VENV_HINT }];
+  }
   return [
     {
-      capabilityId: PLUGIN_ID,
-      resourceId,
-      label: PACKAGE_NAME,
-      state: managed ? "present-managed" : "present-adopted",
-      detail: managed ? "installed via pipx" : "pre-existing install",
+      ...row,
+      state: hasManagedInstall(ctx) ? "present-managed" : "present-adopted",
+      detail: describeLocation(location),
     },
   ];
 }
 
 async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
-  const versionCheck = await ctx.run("code-review-graph", ["--version"], {
-    timeoutMs: VERSION_CHECK_TIMEOUT_MS,
-  });
-  if (versionCheck.code === 0) {
+  const location = await locateCodeReviewGraph(ctx);
+  if (location.status === "broken-venv") {
+    ctx.ui.info(BROKEN_VENV_HINT);
+    return [];
+  }
+  if (location.status === "found") {
+    if (!location.onPath) {
+      ctx.ui.info(
+        `${PACKAGE_NAME} is installed via pipx but ${NOT_ON_PATH_HINT}`,
+      );
+    }
     return [];
   }
 
@@ -131,6 +123,25 @@ async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
   ];
 }
 
+type GraphEntryKind = "missing" | "directory" | "other";
+
+async function graphEntryKind(ctx: Context): Promise<GraphEntryKind> {
+  try {
+    const stats = await lstat(join(ctx.cwd, GRAPH_DIRECTORY));
+    return stats.isDirectory() ? "directory" : "other";
+  } catch {
+    return "missing";
+  }
+}
+
+function reportIgnoredCrgEnvironment(ctx: Context): void {
+  if (process.env.CRG_HOME || process.env.CRG_DATA_DIR) {
+    ctx.ui.info(
+      `CRG_HOME and CRG_DATA_DIR from your environment are not used here: agemon's managed graph lives in ${GRAPH_DIRECTORY}/ and code-review-graph's home is ${printable(resolveCrgHome())}`,
+    );
+  }
+}
+
 async function installCrg(ctx: Context): Promise<void> {
   if (ctx.dryRun) {
     ctx.ui.info(`Would install ${PACKAGE_NAME} via pipx`);
@@ -138,10 +149,11 @@ async function installCrg(ctx: Context): Promise<void> {
     return;
   }
 
+  const pipxHome = await resolvePipxHome();
   const installResult = await ctx.run(
     "pipx",
     ["install", CODE_REVIEW_GRAPH_PACKAGE_SPEC],
-    { timeoutMs: INSTALL_TIMEOUT_MS },
+    { timeoutMs: INSTALL_TIMEOUT_MS, env: { PIPX_HOME: pipxHome } },
   );
   if (installResult.code !== 0) {
     throw new Error(
@@ -157,19 +169,36 @@ async function installCrg(ctx: Context): Promise<void> {
     preExisting: false,
   });
 
-  const buildResult = await ctx.run("pipx", [...PIPX_RUN_PREFIX, "build"], {
+  const location = await locateCodeReviewGraph(ctx);
+  if (location.status === "broken-venv") {
+    throw new Error(`pipx reported success but the ${BROKEN_VENV_HINT}`);
+  }
+  if (location.status !== "found") {
+    throw new Error(
+      `pipx reported success but ${pipxMetadataPath(pipxHome)} is missing or invalid`,
+    );
+  }
+
+  const graphEntry = await graphEntryKind(ctx);
+  if (graphEntry === "other") {
+    ctx.ui.info(`skipped the graph build: ${GRAPH_ENTRY_NOT_DIRECTORY}`);
+    return;
+  }
+
+  reportIgnoredCrgEnvironment(ctx);
+  await ctx.manifest.recordAction({
+    plugin: PLUGIN_ID,
+    type: ACTION_TYPE_GRAPH_BUILT,
+    target: GRAPH_DIRECTORY,
+    preExisting: graphEntry === "directory",
+  });
+  const buildResult = await ctx.run(location.binaryPath, ["build"], {
     timeoutMs: BUILD_TIMEOUT_MS,
+    env: crgSubprocessEnvironment(),
   });
   if (buildResult.code !== 0) {
     throw new Error(buildResult.stderr || "code-review-graph build failed");
   }
-
-  await ctx.manifest.recordAction({
-    plugin: PLUGIN_ID,
-    type: ACTION_TYPE_GRAPH_BUILT,
-    target: ".code-review-graph",
-    preExisting: false,
-  });
 }
 
 async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
@@ -177,13 +206,27 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
     return { ok: true, detail: "dry-run" };
   }
 
-  const statusResult = await ctx.run("pipx", [...PIPX_RUN_PREFIX, "status"], {
+  const location = await locateCodeReviewGraph(ctx);
+  if (location.status === "broken-venv") {
+    return { ok: false, detail: BROKEN_VENV_HINT };
+  }
+  if (location.status === "absent") {
+    return { ok: false, detail: `${PACKAGE_NAME} is not installed` };
+  }
+
+  if ((await graphEntryKind(ctx)) === "other") {
+    return { ok: false, detail: GRAPH_ENTRY_NOT_DIRECTORY };
+  }
+
+  const statusResult = await ctx.run(location.binaryPath, ["status"], {
     timeoutMs: STATUS_TIMEOUT_MS,
+    env: crgSubprocessEnvironment(),
   });
   if (statusResult.code !== 0) {
     return {
       ok: false,
-      detail: statusResult.stderr || "code-review-graph status failed",
+      detail:
+        printable(statusResult.stderr) || "code-review-graph status failed",
     };
   }
 
@@ -198,10 +241,46 @@ function entriesHaveManagedInstall(entries: LedgerEntry[]): boolean {
   );
 }
 
+function entriesHaveBuiltGraph(entries: LedgerEntry[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry.type === ACTION_TYPE_GRAPH_BUILT &&
+      entry.preExisting === false &&
+      entry.target === GRAPH_DIRECTORY,
+  );
+}
+
+async function removeBuiltGraph(ctx: Context): Promise<void> {
+  const graphPath = join(ctx.cwd, GRAPH_DIRECTORY);
+  let graphStats: Awaited<ReturnType<typeof lstat>>;
+  try {
+    graphStats = await lstat(graphPath);
+  } catch {
+    ctx.ui.info(
+      `no ${GRAPH_DIRECTORY} in the repository; a graph kept elsewhere by crg's registry is not removed`,
+    );
+    return;
+  }
+
+  if (!graphStats.isDirectory()) {
+    ctx.ui.info(
+      `left ${GRAPH_DIRECTORY} in place: it is a symlink or file, not the directory agemon built; remove it by hand if you no longer need it`,
+    );
+    return;
+  }
+  await rm(graphPath, { recursive: true, force: true });
+}
+
 async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
   const managedInstall = entriesHaveManagedInstall(entries);
+  const builtGraph = entriesHaveBuiltGraph(entries);
 
   if (ctx.dryRun) {
+    if (builtGraph) {
+      ctx.ui.info(
+        `Would remove ${GRAPH_DIRECTORY}/ (code graph, wiki/exports, embeddings — rebuildable with code-review-graph build)`,
+      );
+    }
     if (managedInstall) {
       ctx.ui.info(`Would uninstall ${PACKAGE_NAME} from pipx`);
     } else {
@@ -210,12 +289,16 @@ async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
     return;
   }
 
+  if (builtGraph) {
+    await removeBuiltGraph(ctx);
+  }
   if (!managedInstall) {
     return;
   }
 
   const uninstallResult = await ctx.run("pipx", ["uninstall", PACKAGE_NAME], {
     timeoutMs: UNINSTALL_TIMEOUT_MS,
+    env: { PIPX_HOME: await resolvePipxHome() },
   });
   if (uninstallResult.code !== 0) {
     throw new Error(

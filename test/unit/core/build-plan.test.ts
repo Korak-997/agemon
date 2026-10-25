@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import { buildPlan } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
@@ -12,6 +12,7 @@ import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js"
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
@@ -34,6 +35,10 @@ function createNoOpServiceManager(): ServiceManager {
 async function createTestContext(): Promise<Context> {
   const sandboxDirectory = await mkdtemp(join(tmpdir(), "agemon-build-plan-"));
   createdTempDirectories.push(sandboxDirectory);
+  vi.stubEnv("HOME", sandboxDirectory);
+  vi.stubEnv("PATH", "");
+  vi.stubEnv("PIPX_HOME", undefined);
+  vi.stubEnv("XDG_DATA_HOME", undefined);
 
   return {
     cwd: sandboxDirectory,

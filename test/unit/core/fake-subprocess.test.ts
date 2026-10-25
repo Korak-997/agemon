@@ -2,9 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createFakeVerifiedBinaryInstaller,
+  fakeCodeReviewGraphOnPath,
   resetFakeSubprocessState,
   runFakeSubprocess,
   takeFakeVerifiedBinaryInstallRequests,
@@ -75,21 +76,28 @@ describe("runFakeSubprocess", () => {
     expect(JSON.parse(afterRemove.stdout)).toEqual([]);
   });
 
-  it("installs code-review-graph only at the pinned version", () => {
-    runFakeSubprocess("pipx", ["install", "code-review-graph"]);
-    const afterUnpinned = runFakeSubprocess("code-review-graph", ["--version"]);
-    runFakeSubprocess("pipx", ["install", PINNED_CRG_SPEC]);
-    const afterPinned = runFakeSubprocess("pipx", [
-      "run",
-      "--spec",
-      PINNED_CRG_SPEC,
-      "code-review-graph",
-      "status",
-    ]);
+  it("installs code-review-graph only at the pinned version, under the fake pipx home", async () => {
+    const home = await mkdtemp(join(tmpdir(), "agemon-fake-crg-"));
+    vi.stubEnv("HOME", home);
+    try {
+      runFakeSubprocess("pipx", ["install", "code-review-graph"]);
+      const afterUnpinned = runFakeSubprocess("code-review-graph", [
+        "--version",
+      ]);
+      runFakeSubprocess("pipx", ["install", PINNED_CRG_SPEC]);
+      const installedBinary = fakeCodeReviewGraphOnPath() ?? "";
+      const afterPinned = runFakeSubprocess(installedBinary, ["status"]);
 
-    expect(afterUnpinned.code).not.toBe(0);
-    expect(afterPinned).toMatchObject({ code: 0 });
-    expect(afterPinned.stdout).toContain("Nodes:");
+      expect(afterUnpinned.code).not.toBe(0);
+      expect(
+        installedBinary.startsWith(join(home, ".agemon", "fake-pipx")),
+      ).toBe(true);
+      expect(afterPinned).toMatchObject({ code: 0 });
+      expect(afterPinned.stdout).toContain("Nodes:");
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it("installs agnix only at the pinned version", () => {

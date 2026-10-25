@@ -210,7 +210,7 @@ async function realpathOrResolved(path: string): Promise<string> {
   }
 }
 
-function isSameOrInside(path: string, ancestor: string): boolean {
+export function isSameOrInside(path: string, ancestor: string): boolean {
   const pathFromAncestor = relative(ancestor, path);
   return (
     pathFromAncestor === "" ||

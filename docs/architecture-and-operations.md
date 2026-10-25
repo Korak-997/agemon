@@ -60,9 +60,12 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 
 - Installs `code-review-graph` via `pipx install code-review-graph==<pin>`
   (`CODE_REVIEW_GRAPH_VERSION` in `src/plugins/pins.ts`).
-- Builds graph via `pipx run --spec code-review-graph==<pin> code-review-graph build`.
-- Verifies with `... status`.
-- Preserves pre-existing installs using manifest metadata.
+- Finds the installed binary by reading pipx's `pipx_metadata.json` (no pipx subprocess),
+  falling back to `code-review-graph` on `PATH` outside the repository.
+- Builds the graph with `<binary> build` and verifies with `<binary> status`, with
+  `CRG_HOME` fixed to `~/.code-review-graph` and git's fsmonitor and hooks disabled.
+- Preserves pre-existing installs using manifest metadata. `nuke` removes
+  `.code-review-graph/` only when agemon built it.
 
 ### `daemon`
 

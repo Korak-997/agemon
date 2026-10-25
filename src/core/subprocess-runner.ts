@@ -65,7 +65,7 @@ export async function runSubprocess(
 ): Promise<SubprocessResult> {
   if (process.env.AGEMON_FAKE_SUBPROCESS === "1") {
     const { runFakeSubprocess } = await import("./fake-subprocess.js");
-    return runFakeSubprocess(command, args);
+    return runFakeSubprocess(command, args, options);
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS;

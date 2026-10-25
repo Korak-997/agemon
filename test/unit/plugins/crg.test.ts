@@ -1,48 +1,128 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "../../../src/core/context.js";
+import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
-import type { SubprocessResult } from "../../../src/core/subprocess-runner.js";
+import type {
+  RunSubprocessOptions,
+  SubprocessResult,
+} from "../../../src/core/subprocess-runner.js";
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
+import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
 
 const PINNED_SPEC = `code-review-graph==${CODE_REVIEW_GRAPH_VERSION}`;
+const METADATA_FIXTURE = join(
+  process.cwd(),
+  "test/unit/plugins/fixtures/pipx_metadata.json",
+);
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
 });
 
-async function createTestContext() {
-  const cwd = await mkdtemp(join(tmpdir(), "agemon-crg-test-"));
-  createdTempDirectories.push(cwd);
-  const run = vi.fn(
-    async (command: string): Promise<SubprocessResult> =>
-      command === "code-review-graph"
-        ? { code: 127, stdout: "", stderr: "not found" }
-        : { code: 0, stdout: "", stderr: "" },
+async function writeExecutable(path: string): Promise<void> {
+  await mkdir(join(path, ".."), { recursive: true });
+  await writeFile(path, "#!/bin/sh\n", "utf8");
+  await chmod(path, 0o755);
+}
+
+async function createPipxVenv(
+  pipxHome: string,
+  options: { withPython?: boolean } = {},
+): Promise<string> {
+  const venv = join(pipxHome, "venvs", "code-review-graph");
+  const binaryPath = join(venv, "bin", "code-review-graph");
+  await writeExecutable(binaryPath);
+  if (options.withPython !== false) {
+    await writeExecutable(join(venv, "bin", "python"));
+  }
+  await writeFile(
+    join(venv, "pipx_metadata.json"),
+    (await readFile(METADATA_FIXTURE, "utf8")).replaceAll("__VENV__", venv),
+    "utf8",
   );
+  return binaryPath;
+}
+
+type RunCall = [string, string[], RunSubprocessOptions | undefined];
+
+async function createTestContext(options: { dryRun?: boolean } = {}) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "agemon-crg-")));
+  createdTempDirectories.push(root);
+  const home = join(root, "home");
+  const repo = join(root, "repo");
+  await mkdir(home, { recursive: true });
+  await mkdir(repo, { recursive: true });
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("PATH", "");
+  vi.stubEnv("AGEMON_FAKE_SUBPROCESS", "");
+  vi.stubEnv("PIPX_HOME", undefined);
+  vi.stubEnv("XDG_DATA_HOME", undefined);
+  vi.stubEnv("GIT_CONFIG_COUNT", undefined);
+  vi.stubEnv("CRG_HOME", undefined);
+  vi.stubEnv("CRG_DATA_DIR", undefined);
+  const pipxHome = join(home, ".local", "share", "pipx");
+
+  const calls: RunCall[] = [];
+  const run = vi.fn(
+    async (
+      command: string,
+      args: string[],
+      runOptions?: RunSubprocessOptions,
+    ): Promise<SubprocessResult> => {
+      calls.push([command, args, runOptions]);
+      if (command === "pipx" && args[0] === "install") {
+        await createPipxVenv(pipxHome);
+      }
+      if (command.endsWith("code-review-graph") && args[0] === "build") {
+        await mkdir(join(repo, ".code-review-graph"), { recursive: true });
+      }
+      if (command.endsWith("code-review-graph") && args[0] === "--version") {
+        return { code: 0, stdout: "code-review-graph 2.3.9\n", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    },
+  );
+  const infos: string[] = [];
   const context = {
-    cwd,
-    dryRun: false,
+    cwd: repo,
+    dryRun: options.dryRun ?? false,
     run,
-    manifest: await StateManifest.load(cwd),
-    ui: { start() {}, succeed() {}, fail() {}, info() {} },
+    manifest: await StateManifest.load(repo),
+    ui: {
+      start() {},
+      succeed() {},
+      fail() {},
+      info(message: string) {
+        infos.push(message);
+      },
+    },
   } as unknown as Context;
-  return { context, run };
+  return { context, run, calls, infos, home, repo, pipxHome };
 }
 
-function pipxCalls(run: ReturnType<typeof vi.fn>): string[][] {
-  return run.mock.calls
-    .filter(([command]) => command === "pipx")
-    .map(([, args]) => args as string[]);
+function commandsOf(calls: RunCall[]): string[][] {
+  return calls.map(([command, args]) => [command, ...args]);
 }
 
-describe("crg plugin pins", () => {
+describe("crg plugin — install, verify, uninstall", () => {
   it("previews the pinned install", async () => {
     const { context } = await createTestContext();
 
@@ -54,18 +134,398 @@ describe("crg plugin pins", () => {
     });
   });
 
-  it("installs and runs the pinned version, and uninstalls by name", async () => {
-    const { context, run } = await createTestContext();
+  it("installs the pin into the resolved pipx home, runs the installed binary, and uninstalls by name", async () => {
+    const { context, calls, pipxHome } = await createTestContext();
+    const binaryPath = join(
+      pipxHome,
+      "venvs",
+      "code-review-graph",
+      "bin",
+      "code-review-graph",
+    );
 
     await crgPlugin.install(context);
     await crgPlugin.verify(context);
     await crgPlugin.uninstall(context);
 
-    expect(pipxCalls(run)).toEqual([
-      ["install", PINNED_SPEC],
-      ["run", "--spec", PINNED_SPEC, "code-review-graph", "build"],
-      ["run", "--spec", PINNED_SPEC, "code-review-graph", "status"],
-      ["uninstall", "code-review-graph"],
+    expect(commandsOf(calls)).toEqual([
+      ["pipx", "install", PINNED_SPEC],
+      [binaryPath, "build"],
+      [binaryPath, "status"],
+      ["pipx", "uninstall", "code-review-graph"],
     ]);
+    const pipxEnvironments = calls
+      .filter(([command]) => command === "pipx")
+      .map(([, , options]) => options?.env?.PIPX_HOME);
+    expect(pipxEnvironments).toEqual([pipxHome, pipxHome]);
+  });
+
+  it("fails install with the metadata path when pipx reports success but installed nothing", async () => {
+    const { context, run, pipxHome } = await createTestContext();
+    run.mockImplementation(async () => ({ code: 0, stdout: "", stderr: "" }));
+
+    await expect(crgPlugin.install(context)).rejects.toThrow(
+      `pipx reported success but ${join(pipxHome, "venvs", "code-review-graph", "pipx_metadata.json")} is missing or invalid`,
+    );
+  });
+
+  it("refuses to install when PIPX_HOME is relative", async () => {
+    const { context, calls } = await createTestContext();
+    vi.stubEnv("PIPX_HOME", "relative/pipx");
+
+    await expect(crgPlugin.install(context)).rejects.toThrow(/PIPX_HOME/);
+    expect(calls).toEqual([]);
+  });
+
+  it("crg subprocesses get core.fsmonitor and core.hooksPath disabled, after existing GIT_CONFIG pairs", async () => {
+    const { context, calls, home } = await createTestContext();
+    vi.stubEnv("GIT_CONFIG_COUNT", "1");
+    vi.stubEnv("GIT_CONFIG_KEY_0", "user.name");
+    vi.stubEnv("GIT_CONFIG_VALUE_0", "someone");
+
+    await crgPlugin.install(context);
+
+    const buildCall = calls.find(([, args]) => args[0] === "build");
+    expect(buildCall?.[2]?.env).toEqual({
+      CRG_HOME: join(home, ".code-review-graph"),
+      CRG_DATA_DIR: "",
+      GIT_CONFIG_PARAMETERS: "",
+      GIT_CONFIG_COUNT: "3",
+      GIT_CONFIG_KEY_1: "core.fsmonitor",
+      GIT_CONFIG_VALUE_1: "false",
+      GIT_CONFIG_KEY_2: "core.hooksPath",
+      GIT_CONFIG_VALUE_2: "/dev/null",
+    });
+  });
+
+  it("overwrites a GIT_CONFIG_COUNT that is not a number", async () => {
+    const { context, calls } = await createTestContext();
+    vi.stubEnv("GIT_CONFIG_COUNT", "two");
+
+    await crgPlugin.install(context);
+
+    const buildCall = calls.find(([, args]) => args[0] === "build");
+    expect(buildCall?.[2]?.env).toMatchObject({
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "core.fsmonitor",
+      GIT_CONFIG_KEY_1: "core.hooksPath",
+    });
+  });
+
+  it("says once that CRG_HOME and CRG_DATA_DIR from the environment are not used", async () => {
+    const { context, infos } = await createTestContext();
+    vi.stubEnv("CRG_DATA_DIR", "/somewhere/else");
+
+    await crgPlugin.install(context);
+
+    expect(infos.filter((line) => line.includes("CRG_DATA_DIR"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("records graph-built as agemon's when .code-review-graph did not exist", async () => {
+    const { context } = await createTestContext();
+
+    await crgPlugin.install(context);
+
+    expect(
+      context.manifest
+        .getActions()
+        .find((action) => action.type === "graph-built"),
+    ).toMatchObject({ target: ".code-review-graph", preExisting: false });
+  });
+
+  it("records graph-built as pre-existing when .code-review-graph already existed", async () => {
+    const { context, repo } = await createTestContext();
+    await mkdir(join(repo, ".code-review-graph"));
+
+    await crgPlugin.install(context);
+
+    expect(
+      context.manifest
+        .getActions()
+        .find((action) => action.type === "graph-built"),
+    ).toMatchObject({ target: ".code-review-graph", preExisting: true });
+  });
+});
+
+describe("crg plugin — install edge cases", () => {
+  it("install refuses to build into a .code-review-graph symlink", async () => {
+    const { context, calls, repo, home, infos } = await createTestContext();
+    const elsewhere = join(home, "elsewhere");
+    await mkdir(elsewhere);
+    await symlink(elsewhere, join(repo, ".code-review-graph"));
+
+    await crgPlugin.install(context);
+
+    expect(calls.some(([, args]) => args[0] === "build")).toBe(false);
+    expect(
+      context.manifest
+        .getActions()
+        .some((action) => action.type === "graph-built"),
+    ).toBe(false);
+    expect(infos).toContain(
+      "skipped the graph build: .code-review-graph is a symlink or file, not a directory; remove it, then run code-review-graph build",
+    );
+    expect(await crgPlugin.verify(context)).toMatchObject({ ok: false });
+    expect(calls.some(([, args]) => args[0] === "status")).toBe(false);
+  });
+
+  it("records the graph before building, so a failed build is still cleaned up", async () => {
+    const { context, run, repo } = await createTestContext();
+    const succeed = run.getMockImplementation();
+    run.mockImplementation(async (command, args, options) => {
+      const result = await succeed?.(command, args, options);
+      return args[0] === "build"
+        ? { code: 1, stdout: "", stderr: "build failed" }
+        : (result ?? { code: 0, stdout: "", stderr: "" });
+    });
+
+    await expect(crgPlugin.install(context)).rejects.toThrow("build failed");
+    await crgPlugin.uninstall(context);
+
+    expect(existsSync(join(repo, ".code-review-graph"))).toBe(false);
+  });
+
+  it("says the venv is broken when pipx leaves it without an interpreter", async () => {
+    const { context, run, pipxHome } = await createTestContext();
+    run.mockImplementation(async () => {
+      await createPipxVenv(pipxHome, { withPython: false });
+      return { code: 0, stdout: "", stderr: "" };
+    });
+
+    await expect(crgPlugin.install(context)).rejects.toThrow(
+      "pipx reported success but the pipx venv is broken — run 'pipx reinstall code-review-graph'",
+    );
+  });
+
+  it("passes the crg environment to status and to the PATH --version probe", async () => {
+    const { context, calls, home } = await createTestContext();
+    const binaryPath = join(home, "bin", "code-review-graph");
+    await writeExecutable(binaryPath);
+    vi.stubEnv("PATH", join(home, "bin"));
+
+    await crgPlugin.verify(context);
+
+    const probe = calls.find(([, args]) => args[0] === "--version");
+    const status = calls.find(([, args]) => args[0] === "status");
+    for (const call of [probe, status]) {
+      expect(call?.[0]).toBe(binaryPath);
+      expect(call?.[2]?.env).toMatchObject({
+        CRG_HOME: join(home, ".code-review-graph"),
+        CRG_DATA_DIR: "",
+        GIT_CONFIG_PARAMETERS: "",
+        GIT_CONFIG_KEY_0: "core.fsmonitor",
+        GIT_CONFIG_KEY_1: "core.hooksPath",
+      });
+    }
+  });
+
+  it("strips terminal control characters from a failing status message", async () => {
+    const { context, run, home } = await createTestContext();
+    await writeExecutable(join(home, "bin", "code-review-graph"));
+    vi.stubEnv("PATH", join(home, "bin"));
+    run.mockImplementation(async (_command, args) =>
+      args[0] === "--version"
+        ? { code: 0, stdout: "code-review-graph 2.3.9\n", stderr: "" }
+        : { code: 1, stdout: "", stderr: "bad \u001b[31mred" },
+    );
+
+    const verification = await crgPlugin.verify(context);
+
+    expect(verification).toEqual({ ok: false, detail: "bad ?[31mred" });
+  });
+
+  it("nuke stops the daemon before removing the graph", async () => {
+    const { context, repo } = await createTestContext();
+    await crgPlugin.install(context);
+    await context.manifest.recordAction({
+      plugin: "daemon",
+      type: "registered-service",
+      target: "/fake/agemon-crg-daemon-repo.service",
+      preExisting: false,
+    });
+    const graphPresentAtUnregister: boolean[] = [];
+    const nukeContext = {
+      ...context,
+      yes: true,
+      serviceManager: {
+        async isActive() {
+          return { active: true };
+        },
+        async registerAutostart() {
+          throw new Error("not used");
+        },
+        async unregisterAutostart() {
+          graphPresentAtUnregister.push(
+            existsSync(join(repo, ".code-review-graph")),
+          );
+        },
+      },
+    } as unknown as Context;
+
+    await uninstallPlugins(nukeContext, [crgPlugin, daemonPlugin], {});
+
+    expect(graphPresentAtUnregister).toEqual([true]);
+    expect(existsSync(join(repo, ".code-review-graph"))).toBe(false);
+  });
+});
+
+describe("crg plugin — detection and state", () => {
+  it("detect writes nothing to the ledger", async () => {
+    const { context, home } = await createTestContext();
+    const binDirectory = join(home, "bin");
+    await writeExecutable(join(binDirectory, "code-review-graph"));
+    vi.stubEnv("PATH", binDirectory);
+
+    const presence = await crgPlugin.detect(context);
+
+    expect(presence).toEqual({ present: true, preExisting: true });
+    expect(context.manifest.getActions()).toEqual([]);
+  });
+
+  it("shows the pipx version, and the binary path for a PATH install", async () => {
+    const pipxSetup = await createTestContext();
+    await createPipxVenv(pipxSetup.pipxHome);
+    vi.stubEnv(
+      "PATH",
+      join(pipxSetup.pipxHome, "venvs", "code-review-graph", "bin"),
+    );
+    const [pipxRow] =
+      (await crgPlugin.describeState?.(pipxSetup.context)) ?? [];
+    expect(pipxRow).toMatchObject({
+      state: "present-adopted",
+      detail: "pipx 2.3.9",
+    });
+
+    const pathSetup = await createTestContext();
+    const binaryPath = join(pathSetup.home, "bin", "code-review-graph");
+    await writeExecutable(binaryPath);
+    vi.stubEnv("PATH", join(pathSetup.home, "bin"));
+    const [pathRow] =
+      (await crgPlugin.describeState?.(pathSetup.context)) ?? [];
+    expect(pathRow).toMatchObject({
+      state: "present-adopted",
+      detail: `${binaryPath} 2.3.9`,
+    });
+  });
+
+  it("reports pipx-installed-but-not-on-PATH once with 'pipx ensurepath' and proposes no install", async () => {
+    const { context, infos, pipxHome } = await createTestContext();
+    await createPipxVenv(pipxHome);
+
+    const operations = await crgPlugin.plan?.(context);
+    const [row] = (await crgPlugin.describeState?.(context)) ?? [];
+
+    expect(operations).toEqual([]);
+    expect(
+      infos.filter((line) => line.includes("pipx ensurepath")),
+    ).toHaveLength(1);
+    expect(row?.detail).toBe(
+      "pipx 2.3.9; not on PATH — run 'pipx ensurepath' and open a new shell",
+    );
+    expect(await crgPlugin.detect(context)).toMatchObject({ present: true });
+  });
+
+  it("broken pipx venv is reported, not reinstalled", async () => {
+    const { context, infos, pipxHome, calls } = await createTestContext();
+    await createPipxVenv(pipxHome, { withPython: false });
+
+    const operations = await crgPlugin.plan?.(context);
+    const [row] = (await crgPlugin.describeState?.(context)) ?? [];
+    const verification = await crgPlugin.verify(context);
+
+    expect(operations).toEqual([]);
+    expect(await crgPlugin.detect(context)).toMatchObject({ present: true });
+    expect(infos).toContain(
+      "pipx venv is broken — run 'pipx reinstall code-review-graph'",
+    );
+    expect(row).toMatchObject({
+      state: "unknown",
+      detail: "pipx venv is broken — run 'pipx reinstall code-review-graph'",
+    });
+    expect(verification.ok).toBe(false);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("crg plugin — nuke removes the graph agemon built", () => {
+  async function installedContext(options: { dryRun?: boolean } = {}) {
+    const setup = await createTestContext();
+    await crgPlugin.install(setup.context);
+    (setup.context as { dryRun: boolean }).dryRun = options.dryRun ?? false;
+    return setup;
+  }
+
+  it("removes .code-review-graph when agemon built it and it is a real directory", async () => {
+    const { context, repo } = await installedContext();
+    await writeFile(join(repo, ".code-review-graph", "graph.db"), "x");
+
+    await crgPlugin.uninstall(context);
+
+    expect(existsSync(join(repo, ".code-review-graph"))).toBe(false);
+  });
+
+  it("keeps .code-review-graph that existed before agemon built it", async () => {
+    const { context, repo } = await createTestContext();
+    await mkdir(join(repo, ".code-review-graph"));
+    await crgPlugin.install(context);
+
+    await crgPlugin.uninstall(context);
+
+    expect(existsSync(join(repo, ".code-review-graph"))).toBe(true);
+  });
+
+  it("removes the graph even when crg itself was pre-existing", async () => {
+    const { context, repo } = await createTestContext();
+    await context.manifest.recordAction({
+      plugin: "crg",
+      type: "graph-built",
+      target: ".code-review-graph",
+      preExisting: false,
+    });
+    await mkdir(join(repo, ".code-review-graph"));
+
+    await crgPlugin.uninstall(context);
+
+    expect(existsSync(join(repo, ".code-review-graph"))).toBe(false);
+  });
+
+  it("nuke leaves a .code-review-graph symlink alone and reports it", async () => {
+    const { context, repo, home, infos } = await installedContext();
+    await rm(join(repo, ".code-review-graph"), { recursive: true });
+    const elsewhere = join(home, "graph-elsewhere");
+    await mkdir(elsewhere);
+    await writeFile(join(elsewhere, "keep.txt"), "keep");
+    await symlink(elsewhere, join(repo, ".code-review-graph"));
+
+    await crgPlugin.uninstall(context);
+
+    expect(existsSync(join(elsewhere, "keep.txt"))).toBe(true);
+    expect(infos.some((line) => line.includes("left .code-review-graph"))).toBe(
+      true,
+    );
+  });
+
+  it("reports a missing graph directory without failing", async () => {
+    const { context, repo, infos } = await installedContext();
+    await rm(join(repo, ".code-review-graph"), { recursive: true });
+
+    await crgPlugin.uninstall(context);
+
+    expect(infos).toContain(
+      "no .code-review-graph in the repository; a graph kept elsewhere by crg's registry is not removed",
+    );
+  });
+
+  it("nuke preview names what the graph holds", async () => {
+    const { context, repo, infos } = await installedContext({ dryRun: true });
+
+    await crgPlugin.uninstall(context);
+
+    expect(infos).toContain(
+      "Would remove .code-review-graph/ (code graph, wiki/exports, embeddings — rebuildable with code-review-graph build)",
+    );
+    expect(existsSync(join(repo, ".code-review-graph"))).toBe(true);
   });
 });

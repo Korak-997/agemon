@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -192,6 +193,24 @@ describe("nuke roundtrip", () => {
     expect(afterSnapshot.get("repo/README.md")).toBe(
       beforeSnapshot.get("repo/README.md"),
     );
+  });
+
+  it("removes the graph and the pipx install that agemon created", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      const graphPath = join(repoDirectory, ".code-review-graph");
+      const pipxMetadataPath = join(
+        process.env.HOME ?? "",
+        ".agemon/fake-pipx/venvs/code-review-graph/pipx_metadata.json",
+      );
+
+      expect(await runCli(["--yes"])).toBe(0);
+      expect(existsSync(join(graphPath, "graph.db"))).toBe(true);
+      expect(existsSync(pipxMetadataPath)).toBe(true);
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+      expect(existsSync(graphPath)).toBe(false);
+      expect(existsSync(pipxMetadataPath)).toBe(false);
+    });
   });
 
   it("fails install on unsupported non-Ubuntu platform", async () => {

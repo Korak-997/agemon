@@ -74,7 +74,7 @@ function parseOsReleaseId(osReleaseContents: string): string {
   return "unknown";
 }
 
-async function findBinaryPath(
+export async function findBinaryPath(
   binaryName: RequiredBinary,
   pathEnv: string,
 ): Promise<string | undefined> {

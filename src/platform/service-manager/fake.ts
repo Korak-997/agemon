@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveHomeDirectory } from "../home.js";
 import type {
   RegisterAutostartInput,
   RegisterAutostartResult,
@@ -20,10 +20,6 @@ interface FakeServiceState {
   user: string;
   active: boolean;
   lingerEnabledByAgemon: boolean;
-}
-
-function resolveHomeDir(homeDir?: string): string {
-  return homeDir ?? process.env.HOME ?? homedir();
 }
 
 function resolveUser(user?: string): string {
@@ -52,7 +48,7 @@ async function readMarker(
 export function createFakeServiceManager(
   input: CreateFakeServiceManagerInput,
 ): ServiceManager {
-  const homeDir = resolveHomeDir(input.homeDir);
+  const homeDir = input.homeDir ?? resolveHomeDirectory();
   const user = resolveUser(input.user);
 
   const isActive = async (unitName: string): Promise<ServiceStatus> => {

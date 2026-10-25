@@ -19,7 +19,6 @@ const GIT_TOPLEVEL_TIMEOUT_MS = 10_000;
 const WHICH_TIMEOUT_MS = 10_000;
 
 const ACTION_TYPE_REGISTERED_SERVICE = "registered-service";
-const ACTION_TYPE_PREEXISTING_SERVICE = "preexisting-service";
 const ACTION_TYPE_ENABLED_LINGER = "enabled-linger";
 
 function slugifyForUnitName(raw: string): string {
@@ -110,14 +109,6 @@ function hasManagedServiceRegistration(ctx: Context): boolean {
   );
 }
 
-function hasPreexistingServiceRecord(ctx: Context): boolean {
-  return getPluginActions(ctx).some(
-    (action) =>
-      action.type === ACTION_TYPE_PREEXISTING_SERVICE &&
-      action.preExisting === true,
-  );
-}
-
 async function detectDaemon(ctx: Context): Promise<PluginPresence> {
   const unitName = await resolveUnitName(ctx);
   const status = await ctx.serviceManager.isActive(unitName);
@@ -127,15 +118,6 @@ async function detectDaemon(ctx: Context): Promise<PluginPresence> {
 
   if (hasManagedServiceRegistration(ctx)) {
     return { present: true, preExisting: false };
-  }
-
-  if (!hasPreexistingServiceRecord(ctx) && !ctx.dryRun) {
-    await ctx.manifest.recordAction({
-      plugin: PLUGIN_ID,
-      type: ACTION_TYPE_PREEXISTING_SERVICE,
-      target: unitName,
-      preExisting: true,
-    });
   }
 
   return { present: true, preExisting: true };

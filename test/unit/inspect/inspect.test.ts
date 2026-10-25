@@ -8,7 +8,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
@@ -22,6 +22,7 @@ import type { AgemonPlugin } from "../../../src/plugins/types.js";
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
@@ -437,8 +438,18 @@ describe("inspectRepository capabilities", () => {
 
   it("reports an adopted crg install and absent skills from the real capabilities", async () => {
     const context = await createInspectContext();
+    const home = await mkdtemp(join(tmpdir(), "agemon-inspect-home-"));
+    createdTempDirectories.push(home);
+    const binDirectory = join(home, "bin");
+    await mkdir(binDirectory);
+    await writeFile(join(binDirectory, "code-review-graph"), "#!/bin/sh\n");
+    await chmod(join(binDirectory, "code-review-graph"), 0o755);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("PATH", binDirectory);
+    vi.stubEnv("PIPX_HOME", undefined);
+    vi.stubEnv("XDG_DATA_HOME", undefined);
     context.run = async (command: string) =>
-      command === "code-review-graph"
+      command === join(binDirectory, "code-review-graph")
         ? { code: 0, stdout: "code-review-graph 1.2.3", stderr: "" }
         : { code: 1, stdout: "", stderr: "not found" };
 

@@ -261,3 +261,22 @@ describe("daemon plugin ExecStart resolution", () => {
     );
   });
 });
+
+describe("daemon plugin detection", () => {
+  it("daemon detect writes nothing to the ledger", async () => {
+    const repoDirectory = await createSandboxDirectory("adopted");
+    const serviceState: FakeServiceManagerState = {
+      activeUnitNames: new Set(["agemon-crg-daemon-adopted.service"]),
+      unitContentsByName: new Map(),
+    };
+    const ctx = await createTestContext({
+      cwd: repoDirectory,
+      serviceManager: createFakeServiceManager(serviceState),
+    });
+
+    const presence = await daemonPlugin.detect(ctx);
+
+    expect(presence).toEqual({ present: true, preExisting: true });
+    expect(ctx.manifest.getActions()).toEqual([]);
+  });
+});

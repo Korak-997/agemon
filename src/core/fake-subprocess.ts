@@ -1,8 +1,10 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join } from "node:path";
+import { resolveHomeDirectory } from "../platform/home.js";
 import {
   AGNIX_VERSION,
   CODE_REVIEW_GRAPH_PACKAGE_SPEC,
+  CODE_REVIEW_GRAPH_VERSION,
   ESSENTIALS_SKILLS_COMMIT,
 } from "../plugins/pins.js";
 import { SKILLS_CLI_PATH_IN_TOOLS_DIR } from "../plugins/skills/skills-cli.js";
@@ -12,6 +14,7 @@ import type {
   VerifiedBinaryInstallRequest,
 } from "./verified-binary-installer.js";
 
+const FAKE_CRG_ON_PATH = "/fake/bin/code-review-graph";
 const PINNED_SKILLS_CLI_SUFFIX = `/${SKILLS_CLI_PATH_IN_TOOLS_DIR}`;
 const PINNED_GLOBAL_NPM_PACKAGE_SPECS: ReadonlyMap<string, string> = new Map([
   [`agnix@${AGNIX_VERSION}`, "agnix"],
@@ -186,8 +189,70 @@ function buildFakeSkillsCliResponse(args: string[]): SubprocessResult {
   };
 }
 
-function buildFakeCrgResponse(args: string[]): SubprocessResult {
-  if (!fakeCrgInstalledState) {
+export function fakePipxHome(): string {
+  return join(resolveHomeDirectory(), ".agemon", "fake-pipx");
+}
+
+function fakeCrgVenvPath(): string {
+  return join(fakePipxHome(), "venvs", "code-review-graph");
+}
+
+function fakeCrgStubPath(): string {
+  return join(fakeCrgVenvPath(), "bin", "code-review-graph");
+}
+
+export function fakeCodeReviewGraphOnPath(): string | undefined {
+  initializeFakeStateIfNeeded();
+  if (existsSync(fakeCrgStubPath())) {
+    return fakeCrgStubPath();
+  }
+  return fakeCrgInstalledState ? FAKE_CRG_ON_PATH : undefined;
+}
+
+function writeFakeCrgVenv(): void {
+  const metadataPath = join(fakeCrgVenvPath(), "pipx_metadata.json");
+  if (existsSync(metadataPath)) {
+    return;
+  }
+  mkdirSync(dirname(fakeCrgStubPath()), { recursive: true });
+  writeFileSync(fakeCrgStubPath(), "#!/bin/sh\n", { flag: "wx", mode: 0o755 });
+  writeFileSync(join(fakeCrgVenvPath(), "bin", "python"), "#!/bin/sh\n", {
+    flag: "wx",
+    mode: 0o755,
+  });
+  const metadata = {
+    main_package: {
+      package: "code-review-graph",
+      package_version: CODE_REVIEW_GRAPH_VERSION,
+      app_paths: [{ __Path__: fakeCrgStubPath(), __type__: "Path" }],
+    },
+    pipx_metadata_version: "0.3",
+  };
+  writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, {
+    flag: "wx",
+  });
+}
+
+function buildFakeGraph(cwd: string | undefined): void {
+  if (cwd === undefined) {
+    return;
+  }
+  const graphDirectory = join(cwd, ".code-review-graph");
+  if (existsSync(graphDirectory)) {
+    return;
+  }
+  mkdirSync(graphDirectory);
+  writeFileSync(join(graphDirectory, "graph.db"), "fake graph\n", "utf8");
+}
+
+function buildFakeCrgResponse(
+  command: string,
+  args: string[],
+  cwd: string | undefined,
+): SubprocessResult {
+  const installed =
+    fakeCrgInstalledState || (isAbsolute(command) && existsSync(command));
+  if (!installed) {
     return {
       code: 1,
       stdout: "",
@@ -204,6 +269,7 @@ function buildFakeCrgResponse(args: string[]): SubprocessResult {
   }
 
   if (args[0] === "build") {
+    buildFakeGraph(cwd);
     return {
       code: 0,
       stdout: "Graph build complete\n",
@@ -219,20 +285,12 @@ function buildFakeCrgResponse(args: string[]): SubprocessResult {
 }
 
 function buildFakePipxResponse(args: string[]): SubprocessResult | undefined {
-  if (
-    args[0] === "run" &&
-    args[1] === "--spec" &&
-    args[2] === CODE_REVIEW_GRAPH_PACKAGE_SPEC &&
-    args[3] === "code-review-graph"
-  ) {
-    return buildFakeCrgResponse(args.slice(4));
-  }
-
   const [operation, packageName] = args;
   if (
     operation === "install" &&
     packageName === CODE_REVIEW_GRAPH_PACKAGE_SPEC
   ) {
+    writeFakeCrgVenv();
     fakeCrgInstalledState = true;
     return {
       code: 0,
@@ -242,6 +300,7 @@ function buildFakePipxResponse(args: string[]): SubprocessResult | undefined {
   }
 
   if (operation === "uninstall" && packageName === "code-review-graph") {
+    rmSync(fakeCrgVenvPath(), { recursive: true, force: true });
     fakeCrgInstalledState = false;
     return {
       code: 0,
@@ -421,6 +480,7 @@ function buildFakeAgentResponse(
 export function runFakeSubprocess(
   command: string,
   args: string[],
+  options: { cwd?: string } = {},
 ): SubprocessResult {
   initializeFakeStateIfNeeded();
 
@@ -450,15 +510,15 @@ export function runFakeSubprocess(
     }
   }
 
-  if (command === "code-review-graph") {
-    return buildFakeCrgResponse(args);
-  }
-
   if (command === "agnix") {
     return buildFakeAgnixResponse(args);
   }
 
   const commandBinaryName = basename(command);
+  if (commandBinaryName === "code-review-graph") {
+    return buildFakeCrgResponse(command, args, options.cwd);
+  }
+
   if (FAKE_AGENT_BINARY_NAMES.has(commandBinaryName)) {
     return buildFakeAgentResponse(commandBinaryName, args);
   }
