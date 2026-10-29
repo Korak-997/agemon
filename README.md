@@ -10,6 +10,8 @@ Bootstrap and reverse an AI coding agent environment in a repository with one CL
 `agemon` installs a curated plugin bundle, tracks all managed actions in a state manifest,
 and can cleanly reverse those actions with `nuke`.
 
+Documentation, the skill library and the installer: <https://agemon.korak-kurani.com>.
+
 ![agemon planning skills and a CLI tool in the sandbox, then a roundtrip that leaves the repository byte-identical](docs/demo/agemon.gif)
 
 ## Why agemon
@@ -230,7 +232,7 @@ npm install --global agemon
 **Without npm**, with the installer script:
 
 ```bash
-curl -fsSL https://github.com/Korak-997/agemon/releases/latest/download/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/Korak-997/agemon/releases/latest/download/install.sh | sh
 ```
 
 This downloads the latest self-contained release build (no `node_modules` required),
@@ -241,9 +243,11 @@ The one-liner runs `install.sh` without checking it first. To verify the install
 
 ```bash
 cd "$(mktemp -d)"
-curl -fsSLO https://github.com/Korak-997/agemon/releases/latest/download/install.sh
-curl -fsSLO https://github.com/Korak-997/agemon/releases/latest/download/SHA256SUMS
+curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/Korak-997/agemon/releases/latest/download/install.sh
+curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/Korak-997/agemon/releases/latest/download/SHA256SUMS
 grep ' install.sh$' SHA256SUMS | sha256sum -c -   # macOS: shasum -a 256 -c -
+gh attestation verify install.sh --repo Korak-997/agemon \
+  --signer-workflow Korak-997/agemon/.github/workflows/release.yml   # optional: build provenance
 sh install.sh
 ```
 

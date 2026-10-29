@@ -248,3 +248,16 @@ jobs:
 
       - name: Publish to npm
         run: npm publish ./agemon.tgz --tag "$DIST_TAG"
+
+  website:
+    name: website
+    needs: [publish, npm]
+    if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      attestations: read
+    uses: ./.github/workflows/website.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}

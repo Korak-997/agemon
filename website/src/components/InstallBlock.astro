@@ -1,0 +1,114 @@
+---
+import siteData from "../generated/site-data.json";
+
+const curlOptions = "--proto '=https' --tlsv1.2 -fsSL";
+const installScriptUrl = new URL("/install.sh", Astro.site).href;
+
+const methods = [
+  { id: "npm", label: "npm", command: "npm install --global agemon" },
+  {
+    id: "curl",
+    label: "curl",
+    command: `curl ${curlOptions} ${installScriptUrl} | sh`,
+  },
+];
+
+const isReleaseBuild = siteData.installSh.source === "release";
+---
+
+<section class="install-block" aria-labelledby="install-heading" data-install-sha256={siteData.installSh.sha256}>
+  <h2 id="install-heading">Install</h2>
+  <div role="tablist" aria-label="Install method">
+    {
+      methods.map((method, index) => (
+        <button
+          type="button"
+          role="tab"
+          id={`install-tab-${method.id}`}
+          aria-controls={`install-panel-${method.id}`}
+          aria-selected={index === 0 ? "true" : "false"}
+          tabindex={index === 0 ? "0" : "-1"}
+        >
+          {method.label}
+        </button>
+      ))
+    }
+  </div>
+  {
+    methods.map((method, index) => (
+      <div
+        role="tabpanel"
+        id={`install-panel-${method.id}`}
+        aria-labelledby={`install-tab-${method.id}`}
+        hidden={index !== 0}
+      >
+        <div class="install-command">
+          <code>{method.command}</code>
+          <button type="button" class="copy-button" data-copy={method.command}>
+            Copy
+          </button>
+          <span class="copy-status" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+    ))
+  }
+  <p class:list={["checksum", { development: !isReleaseBuild }]}>
+    {
+      isReleaseBuild
+        ? `install.sh (${siteData.releaseTag}) SHA-256: ${siteData.installSh.sha256}`
+        : `Development build — checksum not from a release: ${siteData.installSh.sha256}`
+    }
+  </p>
+  <details>
+    <summary>Verify before running</summary>
+    <p>
+      The checksum above is served by this site. To check the installer independently,
+      download it from the GitHub release, compare it with the release's
+      <code>SHA256SUMS</code> and verify its build attestation, as shown in
+      <a href="/start/getting-started/#install">Getting started</a>.
+    </p>
+  </details>
+</section>
+
+<script>
+  const COPIED_MESSAGE_MS = 2000;
+
+  for (const block of document.querySelectorAll(".install-block")) {
+    const tabs = [...block.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+
+    const selectTab = (selected: HTMLButtonElement) => {
+      for (const tab of tabs) {
+        const isSelected = tab === selected;
+        tab.setAttribute("aria-selected", String(isSelected));
+        tab.tabIndex = isSelected ? 0 : -1;
+        const panel = block.querySelector<HTMLElement>(
+          `#${tab.getAttribute("aria-controls")}`,
+        );
+        if (panel) panel.hidden = !isSelected;
+      }
+      selected.focus();
+    };
+
+    for (const [index, tab] of tabs.entries()) {
+      tab.addEventListener("click", () => selectTab(tab));
+      tab.addEventListener("keydown", (event) => {
+        const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+        if (step === undefined) return;
+        event.preventDefault();
+        selectTab(tabs[(index + step + tabs.length) % tabs.length]);
+      });
+    }
+
+    for (const button of block.querySelectorAll<HTMLButtonElement>(".copy-button")) {
+      const status = button.nextElementSibling;
+      button.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(button.dataset.copy ?? "");
+        if (!status) return;
+        status.textContent = "Copied";
+        setTimeout(() => {
+          status.textContent = "";
+        }, COPIED_MESSAGE_MS);
+      });
+    }
+  }
+</script>

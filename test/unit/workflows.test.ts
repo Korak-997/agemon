@@ -238,17 +238,17 @@ describe(".github/workflows", () => {
     ]);
   });
 
-  it.each(["release.yml", "cut-release.yml", "pin-freshness.yml"])(
-    "%s restores no dependency cache",
-    (file) => {
-      const workflow = workflows.get(file) as Workflow;
-      for (const job of Object.values(workflow.jobs)) {
-        expect(
-          stepUsing(job, "actions/setup-node")?.with?.cache,
-        ).toBeUndefined();
-      }
-    },
-  );
+  it.each([
+    "release.yml",
+    "cut-release.yml",
+    "pin-freshness.yml",
+    "website.yml",
+  ])("%s restores no dependency cache", (file) => {
+    const workflow = workflows.get(file) as Workflow;
+    for (const job of Object.values(workflow.jobs)) {
+      expect(stepUsing(job, "actions/setup-node")?.with?.cache).toBeUndefined();
+    }
+  });
 
   it("lints the bundled skills in CI", () => {
     const qualityJob = workflows.get("ci.yml")?.jobs.quality as WorkflowJob;
@@ -394,5 +394,144 @@ describe(".github/workflows", () => {
     expect(stepRunning(qualityJob, /npm publish --dry-run/)?.run).toContain(
       "pack-release.sh",
     );
+  });
+});
+
+const SCOPE_LEVELS: Record<string, number> = { none: 0, read: 1, write: 2 };
+
+function jobScopes(
+  workflow: Workflow,
+  job: WorkflowJob,
+): Record<string, string> {
+  return (job.permissions ?? workflow.permissions ?? {}) as Record<
+    string,
+    string
+  >;
+}
+
+function scopesRequestedBy(workflow: Workflow): Record<string, string> {
+  const requested: Record<string, string> = {};
+  for (const job of Object.values(workflow.jobs)) {
+    for (const [scope, level] of Object.entries(jobScopes(workflow, job))) {
+      if (SCOPE_LEVELS[level] > SCOPE_LEVELS[requested[scope] ?? "none"]) {
+        requested[scope] = level;
+      }
+    }
+  }
+  return requested;
+}
+
+describe("the website workflow", () => {
+  const website = workflows.get("website.yml") as Workflow;
+  const build = website.jobs.build;
+  const verify = website.jobs.verify;
+  const deploy = website.jobs.deploy;
+  const scriptOf = (job: WorkflowJob) =>
+    (job.steps ?? []).map((step) => step.run ?? "").join("\n");
+
+  it("deploys from a job that holds only pages: write and id-token: write behind github-pages", () => {
+    expect(deploy.permissions).toEqual({ pages: "write", "id-token": "write" });
+    expect(deploy.environment).toMatchObject({ name: "github-pages" });
+    expect(deploy.needs).toEqual(["build", "verify"]);
+    expect(deploy.steps?.map((step) => step.uses?.split("@")[0])).toEqual([
+      "actions/deploy-pages",
+    ]);
+    expect(deploy.steps?.some((step) => step.run !== undefined)).toBe(false);
+  });
+
+  it("builds from a validated stable tag on master, after checking install.sh against SHA256SUMS and its attestation", () => {
+    const script = scriptOf(build);
+    expect(build.permissions).toEqual({
+      contents: "read",
+      attestations: "read",
+    });
+    expect(script).toContain("^v[0-9]+\\.[0-9]+\\.[0-9]+$");
+    expect(script).toContain("git merge-base --is-ancestor");
+    expect(stepUsing(build, "actions/checkout")?.with).toMatchObject({
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
+    const attestation = script.indexOf("gh attestation verify install.sh");
+    expect(script.indexOf("sha256sum -c -")).toBeGreaterThan(-1);
+    expect(attestation).toBeGreaterThan(script.indexOf("sha256sum -c -"));
+    expect(script).toContain(
+      '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"',
+    );
+    expect(script).toContain("--deny-self-hosted-runners");
+    expect(script.indexOf("npm ci")).toBeGreaterThan(attestation);
+    expect(script).toContain("npm ci --ignore-scripts");
+    expect(script).toContain("npm ci --prefix website --ignore-scripts");
+  });
+
+  it("re-verifies the built site in a job that runs no npm, node or repository JavaScript", () => {
+    const script = scriptOf(verify);
+    expect(verify.needs).toBe("build");
+    expect(verify.permissions).toEqual({
+      contents: "read",
+      attestations: "read",
+    });
+    expect(script).not.toMatch(/\b(npm|npx|node|tsx)\b/u);
+    expect(script).toContain("tar --no-same-owner --no-same-permissions");
+    expect(script).toContain("gh attestation verify");
+    expect(script).toMatch(
+      /sh scripts\/verify-site\.sh "\$RUNNER_TEMP\/site" .*SHA256SUMS"/su,
+    );
+  });
+
+  it("runs manual deploys only from master", () => {
+    expect(build).toMatchObject({
+      if: "github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master'",
+    });
+  });
+
+  it("is deployed by release.yml for stable tags only, and no other release job requests pages", () => {
+    const release = workflows.get("release.yml") as Workflow;
+    const websiteJob = release.jobs.website as WorkflowJob & { if?: string };
+    expect(websiteJob.uses).toBe("./.github/workflows/website.yml");
+    expect(websiteJob.if).toContain(
+      "!contains(inputs.tag || github.ref_name, '-')",
+    );
+    expect(websiteJob.permissions).toEqual({
+      contents: "read",
+      pages: "write",
+      "id-token": "write",
+      attestations: "read",
+    });
+    const pagesJobs = Object.entries(release.jobs)
+      .filter(([, job]) => "pages" in jobScopes(release, job))
+      .map(([name]) => name);
+    expect(pagesJobs).toEqual(["website"]);
+  });
+
+  it("every caller of a reusable workflow grants at least the scopes its jobs request", () => {
+    const shortfalls = [...workflows].flatMap(([file, workflow]) =>
+      Object.entries(workflow.jobs).flatMap(([jobName, job]) => {
+        const callee = job.uses?.match(/^\.\/\.github\/workflows\/(.+)$/u)?.[1];
+        if (!callee) return [];
+        const granted = jobScopes(workflow, job);
+        return Object.entries(
+          scopesRequestedBy(workflows.get(callee) as Workflow),
+        )
+          .filter(
+            ([scope, level]) =>
+              SCOPE_LEVELS[granted[scope] ?? "none"] < SCOPE_LEVELS[level],
+          )
+          .map(
+            ([scope, level]) => `${file}:${jobName} lacks ${scope}: ${level}`,
+          );
+      }),
+    );
+    expect(shortfalls).toEqual([]);
+  });
+
+  it("is built and verified by CI on every pull request", () => {
+    const ci = workflows.get("ci.yml") as Workflow;
+    const ciWebsite = ci.jobs.website as WorkflowJob & { if?: string };
+    expect(ci.on?.pull_request).not.toHaveProperty("paths");
+    expect(ciWebsite.if).toBe(
+      "github.event_name != 'pull_request' || github.event.action != 'edited'",
+    );
+    expect(stepRunning(ciWebsite, /^npm run website:build$/u)).toBeDefined();
+    expect(stepRunning(ciWebsite, /npm audit --prefix website/u)).toBeDefined();
   });
 });

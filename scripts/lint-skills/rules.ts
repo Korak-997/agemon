@@ -5,23 +5,12 @@ import {
   declaredSkillName,
   skillFrontmatter,
 } from "../../src/plugins/skills/skill-manifest.js";
-
-const FIRST_PARTY_SKILLS: readonly string[] = [
-  "code-quality/agemon-house-rules",
-  "commit/agemon-commit",
-  "performance/agemon-performance",
-  "team-lead/agemon-plan-rfc",
-  "team-lead/prd-generator",
-  "team-lead/skill-headofit-audit",
-  "team-lead/skill-incident-rca",
-  "team-lead/skill-meeting-lifecycle",
-  "team-lead/skill-obsidian-vault-sync",
-  "team-lead/skill-prd-decomposer",
-  "team-lead/skill-sec-check",
-  "team-lead/skill-task-extractor",
-  "team-lead/skill-tech-spike",
-  "team-lead/skill-techlead-reviewer",
-];
+import {
+  escapeForPattern,
+  FIRST_PARTY_SKILLS,
+  LICENSE_TEXT_PHRASES,
+  parseNotice,
+} from "../skill-provenance.js";
 
 const NON_MARKDOWN_FILES: readonly string[] = [
   "geo-seo/geo-report-pdf/templates/geo-report-template.html",
@@ -37,43 +26,6 @@ const ALLOWED_FRONTMATTER_KEYS = [
   "tags",
   "triggers",
   "argument-hint",
-];
-
-const LICENSE_TEXT_PHRASES: Record<string, readonly string[]> = {
-  MIT: ["Permission is hereby granted, free of charge"],
-  "Apache-2.0": ["Apache License", "Version 2.0"],
-  "BSD-2-Clause": ["Redistribution and use in source and binary forms"],
-  "BSD-3-Clause": ["Redistribution and use in source and binary forms"],
-  ISC: ["Permission to use, copy, modify, and/or distribute"],
-  "CC-BY-4.0": ["Attribution 4.0 International"],
-};
-
-const ALLOWED_LICENSE_IDS = Object.keys(LICENSE_TEXT_PHRASES);
-
-function escapeForPattern(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-const LICENSE_LINE_PATTERN = new RegExp(
-  `^- License: (${ALLOWED_LICENSE_IDS.map(escapeForPattern).join("|")})(?:\\s.*)?$`,
-  "u",
-);
-
-const NOTICE_FIELDS: readonly { label: string; pattern: RegExp }[] = [
-  { label: "- Source: <https URL>", pattern: /^- Source: https:\/\/\S+$/u },
-  { label: "- Path in source: <path>", pattern: /^- Path in source: \S.*$/u },
-  {
-    label: "- Commit: <40-character commit SHA>",
-    pattern: /^- Commit: [0-9a-f]{40}$/u,
-  },
-  {
-    label: "- Retrieved: <YYYY-MM-DD>",
-    pattern: /^- Retrieved: \d{4}-\d{2}-\d{2}$/u,
-  },
-  {
-    label: `- License: <${ALLOWED_LICENSE_IDS.slice(0, -1).join(", ")} or ${ALLOWED_LICENSE_IDS.at(-1)}>`,
-    pattern: LICENSE_LINE_PATTERN,
-  },
 ];
 
 const CLAUDE_HOME_DIRECTORY_PATTERN =
@@ -289,21 +241,11 @@ function lintNotice(
     );
     return undefined;
   }
-  const noticeLines = notice.split(/\r?\n/u);
-  for (const field of NOTICE_FIELDS) {
-    const matchingLines = noticeLines.filter((line) =>
-      field.pattern.test(line),
-    );
-    if (matchingLines.length !== 1) {
-      report(noticePath, `needs exactly one "${field.label}" line`);
-    }
+  const parsedNotice = parseNotice(notice);
+  for (const label of parsedNotice.fieldsNotExactlyOnce) {
+    report(noticePath, `needs exactly one "${label}" line`);
   }
-  const licenseLines = noticeLines.filter((line) =>
-    LICENSE_LINE_PATTERN.test(line),
-  );
-  return licenseLines.length === 1
-    ? LICENSE_LINE_PATTERN.exec(licenseLines[0])?.[1]
-    : undefined;
+  return parsedNotice.license;
 }
 
 function lintLicense(

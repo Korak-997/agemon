@@ -41,6 +41,15 @@ npm run typecheck
 npm test
 ```
 
+4. If you change anything the website is built from (`README.md`, `SECURITY.md`,
+   `CHANGELOG.md`, `docs/contributing/`, the skill catalog, CLI help text or `website/`),
+   build it once. CI does the same on every pull request:
+
+```bash
+npm ci --prefix website --ignore-scripts
+npm run website:build
+```
+
 ## Sandbox Workflow (Required)
 
 Use the sandbox harness to verify behavior in an isolated environment before opening a PR.

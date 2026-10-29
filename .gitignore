@@ -15,3 +15,9 @@ researches/
 /website/design/
 /website/.astro/
 /agemon-brand/
+/website/src/content/docs/start/
+/website/src/content/docs/reference/
+/website/src/content/docs/skills/
+/website/src/content/docs/project/
+/website/src/generated/
+/website/public/install.sh

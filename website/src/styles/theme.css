@@ -1,0 +1,153 @@
+@import "../assets/brand/tokens.css";
+@import "@fontsource-variable/space-grotesk/wght.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
+
+:root {
+  --sl-font: "Space Grotesk Variable", system-ui, sans-serif;
+  --sl-font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  --sl-color-white: var(--ag-text);
+  --sl-color-gray-1: var(--ag-text);
+  --sl-color-gray-2: #c9d3dd;
+  --sl-color-gray-3: var(--ag-text-muted);
+  --sl-color-gray-4: var(--ag-border-strong);
+  --sl-color-gray-5: var(--ag-border);
+  --sl-color-gray-6: var(--ag-surface);
+  --sl-color-black: var(--ag-bg);
+
+  --sl-color-accent-low: #1b3345;
+  --sl-color-accent: var(--ag-accent);
+  --sl-color-accent-high: var(--ag-accent-hover);
+
+  --sl-color-green: var(--ag-success);
+  --sl-color-orange: var(--ag-warning);
+  --sl-color-red: var(--ag-danger);
+
+  --sl-color-text: var(--ag-text);
+  --sl-color-bg: var(--ag-bg);
+  --sl-color-bg-nav: var(--ag-bg);
+  --sl-color-bg-sidebar: var(--ag-bg);
+  --sl-color-hairline: var(--ag-border);
+  --sl-color-hairline-light: var(--ag-border);
+
+  --sl-content-width: 50rem;
+  --sl-text-body: 1.0625rem;
+  --sl-line-height: 1.65;
+}
+
+:root[data-theme="light"] {
+  --sl-color-gray-2: #2c3a48;
+  --sl-color-gray-6: var(--ag-raised);
+  --sl-color-gray-7: var(--ag-bg);
+  --sl-color-black: var(--ag-surface);
+  --sl-color-accent-low: #d6e3ee;
+}
+
+.install-block {
+  border: 1px solid var(--ag-border);
+  border-radius: 10px;
+  background: var(--ag-surface);
+  padding: 1rem 1.25rem;
+  margin-block: 2rem;
+}
+
+.install-block [role="tablist"] {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.install-block [role="tab"] {
+  min-height: 44px;
+  padding: 0 1rem;
+  border: 1px solid var(--ag-border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ag-text-muted);
+  font: 500 0.8125rem / 1.4 var(--sl-font-mono);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    border-color 160ms,
+    color 160ms;
+}
+
+.install-block [role="tab"]:hover {
+  border-color: var(--ag-text);
+}
+
+.install-block [role="tab"][aria-selected="true"] {
+  border-color: var(--ag-accent);
+  color: var(--ag-text);
+}
+
+.install-block .install-command {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.install-block .install-command code {
+  flex: 1;
+  overflow-x: auto;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--ag-border);
+  border-radius: 6px;
+  background: var(--ag-bg);
+  color: var(--ag-text);
+  font: 0.9375rem / 1.6 var(--sl-font-mono);
+  white-space: pre;
+}
+
+.install-block .copy-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 1rem;
+  border: 1px solid var(--ag-border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ag-text);
+  font: 500 0.875rem / 1 var(--sl-font);
+  cursor: pointer;
+  transition: border-color 160ms;
+}
+
+.install-block .copy-button:hover {
+  border-color: var(--ag-text);
+}
+
+.install-block .copy-status {
+  min-width: 4rem;
+  color: var(--ag-success);
+  font: 0.8125rem / 1.4 var(--sl-font-mono);
+}
+
+.install-block .checksum {
+  margin-top: 1rem;
+  color: var(--ag-text-muted);
+  font: 0.8125rem / 1.4 var(--sl-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.install-block .checksum.development {
+  color: var(--ag-warning);
+}
+
+.install-block details {
+  margin-top: 1rem;
+}
+
+.install-block summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--ag-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .install-block * {
+    transition: none;
+  }
+}
