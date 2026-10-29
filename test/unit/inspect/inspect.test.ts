@@ -18,6 +18,7 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -30,6 +31,7 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
       return { active: false };
     },
@@ -68,6 +70,7 @@ async function createInspectContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [
       { name: "python3", present: true },
       { name: "code-review-graph", present: false },

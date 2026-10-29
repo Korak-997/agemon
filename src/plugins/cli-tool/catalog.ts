@@ -54,6 +54,7 @@ export const CLI_TOOL_BUNDLE: CliToolBundleEntry[] = [
         agnixArchive("agnix-x86_64-unknown-linux-musl.tar.gz"),
       ],
       "linux-arm64": [agnixArchive("agnix-aarch64-unknown-linux-gnu.tar.gz")],
+      "darwin-arm64": [agnixArchive("agnix-aarch64-apple-darwin.tar.gz")],
     },
     sharedResource: {
       id: "npm-global:agnix",

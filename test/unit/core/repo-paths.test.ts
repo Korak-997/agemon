@@ -179,6 +179,8 @@ describe("resolveInsideRepo", () => {
     "sub/.git/hooks/pre-commit",
     ".agemon/state.json",
     "AGENTS\u001b[2J.md",
+    ".g\u200Cit/config",
+    "\uFEFF.git/config",
     `${"x".repeat(256)}.md`,
   ])("refuses %j", async (relativePath) => {
     const repoRoot = await createSandbox();
@@ -187,6 +189,24 @@ describe("resolveInsideRepo", () => {
       RefusedPathError,
     );
   });
+
+  it.each([
+    [".GIT/config", "it is inside a .git directory"],
+    ["sub/.Git/hooks/pre-commit", "it is inside a .git directory"],
+    [".gi\u206At/config", "it is inside a .git directory"],
+    [".g\u00ADit/config", "it is inside a .git directory"],
+    [".git\uFE0F/config", "it is inside a .git directory"],
+    [".AGEMON/state.json", "it is inside agemon's own .agemon/ state"],
+  ])(
+    "refuses %j as case-insensitive filesystems would resolve it",
+    async (relativePath, reason) => {
+      const repoRoot = await createSandbox();
+
+      await expect(resolveInsideRepo(repoRoot, relativePath)).rejects.toThrow(
+        reason,
+      );
+    },
+  );
 
   it.each([
     "AGENTS.md",

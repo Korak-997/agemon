@@ -10,8 +10,9 @@ and can cleanly reverse those actions with `nuke`.
 Current v0.1 behavior is plugin-driven and runs in this order:
 
 1. `crg`: installs and verifies `code-review-graph`.
-2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user`, under a
-   unit name derived from the repository's path — see [Daemon naming](#daemon-naming).
+2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user` (Linux) or
+   a launchd user agent (macOS), under a name derived from the repository's path — see
+   [Daemon naming](#daemon-naming).
 3. `skills`: installs bundled skills with a pinned copy of the `skills` CLI. Always installs the `essentials` group;
    additional groups (design, security, code quality, architecture, self-review, performance,
    team lead) are selected interactively, via `--skill-groups`, or skipped entirely in a
@@ -90,9 +91,30 @@ replaced on the next `agemon` run. User linger is shared by every repository: `n
 switches it off only in the repository that switched it on, once no other repository
 uses it and no other agemon daemon unit is left.
 
+On macOS the daemon is a launchd user agent, `~/Library/LaunchAgents/dev.agemon.crg.<slug>-<hash>.plist`
+(mode `0644`), with the same `<slug>` and `<hash>`. It runs while you are logged in to the
+desktop (launchd has no linger), so register it from a desktop session, not over SSH only.
+launchd offers no per-service sandbox agemon can use, so the agent runs `code-review-graph
+watch` with your normal user rights (like the Linux `compat` profile) and a `PATH` of system
+directories only (`/usr/bin:/bin:/usr/sbin:/sbin`, so git is Apple's `/usr/bin/git`). An
+entry registered on the other OS is never touched: `nuke` fails and names it, so run
+`agemon nuke` on that machine.
+
 ## Requirements
 
-- Linux with Ubuntu (`/etc/os-release` must report `ID=ubuntu`).
+- To install, apply or nuke: Ubuntu, Debian, a derivative whose `/etc/os-release`
+  `ID_LIKE` lists `ubuntu` or `debian` (Linux Mint, Pop!_OS, …), or macOS 11 or later.
+  On macOS, run agemon as your own user: it refuses to run as root there, because
+  everything it installs belongs to one user. `inspect`, `status` and `plan` are
+  read-only and run on any OS with Node.js.
+- agnix (the `cli-tool` capability) has pinned builds for Linux x64, Linux arm64 and
+  Apple Silicon Macs. On other machines (Intel Macs, x64 Node under Rosetta, other Linux
+  architectures) agemon skips `cli-tool` and says so; `agemon.toml` keeps it.
+- Without pipx, install it first: `sudo apt install pipx`, or on macOS
+  `brew install pipx` with Homebrew's bin directory on `PATH`.
+- The daemon needs systemd on Linux, or launchd on macOS. Without systemd (most
+  containers, WSL without systemd), agemon skips the daemon and says so; `agemon.toml`
+  still lists it for machines that have systemd.
 - Node.js `>=22.12` (used to run the installed CLI; no other Node tooling needed).
 - `curl` and `tar` (used by the installer script only).
 - Binaries checked at runtime: `python3`, `pip`, `pipx`, `uv`, `code-review-graph`.
@@ -225,7 +247,8 @@ agemon self-uninstall             # asks once; --yes skips the question
 
 For an install-script copy it removes the install dir, its `.prev` rollback copy, the
 `agemon` link that points into it, the update-check cache, and agemon's machine state
-(`${XDG_STATE_HOME:-~/.local/state}/agemon`: shared-tools ledger and tool caches). It
+(`${XDG_STATE_HOME:-~/.local/state}/agemon`, on macOS `~/Library/Application Support/agemon`
+unless `XDG_STATE_HOME` is set: shared-tools ledger and tool caches). It
 keeps the machine state while a repository still uses a shared tool, an interrupted
 apply can still be recovered, or agemon is running somewhere else, and says which. It
 lists the repositories it knows still have agemon-managed files; agemon only knows
@@ -457,7 +480,8 @@ its usual health/drift output.
 
 Before an apply changes anything, agemon writes a journal with the pre-apply contents of
 every file it will write and a copy of the ledger. The journal lives outside the
-repository, in `${XDG_STATE_HOME:-~/.local/state}/agemon/journals/` (directory mode `0700`,
+repository, in `${XDG_STATE_HOME:-~/.local/state}/agemon/journals/` (macOS:
+`~/Library/Application Support/agemon/journals/`; directory mode `0700`,
 file mode `0600`), so repository contents cannot forge one. It is deleted when the apply
 succeeds or rolls back cleanly.
 
@@ -496,7 +520,8 @@ Every third-party tool and source is pinned to an exact version or commit
 agemon then downloads the binary from the matching GitHub release itself and installs it only
 if the archive matches a sha256 pinned in `src/plugins/pins.ts`.
 
-Machine-level caches outside the repo, under `${XDG_STATE_HOME:-~/.local/state}/agemon/`, are
+Machine-level caches outside the repo, under `${XDG_STATE_HOME:-~/.local/state}/agemon/`
+(macOS: `~/Library/Application Support/agemon/`), are
 kept by `nuke` because every repo on the machine shares them:
 
 - `tools/<hash>/`: the `skills` CLI, installed from `assets/tools/package-lock.json`
@@ -619,7 +644,7 @@ Shipped:
 Planned but not currently implemented:
 
 - Dedicated `doctor` command.
-- Native Windows/macOS platform support.
+- Native Windows support.
 - Agent delegation (`agemon delegate`/`agemon handoff`).
 
 ## License

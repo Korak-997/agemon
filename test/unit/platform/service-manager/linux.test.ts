@@ -16,10 +16,8 @@ import type {
   RunCommand,
   RunCommandResult,
 } from "../../../../src/platform/service-manager/index.js";
-import {
-  createLinuxServiceManager,
-  type ServiceClock,
-} from "../../../../src/platform/service-manager/linux.js";
+import { createLinuxServiceManager } from "../../../../src/platform/service-manager/linux.js";
+import type { ServiceClock } from "../../../../src/platform/service-manager/readiness.js";
 
 const createdTempDirectories: string[] = [];
 

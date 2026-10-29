@@ -11,6 +11,7 @@ import type {
   InstalledPackageInspection,
   VerifiedArchiveCandidate,
 } from "../../core/verified-binary-installer.js";
+import type { PlatformCapabilities } from "../../platform/detect.js";
 import { describeOperation } from "../proposed-operation.js";
 import {
   addSharedHolder,
@@ -37,6 +38,17 @@ const ACTION_TYPE_PREEXISTING_CLI_TOOL = "preexisting-cli-tool";
 
 const VERSION_CHECK_TIMEOUT_MS = 20_000;
 const UNINSTALL_TIMEOUT_MS = 60_000;
+
+export function pinnedArchiveKeyFor(platform: PlatformCapabilities): string {
+  return `${platform.family}-${platform.arch}`;
+}
+
+export function hasPinnedBuildFor(platform: PlatformCapabilities): boolean {
+  const platformKey = pinnedArchiveKeyFor(platform);
+  return CLI_TOOL_BUNDLE.every((entry) =>
+    Object.hasOwn(entry.releaseArchivesByPlatform, platformKey),
+  );
+}
 
 export function resolveVerifiedArchiveCandidates(
   entry: CliToolBundleEntry,
@@ -306,7 +318,7 @@ async function installPinnedCliTool(
   await assertNoForeignGlobalPackage(ctx, entry);
   const candidates = resolveVerifiedArchiveCandidates(
     entry,
-    `${process.platform}-${process.arch}`,
+    pinnedArchiveKeyFor(ctx.platform),
   );
   try {
     await ctx.verifiedBinaryInstaller.install({

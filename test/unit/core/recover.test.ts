@@ -32,6 +32,7 @@ import type {
   AgemonPlugin,
   ProposedOperation,
 } from "../../../src/plugins/types.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const PLAN_ID = "0123456789abcdef";
 const runningAsRoot = process.getuid?.() === 0;
@@ -45,6 +46,7 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
       return { active: false };
     },
@@ -89,6 +91,7 @@ async function createHarness(
     output,
     ctx: {
       cwd: repo,
+      platform: LINUX_TEST_PLATFORM,
       binaries: [],
       dryRun: false,
       yes: true,

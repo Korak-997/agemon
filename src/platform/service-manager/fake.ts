@@ -116,6 +116,7 @@ export function createFakeServiceManager(
   };
 
   return {
+    kind: "systemd-user",
     isActive,
     registerAutostart,
     unregisterAutostart,

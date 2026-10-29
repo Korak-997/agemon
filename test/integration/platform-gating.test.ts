@@ -22,6 +22,18 @@ vi.mock("../../src/platform/detect.js", async (importOriginal) => {
     }),
   };
 });
+const rootOnMacOS = vi.hoisted(() => ({ simulate: false }));
+vi.mock("../../src/core/install-location.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/core/install-location.js")>();
+  return {
+    ...actual,
+    assertNotRootOnMacOS: () =>
+      rootOnMacOS.simulate
+        ? actual.assertNotRootOnMacOS("darwin", 0)
+        : actual.assertNotRootOnMacOS(),
+  };
+});
 const updateCheck = vi.hoisted(() => ({ startUpdateCheck: vi.fn() }));
 vi.mock("../../src/core/update-check.js", () => updateCheck);
 
@@ -35,9 +47,13 @@ const NO_SERVICE_MANAGER: Partial<PlatformCapabilities> = {
 };
 const MACOS: PlatformCapabilities = {
   family: "darwin",
-  serviceManager: "none",
-  unsupportedReason:
-    "agemon cannot change macOS machines yet. Read-only commands (inspect, status, plan) still work here.",
+  arch: "arm64",
+  serviceManager: "launchd",
+  unsupportedReason: null,
+};
+const INTEL_MAC: Partial<PlatformCapabilities> = {
+  family: "darwin",
+  arch: "x64",
 };
 
 let sandboxDirectory: string;
@@ -56,6 +72,7 @@ function stderrText(): string {
 
 beforeEach(async () => {
   platformOverride.value = undefined;
+  rootOnMacOS.simulate = false;
   updateCheck.startUpdateCheck.mockReturnValue(null);
   sandboxDirectory = await realpath(
     await mkdtemp(join(tmpdir(), "agemon-platform-gating-test-")),
@@ -128,7 +145,7 @@ describe("changing commands on an unsupported platform", () => {
       expect(await runCli(argv)).toBe(1);
 
       expect(stderrText()).toContain(
-        "agemon can only change Ubuntu, Debian and their derivatives.",
+        "agemon can only change Ubuntu, Debian, their derivatives and macOS.",
       );
       expect(
         diffSnapshots(before, await snapshotTree(sandboxDirectory)),
@@ -137,13 +154,72 @@ describe("changing commands on an unsupported platform", () => {
     },
   );
 
-  it("install refuses on macOS and leaves no state directory", async () => {
+  it.each([
+    [["--yes"]],
+    [["apply", "--yes"]],
+    [["nuke", "--yes"]],
+    [["upgrade", "--yes"]],
+    [["self-uninstall", "--yes"]],
+  ])("%j refuses root on macOS before any write", async (argv) => {
+    rootOnMacOS.simulate = true;
+    const before = await snapshotTree(sandboxDirectory);
+
+    expect(await runCli(argv)).toBe(1);
+
+    expect(stderrText()).toContain(
+      "On macOS agemon runs as your own user, never as root",
+    );
+    expect(diffSnapshots(before, await snapshotTree(sandboxDirectory))).toEqual(
+      [],
+    );
+  });
+});
+
+describe("macOS", () => {
+  it("install runs on macOS with the daemon and every capability", async () => {
     platformOverride.value = MACOS;
 
-    expect(await runCli(["--yes"])).toBe(1);
+    expect(await runCli(["--yes"])).toBe(0);
 
-    expect(stderrText()).toContain("agemon cannot change macOS machines yet.");
-    expect(existsSync(join(sandboxDirectory, "state"))).toBe(false);
+    expect(stderrText()).not.toContain("skipped");
+    expect(
+      new Set(
+        (await StateManifest.load(repoDirectory))
+          .getActions()
+          .map((entry) => entry.plugin),
+      ),
+    ).toEqual(
+      new Set(["crg", "daemon", "skills", "cli-tool", "master-prompt"]),
+    );
+  });
+
+  it("an Intel Mac skips cli-tool with a notice and keeps it in agemon.toml", async () => {
+    platformOverride.value = INTEL_MAC;
+
+    expect(await runCli(["--yes"])).toBe(0);
+
+    expect(stderrLines).toContainEqual(
+      expect.stringContaining(
+        "cli-tool skipped: agnix has no pinned build for darwin-x64.",
+      ),
+    );
+    const capabilities = (await loadConfig(repoDirectory))?.capabilities;
+    expect(capabilities).toContain("cli-tool");
+    expect(
+      (await StateManifest.load(repoDirectory))
+        .getActions()
+        .some((entry) => entry.plugin === "cli-tool"),
+    ).toBe(false);
+  });
+
+  it("refuses an explicit --only cli-tool on an Intel Mac", async () => {
+    platformOverride.value = INTEL_MAC;
+
+    expect(await runCli(["--yes", "--only", "cli-tool"])).toBe(1);
+
+    expect(stderrText()).toContain(
+      "--only cli-tool cannot run here: agnix has no pinned build for darwin-x64.",
+    );
   });
 });
 

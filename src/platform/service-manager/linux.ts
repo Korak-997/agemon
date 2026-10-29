@@ -1,6 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { errorMessage } from "../../core/error-message.js";
 import { RefusedFileError, writeFileAtomic } from "../../core/files.js";
 import { resolveHomeDirectory } from "../home.js";
@@ -13,12 +12,13 @@ import type {
   ServiceStatus,
   UnregisterAutostartInput,
 } from "./index.js";
+import {
+  type ReadinessObservation,
+  type ServiceClock,
+  systemClock,
+  waitUntilSteadilyRunning,
+} from "./readiness.js";
 import { createUserUnitFiles } from "./user-unit-files.js";
-
-export interface ServiceClock {
-  now(): number;
-  wait(milliseconds: number): Promise<void>;
-}
 
 interface CreateLinuxServiceManagerInput {
   run: RunCommand;
@@ -29,14 +29,6 @@ interface CreateLinuxServiceManagerInput {
 
 const SYSTEM_COMMAND_TIMEOUT_MS = 20_000;
 const UNIT_FILE_MODE = 0o644;
-const READINESS_POLL_INTERVAL_MS = 500;
-const READINESS_TIMEOUT_MS = 10_000;
-const READINESS_SETTLE_MS = 2_000;
-
-const systemClock: ServiceClock = {
-  now: () => Date.now(),
-  wait: (milliseconds) => sleep(milliseconds),
-};
 
 function resolveUser(user?: string): string {
   const resolvedUser = user ?? process.env.USER;
@@ -148,34 +140,22 @@ export function createLinuxServiceManager(
     };
   };
 
-  const waitUntilSteadilyActive = async (unitName: string): Promise<void> => {
-    const deadline = clock.now() + READINESS_TIMEOUT_MS;
-    let activeSince: number | null = null;
-    for (;;) {
-      const { activeState, restarts } = await readUnitState(unitName);
-      if (restarts > 0) {
-        throw new Error(
-          `${unitName} restarted ${restarts} time(s) after it started`,
-        );
-      }
-      if (activeState === "failed" || activeState === "inactive") {
-        throw new Error(`${unitName} is ${activeState}`);
-      }
-      if (activeState === "active") {
-        activeSince ??= clock.now();
-        if (clock.now() - activeSince >= READINESS_SETTLE_MS) {
-          return;
-        }
-      } else {
-        activeSince = null;
-        if (clock.now() >= deadline) {
-          throw new Error(
-            `${unitName} was still ${activeState} after ${READINESS_TIMEOUT_MS / 1000} s`,
-          );
-        }
-      }
-      await clock.wait(READINESS_POLL_INTERVAL_MS);
+  const observeUnit = async (
+    unitName: string,
+  ): Promise<ReadinessObservation> => {
+    const { activeState, restarts } = await readUnitState(unitName);
+    if (restarts > 0) {
+      return {
+        kind: "failed",
+        reason: `${unitName} restarted ${restarts} time(s) after it started`,
+      };
     }
+    if (activeState === "failed" || activeState === "inactive") {
+      return { kind: "failed", reason: `${unitName} is ${activeState}` };
+    }
+    return activeState === "active"
+      ? { kind: "running" }
+      : { kind: "pending", state: activeState };
   };
 
   const startAttempt = async (
@@ -198,7 +178,11 @@ export function createLinuxServiceManager(
       ["--user", "enable", "--now", unitName],
       "Unable to enable/start the daemon unit.",
     );
-    await waitUntilSteadilyActive(unitName);
+    await waitUntilSteadilyRunning(
+      unitName,
+      () => observeUnit(unitName),
+      clock,
+    );
   };
 
   const stopAndDisable = async (unitName: string): Promise<void> => {
@@ -307,6 +291,7 @@ export function createLinuxServiceManager(
   };
 
   return {
+    kind: "systemd-user",
     isActive,
     registerAutostart,
     unregisterAutostart,

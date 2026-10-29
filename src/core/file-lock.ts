@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, open, readFile, rm } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -12,6 +13,11 @@ const STALE_BREAKER_AGE_MS = 60_000;
 const BREAKER_SUFFIX = ".break";
 const START_TIME_INDEX_AFTER_NAME = 19;
 const SMALLEST_TRUSTED_PID = 2;
+const SYSCTL_PATH = "/usr/sbin/sysctl";
+const SYSCTL_TIMEOUT_MS = 5_000;
+const SYSCTL_OUTPUT_LIMIT_BYTES = 1024;
+const BOOT_SESSION_UUID_PATTERN =
+  /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/iu;
 
 export interface ProcessProbe {
   bootId(): Promise<string | null>;
@@ -59,21 +65,57 @@ async function readTrimmedOrNull(path: string): Promise<string | null> {
   }
 }
 
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 const linuxProcessProbe: ProcessProbe = {
   bootId: () => readTrimmedOrNull("/proc/sys/kernel/random/boot_id"),
   async startTime(pid) {
     const stat = await readTrimmedOrNull(`/proc/${pid}/stat`);
     return stat === null ? null : parseProcessStartTime(stat);
   },
-  exists(pid) {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "EPERM";
-    }
-  },
+  exists: processExists,
 };
+
+function readBootSessionUuidWithSysctl(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      SYSCTL_PATH,
+      ["-n", "kern.bootsessionuuid"],
+      { timeout: SYSCTL_TIMEOUT_MS, maxBuffer: SYSCTL_OUTPUT_LIMIT_BYTES },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+  });
+}
+
+export function createDarwinProcessProbe(
+  readBootSessionUuid: () => Promise<string> = readBootSessionUuidWithSysctl,
+): ProcessProbe {
+  let bootId: Promise<string | null> | undefined;
+  return {
+    bootId() {
+      bootId ??= readBootSessionUuid().then(
+        (output) =>
+          BOOT_SESSION_UUID_PATTERN.test(output.trim()) ? output.trim() : null,
+        () => null,
+      );
+      return bootId;
+    },
+    startTime: async () => null,
+    exists: processExists,
+  };
+}
+
+const hostProcessProbe: ProcessProbe =
+  process.platform === "darwin"
+    ? createDarwinProcessProbe()
+    : linuxProcessProbe;
 
 function parseLockOwner(contents: string): LockOwner | null {
   let parsed: unknown;
@@ -245,7 +287,7 @@ export async function withFileLock<Result>(
     );
   }
 
-  const probe = options.probe ?? linuxProcessProbe;
+  const probe = options.probe ?? hostProcessProbe;
   const owner: LockOwner = {
     token: randomUUID(),
     pid: process.pid,

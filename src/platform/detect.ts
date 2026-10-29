@@ -21,10 +21,11 @@ export interface BinaryDetectionResult {
 
 type PlatformFamily = "linux" | "darwin" | "other";
 
-export type ServiceManagerKind = "systemd-user" | "none";
+export type ServiceManagerKind = "systemd-user" | "launchd" | "none";
 
 export interface PlatformCapabilities {
   family: PlatformFamily;
+  arch: string;
   serviceManager: ServiceManagerKind;
   unsupportedReason: string | null;
 }
@@ -32,6 +33,7 @@ export interface PlatformCapabilities {
 export interface DetectPlatformInput {
   osReleasePath?: string;
   hostPlatform?: NodeJS.Platform;
+  hostArch?: string;
   systemdRuntimeDirectory?: string;
 }
 
@@ -102,7 +104,7 @@ async function findLinuxUnsupportedReason(
     return null;
   }
   const osId = readOsReleaseField(osReleaseContents, "ID") ?? "unknown";
-  return `agemon can only change Ubuntu, Debian and their derivatives. ${osReleasePath} reports '${osId}'. ${READ_ONLY_COMMANDS_NOTE}`;
+  return `agemon can only change Ubuntu, Debian, their derivatives and macOS. ${osReleasePath} reports '${osId}'. ${READ_ONLY_COMMANDS_NOTE}`;
 }
 
 async function isDirectory(path: string): Promise<boolean> {
@@ -113,14 +115,25 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
+function usesFakeServices(): boolean {
+  if (process.env.AGEMON_FAKE_SERVICES !== "1") {
+    return false;
+  }
+  assertFakeBackendsAreDevOnly();
+  return true;
+}
+
 async function detectLinuxServiceManager(
   systemdRuntimeDirectory: string,
 ): Promise<ServiceManagerKind> {
-  if (process.env.AGEMON_FAKE_SERVICES === "1") {
-    assertFakeBackendsAreDevOnly();
+  if (usesFakeServices()) {
     return "systemd-user";
   }
   return (await isDirectory(systemdRuntimeDirectory)) ? "systemd-user" : "none";
+}
+
+function detectDarwinServiceManager(): ServiceManagerKind {
+  return usesFakeServices() ? "systemd-user" : "launchd";
 }
 
 function resolveOsReleasePath(input: DetectPlatformInput): string {
@@ -135,16 +148,19 @@ export async function detectPlatformCapabilities(
   input: DetectPlatformInput = {},
 ): Promise<PlatformCapabilities> {
   const hostPlatform = input.hostPlatform ?? process.platform;
+  const arch = input.hostArch ?? process.arch;
   if (hostPlatform === "darwin") {
     return {
       family: "darwin",
-      serviceManager: "none",
-      unsupportedReason: `agemon cannot change macOS machines yet. ${READ_ONLY_COMMANDS_NOTE}`,
+      arch,
+      serviceManager: detectDarwinServiceManager(),
+      unsupportedReason: null,
     };
   }
   if (hostPlatform !== "linux") {
     return {
       family: "other",
+      arch,
       serviceManager: "none",
       unsupportedReason: `agemon does not support ${hostPlatform}. ${READ_ONLY_COMMANDS_NOTE}`,
     };
@@ -152,6 +168,7 @@ export async function detectPlatformCapabilities(
 
   return {
     family: "linux",
+    arch,
     serviceManager: await detectLinuxServiceManager(
       input.systemdRuntimeDirectory ?? SYSTEMD_RUNTIME_DIRECTORY,
     ),

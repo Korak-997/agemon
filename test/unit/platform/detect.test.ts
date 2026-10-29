@@ -104,17 +104,41 @@ describe("detectPlatformCapabilities", () => {
     );
   });
 
-  it("treats darwin as a read-only family with no service manager", async () => {
+  it("treats darwin as a supported family with launchd", async () => {
     const platform = await detectPlatformCapabilities({
       hostPlatform: "darwin",
+      hostArch: "arm64",
     });
 
     expect(platform).toEqual({
       family: "darwin",
-      serviceManager: "none",
-      unsupportedReason:
-        "agemon cannot change macOS machines yet. Read-only commands (inspect, status, plan) still work here.",
+      arch: "arm64",
+      serviceManager: "launchd",
+      unsupportedReason: null,
     });
+  });
+
+  it("reports the host architecture", async () => {
+    expect((await detectPlatformCapabilities()).arch).toBe(process.arch);
+    expect(
+      (
+        await detectPlatformCapabilities({
+          hostPlatform: "win32",
+          hostArch: "x64",
+        })
+      ).arch,
+    ).toBe("x64");
+  });
+
+  it("darwin with fake services reports the kind the fake stands in for", async () => {
+    vi.stubEnv("AGEMON_FAKE_SERVICES", "1");
+    vi.stubEnv("AGEMON_DEV", "1");
+
+    const platform = await detectPlatformCapabilities({
+      hostPlatform: "darwin",
+    });
+
+    expect(platform.serviceManager).toBe("systemd-user");
   });
 
   it("treats other host platforms as unsupported", async () => {

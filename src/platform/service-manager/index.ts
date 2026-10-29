@@ -1,5 +1,6 @@
 import type { ServiceManagerKind } from "../detect.js";
 import { resolveHomeDirectory } from "../home.js";
+import { createLaunchdServiceManager } from "./darwin.js";
 import { createFakeServiceManager } from "./fake.js";
 import { createLinuxServiceManager } from "./linux.js";
 import { createUnavailableServiceManager } from "./unavailable.js";
@@ -47,6 +48,7 @@ export interface UnregisterAutostartInput {
 }
 
 export interface ServiceManager {
+  readonly kind: ServiceManagerKind;
   isActive(unitName: string): Promise<ServiceStatus>;
   registerAutostart(
     input: RegisterAutostartInput,
@@ -75,13 +77,21 @@ export function createServiceManager(
     });
   }
 
-  if (input.kind === "none") {
-    return createUnavailableServiceManager(
-      createUserUnitFiles(resolveHomeDirectory()),
-    );
+  switch (input.kind) {
+    case "systemd-user":
+      return createLinuxServiceManager({
+        run: input.run,
+        user: input.user,
+      });
+    case "launchd":
+      return createLaunchdServiceManager({ run: input.run });
+    case "none":
+      return createUnavailableServiceManager(
+        createUserUnitFiles(resolveHomeDirectory()),
+      );
+    default: {
+      const unhandledKind: never = input.kind;
+      throw new Error(`No service manager for ${String(unhandledKind)}`);
+    }
   }
-  return createLinuxServiceManager({
-    run: input.run,
-    user: input.user,
-  });
 }

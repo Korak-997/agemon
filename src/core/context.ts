@@ -41,6 +41,7 @@ export interface BinaryAvailability {
 
 export interface Context {
   cwd: string;
+  platform: PlatformCapabilities;
   binaries: BinaryAvailability[];
   dryRun: boolean;
   yes: boolean;
@@ -122,6 +123,7 @@ export async function createContext(
 
   return {
     cwd: input.repoRoot,
+    platform: input.platform,
     binaries: checkedBinaries,
     dryRun: input.dryRun,
     yes: input.yes,

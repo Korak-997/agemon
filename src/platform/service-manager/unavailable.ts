@@ -22,6 +22,7 @@ export function createUnavailableServiceManager(
     );
 
   return {
+    kind: "none",
     isActive: async () => ({ active: false }),
     registerAutostart: ({ unitName }) =>
       refuseWithoutSystemd(`agemon cannot register ${unitName} here`),

@@ -4,6 +4,7 @@ import { readRegularFileIfExists, writeFileAtomic } from "../../core/files.js";
 import { sha256Hex } from "../../core/fingerprint.js";
 import { resolveToolsManifestDirectory } from "../../core/package-assets.js";
 import { prepareToolsRoot } from "../../core/state-root.js";
+import { quoteForShlex } from "../../core/untrusted-text.js";
 
 const CONSTRAINTS_FILE_NAME = "code-review-graph-constraints.txt";
 const CONSTRAINTS_HASH_LENGTH = 16;
@@ -22,10 +23,6 @@ export async function ensureCrgConstraintsFile(): Promise<string> {
     await writeFileAtomic(constraintsPath, shippedConstraints);
   }
   return constraintsPath;
-}
-
-function quoteForShlex(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export function hashLockedPipArgs(constraintsPath: string): string {

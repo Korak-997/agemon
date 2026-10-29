@@ -17,3 +17,7 @@ export function printable(value: string): string {
 export function isSafeIdentifier(value: string): boolean {
   return !IDENTIFIER_UNSAFE_CHARACTERS.test(value);
 }
+
+export function quoteForShlex(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}

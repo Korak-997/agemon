@@ -45,6 +45,7 @@ const ACTION_TYPE_INSTALLED_BINARY = "installed-binary";
 const ACTION_TYPE_GRAPH_BUILT = "graph-built";
 
 const GRAPH_ENTRY_NOT_DIRECTORY = `${GRAPH_DIRECTORY} is a symlink or file, not a directory; remove it, then run code-review-graph build`;
+const PIPX_NOT_FOUND = /process spawn error: spawn pipx ENOENT/;
 const NOT_ON_PATH_HINT =
   "not on PATH — run 'pipx ensurepath' and open a new shell";
 
@@ -198,6 +199,14 @@ async function isCrgInstalled(ctx: Context): Promise<boolean> {
   return (await locateCodeReviewGraph(ctx)).status === "found";
 }
 
+function describeMissingPipx(ctx: Context): string {
+  const installHint =
+    ctx.platform.family === "darwin"
+      ? "install it with 'brew install pipx' and make sure Homebrew's bin directory is on PATH (eval \"$(brew shellenv)\")"
+      : "install it with 'sudo apt install pipx'";
+  return `pipx is not on PATH, so ${PACKAGE_NAME} cannot be installed; ${installHint}, then run agemon again.`;
+}
+
 async function pipxInstallCrg(ctx: Context, pipxHome: string): Promise<void> {
   const constraintsPath = await ensureCrgConstraintsFile();
   const installResult = await ctx.run(
@@ -209,6 +218,9 @@ async function pipxInstallCrg(ctx: Context, pipxHome: string): Promise<void> {
     ],
     { timeoutMs: INSTALL_TIMEOUT_MS, env: { PIPX_HOME: pipxHome } },
   );
+  if (PIPX_NOT_FOUND.test(installResult.stderr)) {
+    throw new Error(describeMissingPipx(ctx));
+  }
   if (installResult.code !== 0) {
     throw new Error(
       printable(installResult.stderr) ||
@@ -224,7 +236,7 @@ async function installCrg(ctx: Context): Promise<void> {
     return;
   }
 
-  const pipxHome = await resolvePipxHome();
+  const pipxHome = await resolvePipxHome(ctx.platform.family);
   const outcome = await createSharedResource(
     ctx,
     PLUGIN_ID,
@@ -422,7 +434,7 @@ async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
         ["uninstall", PACKAGE_NAME],
         {
           timeoutMs: UNINSTALL_TIMEOUT_MS,
-          env: { PIPX_HOME: await resolvePipxHome() },
+          env: { PIPX_HOME: await resolvePipxHome(ctx.platform.family) },
         },
       );
       if (uninstallResult.code !== 0) {

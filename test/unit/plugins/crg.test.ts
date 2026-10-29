@@ -26,6 +26,7 @@ import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
 import { describeSharedTools } from "../../../src/plugins/shared-resource.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const PINNED_SPEC = `code-review-graph==${CODE_REVIEW_GRAPH_VERSION}`;
 const METADATA_FIXTURE = join(
@@ -115,6 +116,7 @@ async function createTestContext(options: { dryRun?: boolean } = {}) {
   const infos: string[] = [];
   const context = {
     cwd: repo,
+    platform: LINUX_TEST_PLATFORM,
     dryRun: options.dryRun ?? false,
     run,
     manifest: await StateManifest.load(repo),
@@ -281,6 +283,30 @@ describe("crg plugin — install, verify, uninstall", () => {
 });
 
 describe("crg plugin — install edge cases", () => {
+  it.each([
+    ["linux", "sudo apt install pipx"],
+    ["darwin", "brew install pipx"],
+  ] as const)(
+    "the missing-pipx hint on %s names %s",
+    async (family, installCommand) => {
+      const { context, run } = await createTestContext();
+      run.mockResolvedValue({
+        code: -1,
+        stdout: "",
+        stderr: "process spawn error: spawn pipx ENOENT",
+      });
+
+      await expect(
+        crgPlugin.install({
+          ...context,
+          platform: { ...LINUX_TEST_PLATFORM, family },
+        }),
+      ).rejects.toThrow(
+        `pipx is not on PATH, so code-review-graph cannot be installed; install it with '${installCommand}'`,
+      );
+    },
+  );
+
   it("install refuses to build into a .code-review-graph symlink", async () => {
     const { context, calls, repo, home, infos } = await createTestContext();
     const elsewhere = join(home, "elsewhere");

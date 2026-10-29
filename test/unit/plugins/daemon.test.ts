@@ -19,17 +19,25 @@ import { writeJournal } from "../../../src/core/apply-journal.js";
 import type { Context } from "../../../src/core/context.js";
 import { NotARegularFileError } from "../../../src/core/files.js";
 import { readMachineLedger } from "../../../src/core/machine-ledger.js";
+import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { recoverInterruptedApply } from "../../../src/core/recover.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { SubprocessResult } from "../../../src/core/subprocess-runner.js";
+import type { ServiceManagerKind } from "../../../src/platform/detect.js";
 import type {
   AutostartAttempt,
   ServiceManager,
   UnregisterAutostartInput,
 } from "../../../src/platform/service-manager/index.js";
+import {
+  escapePlistString,
+  readPlistString,
+} from "../../../src/platform/service-manager/launch-agent-files.js";
 import { workingDirectoryOfUnit } from "../../../src/platform/service-manager/unit-files.js";
+import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const runExecutable = promisify(execFile);
 const createdTempDirectories: string[] = [];
@@ -70,8 +78,10 @@ function createServiceState(
 
 function createFakeServiceManager(
   state: FakeServiceManagerState,
+  kind: ServiceManagerKind = "systemd-user",
 ): ServiceManager {
   return {
+    kind,
     async isActive(unitName) {
       return { active: state.activeUnitNames.has(unitName) };
     },
@@ -102,8 +112,11 @@ function createFakeServiceManager(
         throw new NotARegularFileError("read", unitName);
       }
       const unitContents = state.unitContentsByName.get(unitName);
-      return unitContents === undefined
-        ? null
+      if (unitContents === undefined) {
+        return null;
+      }
+      return kind === "launchd"
+        ? readPlistString(unitContents, "WorkingDirectory", unitName)
         : workingDirectoryOfUnit(unitContents);
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -193,6 +206,7 @@ async function createTestContext(options: {
   const infos: string[] = [];
   const ctx: Context = {
     cwd: options.cwd,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: true,
@@ -1372,5 +1386,215 @@ describe("daemon plugin crash points are undone by recover", () => {
     vi.restoreAllMocks();
     await expectClean(ctx, state);
     expect(state.lingerChanges).toEqual(["enable", "disable"]);
+  });
+});
+
+function launchAgentNameFor(repoRealpath: string, slug: string): string {
+  const hash = createHash("sha256")
+    .update(repoRealpath)
+    .digest("hex")
+    .slice(0, 8);
+  return `dev.agemon.crg.${slug}-${hash}.plist`;
+}
+
+async function createLaunchdContext(repoName = "loyl") {
+  const environment = await stubCrgEnvironment();
+  const repo = await createSandboxDirectory(repoName);
+  const state = createServiceState();
+  const testContext = await createTestContext({
+    cwd: repo,
+    serviceManager: createFakeServiceManager(state, "launchd"),
+  });
+  return { ...testContext, repo, state, environment };
+}
+
+function seedLaunchAgent(
+  state: FakeServiceManagerState,
+  plistName: string,
+  workingDirectory: string,
+): void {
+  state.activeUnitNames.add(plistName);
+  state.unitContentsByName.set(
+    plistName,
+    `<plist><dict><key>Label</key><string>x</string><key>WorkingDirectory</key><string>${escapePlistString(workingDirectory)}</string></dict></plist>`,
+  );
+}
+
+describe("daemon plugin under launchd", () => {
+  it("registers a launch agent named after the repo and renders the plist", async () => {
+    const { ctx, repo, state, infos, environment } =
+      await createLaunchdContext();
+
+    const operations = (await daemonPlugin.plan?.(ctx)) ?? [];
+    await daemonPlugin.install(ctx);
+
+    const plistName = launchAgentNameFor(repo, "loyl");
+    expect(operations.map((operation) => operation.preview)).toEqual([
+      {
+        kind: "note",
+        text: `register launchd agent ${plistName} to keep the code graph fresh`,
+      },
+    ]);
+    expect(state.offeredAttempts).toHaveLength(1);
+    expect(state.offeredAttempts[0].map((attempt) => attempt.label)).toEqual([
+      "launchd",
+    ]);
+    const plist = (state.unitContentsByName.get(plistName) ?? "")
+      .replaceAll(plistName.slice(0, -".plist".length), "<label>")
+      .replaceAll(repo, "<repo>")
+      .replaceAll(environment.crgPath, "<crg>")
+      .replaceAll(environment.home, "<home>");
+    expect(plist).toMatchInlineSnapshot(`
+      "<?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+        <key>Label</key>
+        <string><label></string>
+        <key>ProgramArguments</key>
+        <array>
+          <string><crg></string>
+          <string>watch</string>
+        </array>
+        <key>WorkingDirectory</key>
+        <string><repo></string>
+        <key>EnvironmentVariables</key>
+        <dict>
+          <key>PATH</key>
+          <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+          <key>CRG_HOME</key>
+          <string><home>/.code-review-graph</string>
+          <key>GIT_CONFIG_COUNT</key>
+          <string>2</string>
+          <key>GIT_CONFIG_KEY_0</key>
+          <string>core.fsmonitor</string>
+          <key>GIT_CONFIG_VALUE_0</key>
+          <string>false</string>
+          <key>GIT_CONFIG_KEY_1</key>
+          <string>core.hooksPath</string>
+          <key>GIT_CONFIG_VALUE_1</key>
+          <string>/dev/null</string>
+          <key>CRG_DATA_DIR</key>
+          <string></string>
+          <key>GIT_CONFIG_PARAMETERS</key>
+          <string></string>
+        </dict>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <true/>
+        <key>ProcessType</key>
+        <string>Background</string>
+      </dict>
+      </plist>
+      "
+    `);
+    expect(infos).toContain(
+      "daemon hardening: none (launchd has no per-service sandbox)",
+    );
+    expect(registeredUnitNames(ctx)).toEqual([`service-unit:${plistName}`]);
+    expect(
+      ctx.manifest
+        .getActions()
+        .find((action) => action.type === "hardening-profile")?.target,
+    ).toBe("launchd");
+  });
+
+  it("escapes XML special characters in paths", async () => {
+    const { ctx, repo, state } = await createLaunchdContext("a&b<c>");
+
+    await daemonPlugin.install(ctx);
+
+    const plist =
+      state.unitContentsByName.get(launchAgentNameFor(repo, "a-b-c")) ?? "";
+    expect(plist).toContain("a&amp;b&lt;c&gt;");
+    expect(readPlistString(plist, "WorkingDirectory", "x")).toBe(repo);
+  });
+
+  it("never touches linger or the machine ledger in plan, apply, dry-run or nuke", async () => {
+    const { ctx, state, infos } = await createLaunchdContext();
+
+    await daemonPlugin.install({ ...ctx, dryRun: true });
+    await daemonPlugin.install(ctx);
+    expect(await daemonPlugin.plan?.(ctx)).toEqual([]);
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.lingerChanges).toEqual([]);
+    expect(infos.join("\n")).not.toMatch(/linger/i);
+    expect(
+      ctx.manifest
+        .getActions()
+        .some((action) => action.type === "enabled-linger"),
+    ).toBe(false);
+    expect((await readMachineLedger()).resources.linger).toBeUndefined();
+    expect(state.unregistered).toHaveLength(1);
+  });
+
+  it("keeps a ledger-named plist whose WorkingDirectory is a nested repo", async () => {
+    const { ctx, repo, state } = await createLaunchdContext();
+    const nestedRepo = join(repo, "nested");
+    await mkdir(nestedRepo);
+    const plistName = launchAgentNameFor(repo, "loyl");
+    seedLaunchAgent(state, plistName, nestedRepo);
+    await recordUnit(ctx, plistName);
+
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.unregistered).toEqual([]);
+  });
+
+  it("a systemd entry is never booted out on launchd, and nuke fails naming it", async () => {
+    const { ctx, repo, state, infos } = await createLaunchdContext();
+    const systemdUnit = unitNameFor(repo, "loyl");
+    await recordUnit(ctx, systemdUnit);
+
+    await daemonPlugin.install(ctx);
+    expect(infos).toContain(
+      `ignoring ledger entry for ${systemdUnit}: it was registered on another OS`,
+    );
+
+    await expect(daemonPlugin.uninstall(ctx)).rejects.toThrow(
+      `${systemdUnit} was registered on another OS; run 'agemon nuke' there to remove it.`,
+    );
+    expect(state.unregistered.map((call) => call.unitName)).toEqual([
+      launchAgentNameFor(repo, "loyl"),
+    ]);
+  });
+
+  it("a plist entry on systemd is never touched and does not keep linger", async () => {
+    const { ctx, repo, state } = await createMigrationContext();
+    await recordUnit(ctx, launchAgentNameFor(repo, "loyl"));
+
+    await expect(daemonPlugin.uninstall(ctx)).rejects.toThrow(
+      "registered on another OS",
+    );
+
+    expect(state.unregistered).toEqual([]);
+    expect(state.lingerChanges).toEqual([]);
+    expect(await daemonPlugin.plan?.(ctx)).toEqual([
+      expect.objectContaining({ action: "register-service" }),
+    ]);
+  });
+
+  it("a nuke that fails on a systemd entry keeps it in the ledger", async () => {
+    const { ctx, repo } = await createLaunchdContext();
+    const systemdUnit = unitNameFor(repo, "loyl");
+    await recordUnit(ctx, systemdUnit);
+
+    await expect(
+      uninstallPlugins(ctx, [crgPlugin, daemonPlugin], { only: ["daemon"] }),
+    ).rejects.toThrow("Their ledger entries are kept");
+
+    expect(registeredUnitNames(ctx)).toEqual([`service-unit:${systemdUnit}`]);
+  });
+
+  it("a dry-run nuke does not call a recorded other-OS unit pre-existing", async () => {
+    const { ctx, repo, infos } = await createLaunchdContext();
+    await recordUnit(ctx, unitNameFor(repo, "loyl"));
+
+    await daemonPlugin.uninstall({ ...ctx, dryRun: true });
+
+    expect(infos.join("\n")).not.toContain("pre-existing");
+    expect(infos.join("\n")).toContain("registered on another OS");
   });
 });

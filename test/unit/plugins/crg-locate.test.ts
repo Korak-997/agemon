@@ -23,6 +23,7 @@ import {
   resolvePipxHome,
 } from "../../../src/plugins/crg/locate.js";
 import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../../../src/plugins/pins.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const METADATA_FIXTURE = join(
   process.cwd(),
@@ -122,7 +123,14 @@ function createRun(versionOutput = "code-review-graph 2.3.9\n") {
 }
 
 function contextFor(repo: string, run = createRun()) {
-  return { context: { cwd: repo, run } as unknown as Context, run };
+  return {
+    context: {
+      cwd: repo,
+      run,
+      platform: LINUX_TEST_PLATFORM,
+    } as unknown as Context,
+    run,
+  };
 }
 
 describe("locateCodeReviewGraph — pipx metadata", () => {
@@ -328,7 +336,9 @@ describe("resolvePipxHome", () => {
     const sandbox = await createSandbox();
     vi.stubEnv("PIPX_HOME", join(sandbox.home, "custom-pipx"));
 
-    expect(await resolvePipxHome()).toBe(join(sandbox.home, "custom-pipx"));
+    expect(await resolvePipxHome("linux")).toBe(
+      join(sandbox.home, "custom-pipx"),
+    );
   });
 
   it("prefers the legacy ~/.local/pipx when it exists", async () => {
@@ -336,21 +346,43 @@ describe("resolvePipxHome", () => {
     await mkdir(join(sandbox.home, ".local", "pipx"), { recursive: true });
     vi.stubEnv("XDG_DATA_HOME", join(sandbox.home, "xdg"));
 
-    expect(await resolvePipxHome()).toBe(join(sandbox.home, ".local", "pipx"));
+    expect(await resolvePipxHome("linux")).toBe(
+      join(sandbox.home, ".local", "pipx"),
+    );
   });
 
   it("uses $XDG_DATA_HOME/pipx when XDG_DATA_HOME is absolute", async () => {
     const sandbox = await createSandbox();
     vi.stubEnv("XDG_DATA_HOME", join(sandbox.home, "xdg"));
 
-    expect(await resolvePipxHome()).toBe(join(sandbox.home, "xdg", "pipx"));
+    expect(await resolvePipxHome("linux")).toBe(
+      join(sandbox.home, "xdg", "pipx"),
+    );
   });
 
   it("falls back to ~/.local/share/pipx", async () => {
     const sandbox = await createSandbox();
     vi.stubEnv("XDG_DATA_HOME", "relative/xdg");
 
-    expect(await resolvePipxHome()).toBe(sandbox.defaultPipxHome);
+    expect(await resolvePipxHome("linux")).toBe(sandbox.defaultPipxHome);
+  });
+
+  it("uses ~/Library/Application Support/pipx on darwin, ignoring XDG_DATA_HOME", async () => {
+    const sandbox = await createSandbox();
+    vi.stubEnv("XDG_DATA_HOME", join(sandbox.home, "xdg"));
+
+    expect(await resolvePipxHome("darwin")).toBe(
+      join(sandbox.home, "Library", "Application Support", "pipx"),
+    );
+  });
+
+  it("prefers the legacy ~/.local/pipx on darwin when it exists", async () => {
+    const sandbox = await createSandbox();
+    await mkdir(join(sandbox.home, ".local", "pipx"), { recursive: true });
+
+    expect(await resolvePipxHome("darwin")).toBe(
+      join(sandbox.home, ".local", "pipx"),
+    );
   });
 
   it.each([
@@ -362,7 +394,7 @@ describe("resolvePipxHome", () => {
     await createSandbox();
     vi.stubEnv("PIPX_HOME", value);
 
-    await expect(resolvePipxHome()).rejects.toThrow(/PIPX_HOME/);
+    await expect(resolvePipxHome("linux")).rejects.toThrow(/PIPX_HOME/);
   });
 });
 

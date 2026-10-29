@@ -1,8 +1,9 @@
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createDarwinProcessProbe,
   type ProcessProbe,
   parseProcessStartTime,
   withFileLock,
@@ -350,5 +351,103 @@ describe("parseProcessStartTime", () => {
   it("returns null for truncated content", () => {
     expect(parseProcessStartTime("4242 (name) S 1")).toBeNull();
     expect(parseProcessStartTime("garbage")).toBeNull();
+  });
+});
+
+describe("createDarwinProcessProbe", () => {
+  const BOOT_SESSION = "0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0";
+
+  it("reads kern.bootsessionuuid once and caches it", async () => {
+    const readBootSessionUuid = vi.fn(async () => `${BOOT_SESSION}\n`);
+    const probe = createDarwinProcessProbe(readBootSessionUuid);
+
+    expect(await probe.bootId()).toBe(BOOT_SESSION);
+    expect(await probe.bootId()).toBe(BOOT_SESSION);
+    expect(readBootSessionUuid).toHaveBeenCalledTimes(1);
+    expect(await probe.startTime(4242)).toBeNull();
+  });
+
+  it.each([
+    ["junk output", async () => "not a uuid\n"],
+    [
+      "a failing sysctl",
+      async () => {
+        throw new Error("sysctl failed");
+      },
+    ],
+  ])("treats %s as an unknown boot", async (_label, readBootSessionUuid) => {
+    expect(
+      await createDarwinProcessProbe(readBootSessionUuid).bootId(),
+    ).toBeNull();
+  });
+
+  it("with a failing sysctl, liveness falls back to the pid", async () => {
+    const probe = {
+      ...createDarwinProcessProbe(async () => {
+        throw new Error("sysctl failed");
+      }),
+      exists: (pid: number) => pid !== DEAD_PID,
+    };
+    const lockPath = await createLockPath();
+    await writeFile(
+      lockPath,
+      ownerJson({ pid: 4242, bootId: BOOT_SESSION, startTime: null }),
+    );
+
+    await expect(
+      withFileLock(lockPath, async () => "ran", {
+        waitMs: 50,
+        pollMs: 5,
+        probe,
+      }),
+    ).rejects.toThrow(/pid 4242/);
+
+    await writeFile(
+      lockPath,
+      ownerJson({ pid: DEAD_PID, bootId: BOOT_SESSION, startTime: null }),
+    );
+    await expect(
+      withFileLock(lockPath, async () => "ran", {
+        waitMs: 1_000,
+        pollMs: 5,
+        probe,
+      }),
+    ).resolves.toBe("ran");
+  });
+
+  it("a lock from another boot is stale, one from this boot is held", async () => {
+    const probe = {
+      ...createDarwinProcessProbe(async () => BOOT_SESSION),
+      exists: () => true,
+    };
+    const lockPath = await createLockPath();
+    await writeFile(
+      lockPath,
+      ownerJson({
+        pid: 4242,
+        bootId: "11111111-2222-3333-4444-555555555555",
+        startTime: null,
+      }),
+    );
+
+    await expect(
+      withFileLock(lockPath, async () => "ran", {
+        waitMs: 1_000,
+        pollMs: 5,
+        probe,
+      }),
+    ).resolves.toBe("ran");
+
+    await writeFile(
+      lockPath,
+      ownerJson({ pid: 4242, bootId: BOOT_SESSION, startTime: null }),
+    );
+    await expect(
+      withFileLock(lockPath, async () => "ran", {
+        waitMs: 50,
+        pollMs: 5,
+        probe,
+      }),
+    ).rejects.toThrow(/pid 4242/);
   });
 });

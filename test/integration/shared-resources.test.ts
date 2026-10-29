@@ -13,7 +13,6 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseProcessStartTime } from "../../src/core/file-lock.js";
 import {
   cliEntry,
   createFakeBinariesDirectory,
@@ -233,12 +232,8 @@ describe("shared tools across repositories", () => {
       JSON.stringify({
         token: "another-run",
         pid: process.pid,
-        bootId: (
-          await readFile("/proc/sys/kernel/random/boot_id", "utf8")
-        ).trim(),
-        startTime: parseProcessStartTime(
-          await readFile(`/proc/${process.pid}/stat`, "utf8"),
-        ),
+        bootId: null,
+        startTime: null,
         acquiredAt: "2026-10-25T00:00:00.000Z",
       }),
     );

@@ -44,17 +44,38 @@ printable_os_id() {
   printf '%s' "$1" | tr -cd 'A-Za-z0-9._-' | head -c "$MAX_PRINTED_OS_ID_LENGTH"
 }
 
+check_supported_macos() {
+  user_id="$(id -u 2>/dev/null || true)"
+  case "$user_id" in
+    "" | *[!0-9]*)
+      print_error "Could not determine your user id with 'id -u'; agemon will not install without it."
+      exit 1
+      ;;
+  esac
+  if [ "$user_id" -eq 0 ]; then
+    print_error "On macOS, install agemon as your own user (without sudo); it installs into ~/.local."
+    exit 1
+  fi
+  machine_name="$(uname -m 2>/dev/null || true)"
+  case "$machine_name" in
+    arm64 | x86_64) ;;
+    *)
+      print_error "agemon installs on macOS only on arm64 and x86_64. Detected: $(printable_os_id "$machine_name")"
+      exit 1
+      ;;
+  esac
+}
+
 check_supported_platform() {
   kernel_name="$(uname -s 2>/dev/null || true)"
   case "$kernel_name" in
     Linux) ;;
     Darwin)
-      print_error "agemon cannot install on macOS yet."
-      print_error "To run its read-only commands (inspect, status, plan), install it with: npm install -g agemon"
-      exit 1
+      check_supported_macos
+      return 0
       ;;
     *)
-      print_error "agemon installs only on Linux (Ubuntu, Debian and their derivatives). Detected: $(printable_os_id "$kernel_name")"
+      print_error "agemon installs only on Ubuntu, Debian, their derivatives and macOS. Detected: $(printable_os_id "$kernel_name")"
       exit 1
       ;;
   esac
@@ -135,6 +156,7 @@ resolve_physical_path() {
 is_protected_directory() {
   resolve_physical_path "$HOME" >/dev/null || return 0
   for protected_path in / /bin /etc /home /opt /usr /usr/bin /usr/local /usr/local/bin /var \
+    /Users /Library /Applications /System /private /opt/homebrew \
     "$HOME" "${HOME}/.local" "${HOME}/.local/share"; do
     physical_protected_path="$(resolve_physical_path "$protected_path")" || continue
     if [ "$1" = "$physical_protected_path" ]; then

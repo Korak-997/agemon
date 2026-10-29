@@ -95,8 +95,21 @@ function resolveTool(tool: string): string {
   }).trim();
 }
 
-function writeFakeUname(toolsDir: string, kernelName: string): void {
-  writeFileSync(join(toolsDir, "uname"), `#!/bin/sh\necho ${kernelName}\n`, {
+function writeFakeUname(
+  toolsDir: string,
+  kernelName: string,
+  machineName = "x86_64",
+): void {
+  writeFileSync(
+    join(toolsDir, "uname"),
+    `#!/bin/sh\nif [ "$1" = "-m" ]; then echo ${machineName}; else echo ${kernelName}; fi\n`,
+    { mode: 0o755 },
+  );
+}
+
+function writeFakeId(toolsDir: string, uid: number): void {
+  rmSync(join(toolsDir, "id"));
+  writeFileSync(join(toolsDir, "id"), `#!/bin/sh\necho ${uid}\n`, {
     mode: 0o755,
   });
 }
@@ -746,11 +759,47 @@ describe.skipIf(!SHA256SUM_AVAILABLE)("install.sh platform gate", () => {
     expect(existsSync(join(sandbox.root, "agemon"))).toBe(false);
   }
 
-  it("refuses macOS before downloading", () => {
-    writeFakeUname(sandbox.toolsDir, "Darwin");
+  it.each(["arm64", "x86_64"])(
+    "installs on macOS %s without reading os-release",
+    (machineName) => {
+      writeFakeUname(sandbox.toolsDir, "Darwin", machineName);
+      writeFakeId(sandbox.toolsDir, 501);
+      rmSync(sandbox.osReleasePath);
+
+      const result = runInstaller({
+        AGEMON_INSTALL_DIR: join(sandbox.root, "agemon"),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it("refuses an unreadable uid on macOS before downloading", () => {
+    writeFakeUname(sandbox.toolsDir, "Darwin", "arm64");
+    writeFakeId(sandbox.toolsDir, Number.NaN);
+
+    expectRefusedBeforeDownloading("Could not determine your user id");
+  });
+
+  it("refuses root on macOS before downloading", () => {
+    writeFakeUname(sandbox.toolsDir, "Darwin", "arm64");
+    writeFakeId(sandbox.toolsDir, 0);
 
     expectRefusedBeforeDownloading(
-      "To run its read-only commands (inspect, status, plan), install it with: npm install -g agemon",
+      "On macOS, install agemon as your own user (without sudo)",
+    );
+  });
+
+  it("refuses an unknown macOS architecture and other kernels", () => {
+    writeFakeUname(sandbox.toolsDir, "Darwin", "ppc");
+    writeFakeId(sandbox.toolsDir, 501);
+    expectRefusedBeforeDownloading(
+      "agemon installs on macOS only on arm64 and x86_64. Detected: ppc",
+    );
+
+    writeFakeUname(sandbox.toolsDir, "FreeBSD");
+    expectRefusedBeforeDownloading(
+      "agemon installs only on Ubuntu, Debian, their derivatives and macOS. Detected: FreeBSD",
     );
   });
 

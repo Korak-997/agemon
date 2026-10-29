@@ -36,6 +36,12 @@ export function protectedInstallDirectories(home: string): string[] {
     "/usr/local",
     "/usr/local/bin",
     "/var",
+    "/Users",
+    "/Library",
+    "/Applications",
+    "/System",
+    "/private",
+    "/opt/homebrew",
     home,
     join(home, ".local"),
     join(home, ".local", "share"),
@@ -65,6 +71,17 @@ export async function isDefaultInstallDirectory(
     );
   } catch {
     return false;
+  }
+}
+
+export function assertNotRootOnMacOS(
+  hostPlatform: NodeJS.Platform = process.platform,
+  uid: number = currentUid(),
+): void {
+  if (hostPlatform === "darwin" && uid === ROOT_UID) {
+    throw new Error(
+      "On macOS agemon runs as your own user, never as root: everything it installs belongs to one user. Run it without sudo. If agemon was installed with 'sudo npm install -g', remove it with 'sudo npm uninstall -g agemon' and reinstall it as your user.",
+    );
   }
 }
 

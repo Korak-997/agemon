@@ -40,7 +40,9 @@ function currentAccounts(): LocalAccounts {
   };
 }
 
-export function resolveStateRoot(): string {
+export function resolveStateRoot(
+  hostPlatform: NodeJS.Platform = process.platform,
+): string {
   const xdgStateHome = process.env.XDG_STATE_HOME;
   if (xdgStateHome && isAbsolute(xdgStateHome)) {
     return xdgStateHome;
@@ -51,7 +53,9 @@ export function resolveStateRoot(): string {
       "Cannot locate agemon's state directory: set HOME (or XDG_STATE_HOME) to an absolute path.",
     );
   }
-  return join(homeDirectory, ".local", "state");
+  return hostPlatform === "darwin"
+    ? join(homeDirectory, "Library", "Application Support")
+    : join(homeDirectory, ".local", "state");
 }
 
 async function readColonSeparatedRows(path: string): Promise<string[][]> {

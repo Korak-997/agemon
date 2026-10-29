@@ -30,6 +30,7 @@ import type {
   AgemonPlugin,
   ProposedOperation,
 } from "../../../src/plugins/types.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 vi.mock("../../../src/core/files.js", async (importOriginal) => {
   const actual =
@@ -49,6 +50,7 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
       return { active: false };
     },
@@ -81,6 +83,7 @@ async function createSandboxContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: true,

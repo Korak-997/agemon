@@ -20,6 +20,7 @@ import {
   writeJournal,
 } from "../../../src/core/apply-journal.js";
 import { MAX_READ_FILE_BYTES } from "../../../src/core/files.js";
+import { resolveStateRoot } from "../../../src/core/state-root.js";
 
 const PLAN_ID = "0123456789abcdef";
 const createdTempDirectories: string[] = [];
@@ -98,7 +99,7 @@ describe("apply journal location", () => {
 
       const directory = await resolveJournalDirectory(repo);
 
-      expect(directory.startsWith(join(homedir(), ".local", "state"))).toBe(
+      expect(directory.startsWith(join(resolveStateRoot(), "agemon"))).toBe(
         true,
       );
       expect(directory.startsWith(repo)).toBe(false);

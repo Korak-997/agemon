@@ -25,6 +25,7 @@ import {
   SKILL_GROUPS,
 } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -40,6 +41,7 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
       return { active: false };
     },
@@ -96,6 +98,7 @@ async function createTestContext(overrides: {
 
   return {
     cwd: sandboxDirectory,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: overrides.yes ?? false,

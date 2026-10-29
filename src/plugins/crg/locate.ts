@@ -14,7 +14,10 @@ import { isSameOrInside } from "../../core/repo-paths.js";
 import { resolveStateRoot } from "../../core/state-root.js";
 import { agemonSubprocessEnvironment } from "../../core/subprocess-runner.js";
 import { isSafeIdentifier, printable } from "../../core/untrusted-text.js";
-import { findBinaryPath } from "../../platform/detect.js";
+import {
+  findBinaryPath,
+  type PlatformCapabilities,
+} from "../../platform/detect.js";
 import {
   isHomeDirectory,
   isUsableAbsolutePath,
@@ -50,7 +53,7 @@ type PipxLookup =
     }
   | { status: "broken-venv" }
   | null;
-type LocateContext = Pick<Context, "cwd" | "run">;
+type LocateContext = Pick<Context, "cwd" | "run" | "platform">;
 type PathPolicy = (realPath: string) => boolean;
 
 function isFakeSubprocessMode(): boolean {
@@ -66,7 +69,9 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-export async function resolvePipxHome(): Promise<string> {
+export async function resolvePipxHome(
+  family: PlatformCapabilities["family"],
+): Promise<string> {
   if (isFakeSubprocessMode()) {
     const { fakePipxHome } = await import("../../core/fake-subprocess.js");
     return fakePipxHome();
@@ -86,6 +91,9 @@ export async function resolvePipxHome(): Promise<string> {
   const legacyHome = join(home, ".local", "pipx");
   if (await pathExists(legacyHome)) {
     return legacyHome;
+  }
+  if (family === "darwin") {
+    return join(home, "Library", "Application Support", "pipx");
   }
   const dataHome = process.env.XDG_DATA_HOME;
   if (dataHome && isAbsolute(dataHome)) {
@@ -268,7 +276,10 @@ export async function locateCodeReviewGraph(
     repoIsHome || !isSameOrInside(realPath, repoRoot);
 
   const binaryOnPath = await findOnPath(isAllowed);
-  const pipxLocation = await locateInPipx(await resolvePipxHome(), isAllowed);
+  const pipxLocation = await locateInPipx(
+    await resolvePipxHome(ctx.platform.family),
+    isAllowed,
+  );
   if (pipxLocation?.status === "broken-venv") {
     return pipxLocation;
   }

@@ -7,6 +7,7 @@ import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 export const AGEMON_STATE_DIRECTORY = ".agemon";
 const GIT_DIRECTORY = ".git";
+const IGNORABLE_CODE_POINTS = /\p{Default_Ignorable_Code_Point}/gu;
 const MAX_PATH_COMPONENT_BYTES = 255;
 const GITDIR_FILE_PREFIX = "gitdir:";
 const GITDIR_FILE_PROBE_BYTES = 4096;
@@ -63,6 +64,10 @@ async function resolveRealDirectory(
   return current;
 }
 
+function foldForCaseInsensitiveFilesystems(component: string): string {
+  return component.replace(IGNORABLE_CODE_POINTS, "").toLowerCase();
+}
+
 export async function resolveInsideRepo(
   repoRoot: string,
   relativePath: string,
@@ -94,10 +99,11 @@ export async function resolveInsideRepo(
   ) {
     refuseRepoPath(relativePath, "a path component is longer than 255 bytes");
   }
-  if (components.includes(GIT_DIRECTORY)) {
+  const foldedComponents = components.map(foldForCaseInsensitiveFilesystems);
+  if (foldedComponents.includes(GIT_DIRECTORY)) {
     refuseRepoPath(relativePath, "it is inside a .git directory");
   }
-  if (components[0] === AGEMON_STATE_DIRECTORY) {
+  if (foldedComponents[0] === AGEMON_STATE_DIRECTORY) {
     refuseRepoPath(relativePath, "it is inside agemon's own .agemon/ state");
   }
 

@@ -5,9 +5,11 @@ import type { Context } from "../../../src/core/context.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
       return { active: false };
     },
@@ -51,6 +53,7 @@ export async function createAdapterTestContext(
 
   return {
     cwd: sandboxDirectory,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: true,

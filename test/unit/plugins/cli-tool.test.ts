@@ -19,6 +19,8 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { CLI_TOOL_BUNDLE } from "../../../src/plugins/cli-tool/catalog.js";
 import {
   cliToolPlugin,
+  hasPinnedBuildFor,
+  pinnedArchiveKeyFor,
   resolveVerifiedArchiveCandidates,
 } from "../../../src/plugins/cli-tool/index.js";
 import {
@@ -26,6 +28,7 @@ import {
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
 } from "../../../src/plugins/pins.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -37,6 +40,7 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
       return { active: false };
     },
@@ -140,6 +144,7 @@ async function createTestContext(
 
   return {
     cwd: sandboxDirectory,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: true,
@@ -229,12 +234,22 @@ describe("cli-tool plugin", () => {
         version: AGNIX_VERSION,
         binaryPathInPackage: "bin/agnix-binary",
         archiveMemberName: "agnix",
-        candidates: resolveVerifiedArchiveCandidates(
-          AGNIX,
-          `${process.platform}-${process.arch}`,
-        ),
+        candidates: resolveVerifiedArchiveCandidates(AGNIX, "linux-x64"),
         packageTarball: AGNIX_NPM_TARBALL,
       },
+    ]);
+  });
+
+  it("downloads the archive for the context's platform, not the host's", async () => {
+    const context = await createTestContext();
+
+    await cliToolPlugin.install({
+      ...context,
+      platform: { ...LINUX_TEST_PLATFORM, family: "darwin", arch: "arm64" },
+    });
+
+    expect(installRequests.map((request) => request.candidates)).toEqual([
+      resolveVerifiedArchiveCandidates(AGNIX, "darwin-arm64"),
     ]);
   });
 
@@ -424,10 +439,39 @@ describe("cli-tool plugin", () => {
     ]);
   });
 
+  it("maps darwin-arm64 to the aarch64 apple-darwin archive", () => {
+    expect(resolveVerifiedArchiveCandidates(AGNIX, "darwin-arm64")).toEqual([
+      {
+        url: `${AGNIX_RELEASE_URL}/agnix-aarch64-apple-darwin.tar.gz`,
+        sha256:
+          AGNIX_RELEASE_ARCHIVE_SHA256["agnix-aarch64-apple-darwin.tar.gz"],
+      },
+    ]);
+  });
+
   it("refuses a platform without a pinned build", () => {
-    expect(() =>
-      resolveVerifiedArchiveCandidates(AGNIX, "darwin-arm64"),
-    ).toThrow("agnix has no pinned build for darwin-arm64");
+    expect(() => resolveVerifiedArchiveCandidates(AGNIX, "darwin-x64")).toThrow(
+      "agnix has no pinned build for darwin-x64",
+    );
+  });
+
+  it("names the archive key after the context's platform, not the host", () => {
+    const intelMac = {
+      ...LINUX_TEST_PLATFORM,
+      family: "darwin",
+      arch: "x64",
+    } as const;
+
+    expect(pinnedArchiveKeyFor(intelMac)).toBe("darwin-x64");
+    expect(hasPinnedBuildFor(intelMac)).toBe(false);
+    expect(
+      hasPinnedBuildFor({
+        ...LINUX_TEST_PLATFORM,
+        family: "darwin",
+        arch: "arm64",
+      }),
+    ).toBe(true);
+    expect(hasPinnedBuildFor(LINUX_TEST_PLATFORM)).toBe(true);
   });
 
   it("leaves the ledger to the orchestrator when uninstalled directly", async () => {

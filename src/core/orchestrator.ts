@@ -572,6 +572,7 @@ function previewContext(
     consent: refuse,
     run: refuseCommand,
     serviceManager: {
+      kind: ctx.serviceManager.kind,
       isActive: refuseCommand,
       registerAutostart: refuseCommand,
       unregisterAutostart: refuseCommand,

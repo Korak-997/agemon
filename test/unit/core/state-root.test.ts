@@ -16,6 +16,7 @@ import {
   prepareToolsRoot,
   repositoryStateKey,
   resolveAgemonStateDirectory,
+  resolveStateRoot,
   withRepositoryRunLock,
 } from "../../../src/core/state-root.js";
 
@@ -297,5 +298,29 @@ describe("withRepositoryRunLock", () => {
     ]);
 
     expect(order.indexOf("second")).toBeLessThan(order.indexOf("first:end"));
+  });
+});
+
+describe("resolveStateRoot", () => {
+  it("defaults to ~/.local/state on linux", () => {
+    vi.stubEnv("XDG_STATE_HOME", "");
+    vi.stubEnv("HOME", "/home/dev");
+
+    expect(resolveStateRoot("linux")).toBe("/home/dev/.local/state");
+  });
+
+  it("defaults to ~/Library/Application Support on darwin", () => {
+    vi.stubEnv("XDG_STATE_HOME", "");
+    vi.stubEnv("HOME", "/Users/dev");
+
+    expect(resolveStateRoot("darwin")).toBe(
+      "/Users/dev/Library/Application Support",
+    );
+  });
+
+  it("still honors an absolute XDG_STATE_HOME on darwin", () => {
+    vi.stubEnv("XDG_STATE_HOME", "/tmp/state");
+
+    expect(resolveStateRoot("darwin")).toBe("/tmp/state");
   });
 });

@@ -24,6 +24,7 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
 import { renderStatusReport } from "../../../src/ui/status-view.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -36,6 +37,7 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
       return { active: false };
     },
@@ -68,6 +70,7 @@ async function createStatusContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: true,

@@ -5,7 +5,10 @@ import { Command, CommanderError } from "commander";
 import { type AgemonConfig, loadConfig } from "../core/config.js";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
-import { assertRootUsesItsOwnEnvironment } from "../core/install-location.js";
+import {
+  assertNotRootOnMacOS,
+  assertRootUsesItsOwnEnvironment,
+} from "../core/install-location.js";
 import {
   readPackageVersion,
   resolveInstallMethod,
@@ -40,6 +43,10 @@ import {
   detectPlatformCapabilities,
   type PlatformCapabilities,
 } from "../platform/detect.js";
+import {
+  hasPinnedBuildFor,
+  pinnedArchiveKeyFor,
+} from "../plugins/cli-tool/index.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
 import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
@@ -73,7 +80,7 @@ interface CliOptions {
   removeShared?: string;
   print?: boolean;
   rollback?: boolean;
-  daemonSkippedByPlatform?: boolean;
+  platformSkippedIds?: string[];
 }
 
 const SILENT_SPINNER: StepSpinner = {
@@ -134,9 +141,17 @@ export function renderCliError(untrustedMessage: string): string {
   return box({ body: lines.join("\n"), tone: "danger" });
 }
 
+function excludedPluginIds(options: CliOptions): string[] {
+  return [
+    ...(options.skipDaemon ? ["daemon"] : []),
+    ...(options.platformSkippedIds ?? []),
+  ];
+}
+
 function selectPlugins(options: CliOptions): AgemonPlugin[] {
+  const excludedIds = excludedPluginIds(options);
   return getRegisteredPlugins().filter(
-    (plugin) => !(options.skipDaemon && plugin.id === "daemon"),
+    (plugin) => !excludedIds.includes(plugin.id),
   );
 }
 
@@ -146,22 +161,44 @@ function describeMissingServiceManager(platform: PlatformCapabilities): string {
     : "agemon has no service manager for this OS yet";
 }
 
-function skippingTheDaemonWithoutServiceManager(
+function findWhatThisMachineCannotRun(
+  options: CliOptions,
+  platform: PlatformCapabilities,
+): { id: string; reason: string }[] {
+  const unrunnable: { id: string; reason: string }[] = [];
+  if (!options.skipDaemon && platform.serviceManager === "none") {
+    unrunnable.push({
+      id: "daemon",
+      reason: describeMissingServiceManager(platform),
+    });
+  }
+  if (!hasPinnedBuildFor(platform)) {
+    unrunnable.push({
+      id: "cli-tool",
+      reason: `agnix has no pinned build for ${pinnedArchiveKeyFor(platform)}`,
+    });
+  }
+  return unrunnable;
+}
+
+function skippingWhatThisMachineCannotRun(
   options: CliOptions,
   platform: PlatformCapabilities,
 ): CliOptions {
-  if (options.skipDaemon || platform.serviceManager !== "none") {
+  const unrunnable = findWhatThisMachineCannotRun(options, platform);
+  if (unrunnable.length === 0) {
     return options;
   }
-  const reason = describeMissingServiceManager(platform);
   const onlyIds = parseOnlyOption(options);
-  if (onlyIds?.includes("daemon")) {
-    throw new Error(`--only daemon cannot run here: ${reason}.`);
+  for (const { id, reason } of unrunnable) {
+    if (onlyIds?.includes(id)) {
+      throw new Error(`--only ${id} cannot run here: ${reason}.`);
+    }
+    if (onlyIds === undefined && !options.quiet && !options.json) {
+      console.error(theme.dim(`${id} skipped: ${reason}.`));
+    }
   }
-  if (onlyIds === undefined && !options.quiet && !options.json) {
-    console.error(theme.dim(`daemon skipped: ${reason}.`));
-  }
-  return { ...options, skipDaemon: true, daemonSkippedByPlatform: true };
+  return { ...options, platformSkippedIds: unrunnable.map(({ id }) => id) };
 }
 
 function parseOnlyOption(options: CliOptions): string[] | undefined {
@@ -214,8 +251,9 @@ async function resolveDesiredStateDefaults(
     assertConfiguredCapabilitiesAreKnown(config);
   }
 
+  const excludedIds = excludedPluginIds(options);
   const configuredIds = config?.capabilities.filter(
-    (id) => !(options.skipDaemon && id === "daemon"),
+    (id) => !excludedIds.includes(id),
   );
 
   return {
@@ -259,8 +297,9 @@ async function runStatusCommand(options: CliOptions): Promise<number> {
 }
 
 async function runPlanCommand(requested: CliOptions): Promise<number> {
+  assertNotRootOnMacOS();
   const platform = await detectPlatformCapabilities();
-  const options = skippingTheDaemonWithoutServiceManager(requested, platform);
+  const options = skippingWhatThisMachineCannotRun(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const plugins = selectPlugins(options);
   const { only, skillGroups } = await resolveDesiredStateDefaults(
@@ -290,7 +329,7 @@ async function runPlanCommand(requested: CliOptions): Promise<number> {
 
 async function runInstall(requested: CliOptions): Promise<number> {
   const platform = await detectPlatformCapabilities();
-  const options = skippingTheDaemonWithoutServiceManager(requested, platform);
+  const options = skippingWhatThisMachineCannotRun(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
@@ -318,7 +357,7 @@ async function runInstall(requested: CliOptions): Promise<number> {
       allowUnignoredState: Boolean(options.allowUnignoredState),
       conflictDecisions: config?.conflictDecisions,
       persistConfig: config === null,
-      platformSkippedCapabilities: platformSkippedCapabilities(options),
+      platformSkippedCapabilities: options.platformSkippedIds ?? [],
     });
   } catch (error) {
     closeInteractiveFrame(options, "failure");
@@ -333,7 +372,7 @@ async function runApply(requested: CliOptions): Promise<number> {
     assertValidPlanId(requested.plan);
   }
   const platform = await detectPlatformCapabilities();
-  const options = skippingTheDaemonWithoutServiceManager(requested, platform);
+  const options = skippingWhatThisMachineCannotRun(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
@@ -366,7 +405,7 @@ async function runApply(requested: CliOptions): Promise<number> {
       plan,
       conflictDecisions: config?.conflictDecisions,
       persistConfig: config === null,
-      platformSkippedCapabilities: platformSkippedCapabilities(options),
+      platformSkippedCapabilities: options.platformSkippedIds ?? [],
     });
   } catch (error) {
     closeInteractiveFrame(options, "failure");
@@ -374,10 +413,6 @@ async function runApply(requested: CliOptions): Promise<number> {
   }
   closeInteractiveFrame(options);
   return exitCodeForOutcome(outcome);
-}
-
-function platformSkippedCapabilities(options: CliOptions): string[] {
-  return options.daemonSkippedByPlatform ? ["daemon"] : [];
 }
 
 function parseRemoveSharedOption(
@@ -435,6 +470,7 @@ function refusingUnsupportedPlatforms(
 ): (options: CliOptions) => Promise<void> {
   return async (options) => {
     assertPlatformSupportsChanges(await detectPlatformCapabilities());
+    assertNotRootOnMacOS();
     await run(options);
   };
 }
@@ -462,6 +498,7 @@ async function runUpgradeCommand(
   if (options.rollback && (requestedVersion !== undefined || options.print)) {
     throw new Error("--rollback takes no version and no --print.");
   }
+  assertNotRootOnMacOS();
   assertRootUsesItsOwnEnvironment();
   const method = await resolveInstallMethod();
   if (options.rollback) {
@@ -477,6 +514,7 @@ async function runUpgradeCommand(
 }
 
 async function runSelfUninstallCommand(options: CliOptions): Promise<number> {
+  assertNotRootOnMacOS();
   assertRootUsesItsOwnEnvironment();
   return runSelfUninstall({
     method: await resolveInstallMethod(),
@@ -489,6 +527,7 @@ async function runSelfUninstallCommand(options: CliOptions): Promise<number> {
 }
 
 async function runRecover(options: CliOptions): Promise<number> {
+  assertNotRootOnMacOS();
   const context = await createContext({
     repoRoot: await resolveRepositoryRootFor(options),
     platform: await detectPlatformCapabilities(),

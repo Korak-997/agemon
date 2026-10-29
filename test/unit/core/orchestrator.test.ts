@@ -36,6 +36,7 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -47,6 +48,7 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
       return { active: false };
     },
@@ -96,6 +98,7 @@ async function createTestContext(
 
   return {
     cwd: sandboxDirectory,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: true,
