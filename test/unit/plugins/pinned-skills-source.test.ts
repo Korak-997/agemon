@@ -27,6 +27,8 @@ const GIT_WITHOUT_HOOKS = [
   "core.hooksPath=/dev/null",
   "-c",
   "core.fsmonitor=false",
+  "-c",
+  "credential.helper=",
 ];
 
 function gitSubcommand(args: string[]): string[] {
@@ -118,6 +120,12 @@ describe("fetchPinnedSkillsSource", () => {
       expect(options?.cwd).toBe(sourceDirectory);
       expect(options?.env).toMatchObject({
         GIT_TERMINAL_PROMPT: "0",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_COUNT: "0",
+        GIT_CONFIG_PARAMETERS: "",
+        GIT_ASKPASS: "",
+        SSH_ASKPASS: "",
         GIT_DIR: join(sourceDirectory, ".git"),
         GIT_WORK_TREE: sourceDirectory,
         GIT_INDEX_FILE: join(sourceDirectory, ".git", "index"),

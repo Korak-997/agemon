@@ -83,6 +83,7 @@ describe("writePlan / readPlan", () => {
       id: "0123456789abcdef",
       agemonVersion: "9.9.9",
       desiredStateHash: "abc",
+      inputs: { capabilityIds: ["master-prompt"], skillGroups: null },
       createdAt: "2026-01-01T00:00:00.000Z",
       operations: [sampleOperation()],
     };
@@ -102,6 +103,7 @@ function validPlan(overrides: Partial<Plan> = {}): Plan {
     id: VALID_PLAN_ID,
     agemonVersion: "9.9.9",
     desiredStateHash: "abc",
+    inputs: { capabilityIds: ["master-prompt"], skillGroups: null },
     createdAt: "2026-01-01T00:00:00.000Z",
     operations: [sampleOperation()],
     ...overrides,
@@ -152,6 +154,21 @@ describe("readPlan validation", () => {
   it.each<[string, unknown]>([
     ["a missing field", { ...validPlan(), desiredStateHash: undefined }],
     ["a wrong type", { ...validPlan(), operations: "nope" }],
+    ["missing inputs", { ...validPlan(), inputs: undefined }],
+    [
+      "non-array input capabilities",
+      {
+        ...validPlan(),
+        inputs: { capabilityIds: "skills", skillGroups: null },
+      },
+    ],
+    [
+      "a control character in the input skill groups",
+      {
+        ...validPlan(),
+        inputs: { capabilityIds: ["skills"], skillGroups: "all\u001b[2J" },
+      },
+    ],
     [
       "an unknown action",
       validPlan({

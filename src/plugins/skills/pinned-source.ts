@@ -12,6 +12,8 @@ const GIT_WITHOUT_HOOKS_ARGS = [
   "core.hooksPath=/dev/null",
   "-c",
   "core.fsmonitor=false",
+  "-c",
+  "credential.helper=",
 ];
 
 export interface PinnedSkillsRepository {
@@ -45,6 +47,12 @@ function isolatedGitEnvironment(
   const gitDirectory = join(sourceDirectory, ".git");
   return {
     GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_COUNT: "0",
+    GIT_CONFIG_PARAMETERS: "",
+    GIT_ASKPASS: "",
+    SSH_ASKPASS: "",
     GIT_DIR: gitDirectory,
     GIT_WORK_TREE: sourceDirectory,
     GIT_COMMON_DIR: gitDirectory,

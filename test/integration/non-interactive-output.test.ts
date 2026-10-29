@@ -41,8 +41,10 @@ describe("non-interactive output contract", () => {
              register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
-        v  skill-groups:configured  [executes]
-             add the configured skill groups via 'skills add'
+        v  skill-group:essentials   [executes]
+             Essentials:
+             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
 
       cli-tool
         v  agnix                    [executes]
@@ -147,8 +149,10 @@ describe("non-interactive output contract", () => {
              register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
-        v  skill-groups:configured  [executes]
-             add the configured skill groups via 'skills add'
+        v  skill-group:essentials   [executes]
+             Essentials:
+             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
 
       cli-tool
         v  agnix                    [executes]
@@ -244,11 +248,11 @@ describe("non-interactive output contract", () => {
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
       daemon hardening: strict
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
-      ╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
+      ╭ [ok] Applied 18 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             1 operation                                     │
+      │     Skills             10 operations                                   │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
       │                                                                        │
@@ -264,11 +268,11 @@ describe("non-interactive output contract", () => {
       await captureNonInteractiveRun("clean-repo", ["--yes", "--quiet"]),
     ).toMatchInlineSnapshot(`
       "exit 0
-      ╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
+      ╭ [ok] Applied 18 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             1 operation                                     │
+      │     Skills             10 operations                                   │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
       │                                                                        │
@@ -295,8 +299,10 @@ describe("non-interactive output contract", () => {
              register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
-        v  skill-groups:configured  [executes]
-             add the configured skill groups via 'skills add'
+        v  skill-group:essentials   [executes]
+             Essentials:
+             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
 
       cli-tool
         v  agnix                    [executes]
@@ -394,6 +400,7 @@ describe("non-interactive output contract", () => {
           "trackedAgemonPaths": [],
           "trackingCheckError": null
         },
+        "configError": null,
         "resources": [
           {
             "resourceId": "rule-file:AGENTS.md",

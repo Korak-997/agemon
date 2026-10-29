@@ -5,22 +5,55 @@ import {
   readRegularFileIfExists,
   writeFileAtomic,
 } from "./files.js";
-import { printable } from "./untrusted-text.js";
+import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 const CONFIG_FILE_NAME = "agemon.toml";
 const CONFIG_KEYS: readonly string[] = [
   "capabilities",
   "skill_groups",
+  "custom_skill_groups",
   "conflict_decisions",
 ];
 
+const CUSTOM_GROUP_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/u;
+const RESERVED_GROUP_IDS: readonly string[] = ["all", "none"];
+const MAX_CUSTOM_GROUP_LABEL_CHARACTERS = 80;
+const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+const LOCAL_SOURCE_PATTERN = /^\.\/(?:[A-Za-z0-9._-]+\/)*([A-Za-z0-9._-]+)$/u;
+const AGENT_DIRECTORIES: readonly string[] = [".agents", ".claude"];
+const GITHUB_SOURCE_PATTERN =
+  /^github:([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})$/u;
+const COMMIT_REF_PATTERN = /^[0-9a-f]{40}$/u;
+const MAX_CUSTOM_GROUPS = 20;
+const MAX_SKILLS_PER_CUSTOM_GROUP = 50;
+const MAX_REMOTE_REPOSITORIES = 10;
+
 export type ConflictDecision = "keep" | "replace" | "skip";
+
+export type CustomSkillSource =
+  | { kind: "local"; path: string; skillName: string }
+  | {
+      kind: "github";
+      owner: string;
+      repository: string;
+      ref: string;
+      skillName: string;
+    };
+
+export interface CustomSkillGroupConfig {
+  id: string;
+  label: string;
+  skills: CustomSkillSource[];
+}
 
 export interface AgemonConfig {
   capabilities: string[];
   skillGroups: string | null;
+  customSkillGroups: CustomSkillGroupConfig[];
   conflictDecisions: Record<string, ConflictDecision>;
 }
+
+export type PersistedConfig = Omit<AgemonConfig, "customSkillGroups">;
 
 export function resolveConfigPath(cwd: string): string {
   return join(cwd, CONFIG_FILE_NAME);
@@ -62,6 +95,173 @@ function validateSkillGroups(value: unknown): string | null {
     fail("'skill_groups' must be a string when present");
   }
   return value;
+}
+
+function asTable(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail(`'${field}' must be a table`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertOnlyKeys(
+  table: Record<string, unknown>,
+  allowedKeys: readonly string[],
+  field: string,
+): void {
+  const unknownKey = Object.keys(table).find(
+    (key) => !allowedKeys.includes(key),
+  );
+  if (unknownKey !== undefined) {
+    fail(
+      `'${field}' has unknown key '${unknownKey}'. Valid keys: ${allowedKeys.join(", ")}.`,
+    );
+  }
+}
+
+export function isPlainSkillName(value: string): boolean {
+  return SKILL_NAME_PATTERN.test(value);
+}
+
+function validateSkillName(value: unknown, field: string): string {
+  if (typeof value !== "string" || !isPlainSkillName(value)) {
+    fail(
+      `'${field}' must be a skill name of lower-case letters, digits, '.', '_' or '-' (at most 64 characters, not starting with '-' or '.')`,
+    );
+  }
+  return value;
+}
+
+function validateLocalSource(path: string, field: string): CustomSkillSource {
+  const match = LOCAL_SOURCE_PATTERN.exec(path);
+  const components = path.split("/").slice(1);
+  if (
+    match === null ||
+    components.some((component) => component === "." || component === "..")
+  ) {
+    fail(
+      `'${field}' must be a repository-relative path like "./tools/skills/<name>" without '.' or '..' components`,
+    );
+  }
+  if (AGENT_DIRECTORIES.includes(components[0].toLowerCase())) {
+    fail(
+      `'${field}' must not point into ${AGENT_DIRECTORIES.join(" or ")}, where installed skills live`,
+    );
+  }
+  return {
+    kind: "local",
+    path,
+    skillName: validateSkillName(match[1], `${field} (last path component)`),
+  };
+}
+
+function validateCustomSkill(value: unknown, field: string): CustomSkillSource {
+  const skill = asTable(value, field);
+  if (typeof skill.source !== "string") {
+    fail(`'${field}.source' must be a string`);
+  }
+  if (!skill.source.startsWith("github:")) {
+    assertOnlyKeys(skill, ["source"], field);
+    return validateLocalSource(skill.source, `${field}.source`);
+  }
+
+  assertOnlyKeys(skill, ["source", "ref", "skill"], field);
+  const match = GITHUB_SOURCE_PATTERN.exec(skill.source);
+  if (match === null) {
+    fail(`'${field}.source' must be "github:<owner>/<repository>"`);
+  }
+  if (typeof skill.ref !== "string" || !COMMIT_REF_PATTERN.test(skill.ref)) {
+    fail(
+      `'${field}.ref' must be a full 40-character commit sha; branches, tags and short shas are refused`,
+    );
+  }
+  return {
+    kind: "github",
+    owner: match[1],
+    repository: match[2],
+    ref: skill.ref,
+    skillName: validateSkillName(skill.skill, `${field}.skill`),
+  };
+}
+
+function validateCustomSkillGroup(
+  id: string,
+  value: unknown,
+): CustomSkillGroupConfig {
+  const field = `custom_skill_groups.${id}`;
+  if (!CUSTOM_GROUP_ID_PATTERN.test(id) || RESERVED_GROUP_IDS.includes(id)) {
+    fail(
+      `'${field}': a group id is lower-case letters, digits and '-' (at most 40 characters), and not ${RESERVED_GROUP_IDS.join(" or ")}`,
+    );
+  }
+  const group = asTable(value, field);
+  assertOnlyKeys(group, ["label", "skills"], field);
+  if (
+    typeof group.label !== "string" ||
+    group.label.trim().length === 0 ||
+    group.label.length > MAX_CUSTOM_GROUP_LABEL_CHARACTERS ||
+    !isSafeIdentifier(group.label)
+  ) {
+    fail(
+      `'${field}.label' must be a non-empty single-line string of at most ${MAX_CUSTOM_GROUP_LABEL_CHARACTERS} characters, without invisible or control characters`,
+    );
+  }
+  if (
+    !Array.isArray(group.skills) ||
+    group.skills.length === 0 ||
+    group.skills.length > MAX_SKILLS_PER_CUSTOM_GROUP
+  ) {
+    fail(
+      `'${field}.skills' must list between 1 and ${MAX_SKILLS_PER_CUSTOM_GROUP} skills`,
+    );
+  }
+  return {
+    id,
+    label: group.label,
+    skills: group.skills.map((skill: unknown, index: number) =>
+      validateCustomSkill(skill, `${field}.skills[${index}]`),
+    ),
+  };
+}
+
+function validateCustomSkillGroups(value: unknown): CustomSkillGroupConfig[] {
+  if (value === undefined) {
+    return [];
+  }
+  const groups = Object.entries(asTable(value, "custom_skill_groups")).map(
+    ([id, group]) => validateCustomSkillGroup(id, group),
+  );
+  if (groups.length > MAX_CUSTOM_GROUPS) {
+    fail(
+      `'custom_skill_groups' may define at most ${MAX_CUSTOM_GROUPS} groups`,
+    );
+  }
+
+  const skillNames = groups.flatMap((group) =>
+    group.skills.map((skill) => skill.skillName),
+  );
+  const duplicateName = skillNames.find(
+    (name, index) => skillNames.indexOf(name) !== index,
+  );
+  if (duplicateName !== undefined) {
+    fail(
+      `skill '${duplicateName}' appears more than once in 'custom_skill_groups'`,
+    );
+  }
+
+  const remoteRepositories = new Set(
+    groups.flatMap((group) =>
+      group.skills.flatMap((skill) =>
+        skill.kind === "github" ? [`${skill.owner}/${skill.repository}`] : [],
+      ),
+    ),
+  );
+  if (remoteRepositories.size > MAX_REMOTE_REPOSITORIES) {
+    fail(
+      `'custom_skill_groups' may use at most ${MAX_REMOTE_REPOSITORIES} GitHub repositories`,
+    );
+  }
+  return groups;
 }
 
 function validateConflictDecisions(
@@ -114,13 +314,14 @@ export async function loadConfig(cwd: string): Promise<AgemonConfig | null> {
   return {
     capabilities: validateCapabilities(record.capabilities),
     skillGroups: validateSkillGroups(record.skill_groups),
+    customSkillGroups: validateCustomSkillGroups(record.custom_skill_groups),
     conflictDecisions: validateConflictDecisions(record.conflict_decisions),
   };
 }
 
 export async function writeConfig(
   cwd: string,
-  config: AgemonConfig,
+  config: PersistedConfig,
 ): Promise<string> {
   const configPath = resolveConfigPath(cwd);
   const payload: Record<string, unknown> = {

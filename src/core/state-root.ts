@@ -210,13 +210,19 @@ export async function checkAgemonStateDirectoryBeforeRun(
   }
 }
 
-export async function prepareToolsRoot(): Promise<string> {
-  const toolsRoot = join(
+export async function preparePrivateStateDirectory(
+  name: string,
+): Promise<string> {
+  const directory = join(
     (await resolveAgemonStateDirectory("prepare")).path,
-    "tools",
+    name,
   );
-  await mkdir(toolsRoot, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-  return toolsRoot;
+  await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+  return directory;
+}
+
+export function prepareToolsRoot(): Promise<string> {
+  return preparePrivateStateDirectory("tools");
 }
 
 export async function repositoryStateKey(repoRoot: string): Promise<string> {

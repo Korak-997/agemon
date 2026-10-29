@@ -13,10 +13,16 @@ export const PLAN_SEGMENTS = ["plans"] as const;
 const PLAN_ID_LENGTH = 16;
 const PLAN_ID_PATTERN = /^[0-9a-f]{16}$/u;
 
+export interface PlanInputs {
+  capabilityIds: string[];
+  skillGroups: string | null;
+}
+
 export interface Plan {
   id: string;
   agemonVersion: string;
   desiredStateHash: string;
+  inputs: PlanInputs;
   createdAt: string;
   operations: ProposedOperation[];
 }
@@ -27,19 +33,20 @@ interface PlanIdentityInput {
   operations: ProposedOperation[];
 }
 
-export function resolveDesiredStateHash(input: {
-  capabilityIds: string[];
-  skillGroups: string | null;
-}): string {
-  return fingerprintJson(input);
+export function resolveDesiredStateHash(inputs: PlanInputs): string {
+  return fingerprintJson(inputs);
 }
 
-export function computePlanId(input: PlanIdentityInput): string {
+export function planContentFingerprint(input: PlanIdentityInput): string {
   return fingerprintJson({
     agemonVersion: input.agemonVersion,
     desiredStateHash: input.desiredStateHash,
     operations: input.operations,
-  }).slice(0, PLAN_ID_LENGTH);
+  });
+}
+
+export function computePlanId(input: PlanIdentityInput): string {
+  return planContentFingerprint(input).slice(0, PLAN_ID_LENGTH);
 }
 
 export function assertValidPlanId(planId: string): void {
@@ -102,6 +109,23 @@ function validatePlan(parsed: unknown, planId: string): Plan {
   if (plan.id !== planId) {
     fail("its id does not match the requested plan id");
   }
+  if (plan.inputs === undefined) {
+    fail(
+      "it has no 'inputs'; it was made before this agemon. Re-run 'agemon plan'",
+    );
+  }
+  const inputs = asRecord(plan.inputs, "inputs");
+  if (!Array.isArray(inputs.capabilityIds)) {
+    fail("'inputs.capabilityIds' must be an array");
+  }
+  const capabilityIds = (inputs.capabilityIds as unknown[]).map(
+    (capabilityId, index) =>
+      identifier(capabilityId, `inputs.capabilityIds[${index}]`),
+  );
+  const skillGroups =
+    inputs.skillGroups === null
+      ? null
+      : identifier(inputs.skillGroups, "inputs.skillGroups");
   if (!Array.isArray(plan.operations)) {
     fail("'operations' must be an array");
   }
@@ -172,6 +196,7 @@ function validatePlan(parsed: unknown, planId: string): Plan {
     id: planId,
     agemonVersion: identifier(plan.agemonVersion, "agemonVersion"),
     desiredStateHash: identifier(plan.desiredStateHash, "desiredStateHash"),
+    inputs: { capabilityIds, skillGroups },
     createdAt: identifier(plan.createdAt, "createdAt"),
     operations,
   };

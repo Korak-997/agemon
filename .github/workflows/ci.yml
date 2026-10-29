@@ -95,7 +95,7 @@ jobs:
         run: npm run sandbox -- roundtrip clean-repo
 
   macos:
-    name: macos read-only commands
+    name: macos tests
     runs-on: macos-latest
     if: github.event_name != 'pull_request' || github.event.action != 'edited'
 
@@ -114,10 +114,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
 
-      - name: Run inspect, status and plan, and refuse install
+      - name: Smoke-test the packaged bundle
+        run: npm run smoke
+
+      - name: Sandbox dry-run checkpoint
+        run: npm run sandbox -- run clean-repo --dry-run
+
+      - name: Run inspect, status and plan
         run: |
           repo="$RUNNER_TEMP/macos-repo"
           mkdir "$repo"
@@ -127,11 +139,6 @@ jobs:
           node "$agemon" inspect
           node "$agemon" status
           node "$agemon" plan
-          if node "$agemon" --yes 2> refusal.txt; then
-            echo "install should be refused on macOS" >&2
-            exit 1
-          fi
-          grep -q "agemon cannot change macOS machines yet" refusal.txt
 
   workflow-lint:
     name: workflow lint

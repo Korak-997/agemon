@@ -138,10 +138,9 @@ export async function resolveStateDirectory(
 export async function resolveRepoDirectory(
   repoRoot: string,
   relativeDirectory: string,
+  options: { create: boolean } = { create: false },
 ): Promise<string | null> {
-  return resolveRealDirectory(repoRoot, relativeDirectory.split("/"), {
-    create: false,
-  });
+  return resolveRealDirectory(repoRoot, relativeDirectory.split("/"), options);
 }
 
 async function readRegularFilePrefix(

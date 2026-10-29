@@ -15,6 +15,7 @@ import { printable } from "./untrusted-text.js";
 
 export type ConsentGateId =
   | "workspace-isolation"
+  | "install-custom-skills"
   | "install-tooling"
   | "register-service"
   | "write-config"
@@ -58,7 +59,10 @@ const INSTRUCTION_FILE_ACTIONS: ReadonlySet<ProposedOperationAction> = new Set([
 
 type OperationGateId = Exclude<ConsentGateId, "workspace-isolation">;
 
+export const CUSTOM_SKILL_GROUP_RESOURCE_PREFIX = "custom-skill-group:";
+
 const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
+  "install-custom-skills",
   "install-tooling",
   "register-service",
   "write-config",
@@ -109,9 +113,11 @@ export function buildConsentGates(
       id: gateId,
       summary: operationGateSummary(gateId, operations),
       operations,
-      forcesDiff: operations.some(
-        (operation) => operation.riskClass === "credential-adjacent",
-      ),
+      forcesDiff:
+        gateId === "install-custom-skills" ||
+        operations.some(
+          (operation) => operation.riskClass === "credential-adjacent",
+        ),
       satisfiableWithYes: gateId !== "resolve-conflict",
     });
   }
@@ -130,6 +136,18 @@ function gateForOperation(
 ): OperationGateId | null {
   if (operation.action === "conflict") {
     return "resolve-conflict";
+  }
+  const isCustomSkillGroup = operation.resourceId.startsWith(
+    CUSTOM_SKILL_GROUP_RESOURCE_PREFIX,
+  );
+  if (
+    isCustomSkillGroup &&
+    (operation.action === "install-package" || operation.action === "skip")
+  ) {
+    return "install-custom-skills";
+  }
+  if (operation.action === "skip" && operation.requiresConsent) {
+    return "install-tooling";
   }
   if (operation.action === "skip" || operation.action === "use-shared") {
     return null;
@@ -161,16 +179,45 @@ function isolationGateSummary(status: IsolationStatus): string {
   return "agemon needs /.agemon/ git-ignored so its regenerated state is never committed. Add /.agemon/ to .gitignore?";
 }
 
+function describeTargets(operations: ProposedOperation[]): string {
+  return operations
+    .map((operation) => operation.targetPath || operation.resourceId)
+    .join(", ");
+}
+
+function installToolingSummary(operations: ProposedOperation[]): string {
+  const declines = operations.filter(
+    (operation) => operation.action === "skip",
+  );
+  const installs = operations.filter(
+    (operation) => operation.action !== "skip",
+  );
+  const parts = [
+    ...(installs.length > 0
+      ? [
+          `Install ${installs.length} package(s) (${describeTargets(installs)}). Uses pipx / npm`,
+        ]
+      : []),
+    ...(declines.length > 0
+      ? [
+          `record ${declines.length} declined skill group(s) (${describeTargets(declines)})`,
+        ]
+      : []),
+  ];
+  const sentence = parts.join(", and ");
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}. Proceed?`;
+}
+
 function operationGateSummary(
   gateId: OperationGateId,
   operations: ProposedOperation[],
 ): string {
-  const targets = operations
-    .map((operation) => operation.targetPath || operation.resourceId)
-    .join(", ");
+  const targets = describeTargets(operations);
   switch (gateId) {
+    case "install-custom-skills":
+      return `Install skills from ${operations.length} skill group(s) defined in this repository's agemon.toml (${targets}). They come from the repository's own sources, not from agemon — review every source shown. Proceed?`;
     case "install-tooling":
-      return `Install ${operations.length} package(s) (${targets}). Uses pipx / npm. Proceed?`;
+      return installToolingSummary(operations);
     case "register-service":
       return `Register ${operations.length} background service unit(s) (${targets}). Proceed?`;
     case "write-config":

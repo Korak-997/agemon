@@ -30,6 +30,7 @@ function planWith(operations: ProposedOperation[]): Plan {
     id: "plan1",
     agemonVersion: "9.9.9",
     desiredStateHash: "hash",
+    inputs: { capabilityIds: [], skillGroups: null },
     createdAt: "2026-01-01T00:00:00.000Z",
     operations,
   };
@@ -108,6 +109,51 @@ describe("buildConsentGates", () => {
     });
 
     expect(gates).toEqual([]);
+  });
+
+  it("puts a declined skill group into the install-tooling gate and names it in the summary", () => {
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([
+        operation({
+          action: "install-package",
+          targetPath: "",
+          resourceId: "skill-group:essentials",
+          riskClass: "executes",
+        }),
+        operation({
+          action: "skip",
+          targetPath: "",
+          resourceId: "skill-group:design",
+          riskClass: "inert",
+          requiresConsent: true,
+        }),
+      ]),
+    });
+
+    expect(gates.map((gate) => gate.id)).toEqual(["install-tooling"]);
+    expect(gates[0].summary).toBe(
+      "Install 1 package(s) (skill-group:essentials). Uses pipx / npm, and record 1 declined skill group(s) (skill-group:design). Proceed?",
+    );
+  });
+
+  it("asks only about recording declines when nothing installs", () => {
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([
+        operation({
+          action: "skip",
+          targetPath: "",
+          resourceId: "skill-group:design",
+          riskClass: "inert",
+          requiresConsent: true,
+        }),
+      ]),
+    });
+
+    expect(gates[0].summary).toBe(
+      "Record 1 declined skill group(s) (skill-group:design). Proceed?",
+    );
   });
 
   it("puts use-shared operations in no gate and returns them separately", () => {

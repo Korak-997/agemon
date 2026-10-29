@@ -28,6 +28,7 @@ import {
 import {
   type Plan,
   readPlan,
+  resolveDesiredStateHash,
   writePlan,
 } from "../../../src/core/plan-store.js";
 import { recoverInterruptedApply } from "../../../src/core/recover.js";
@@ -333,44 +334,145 @@ describe("reconcile", () => {
     expect(installCallCount()).toBe(1);
   });
 
-  it("uses a supplied plan instead of rebuilding one", async () => {
+  it("applies the rebuilt plan when a stored plan still matches", async () => {
     const context = await createTestContext(approveEveryGate);
     const { plugin, planCallCount, installCallCount } = createFakeCapability({
       id: "alpha",
       targetPath: "alpha.txt",
     });
-
-    const suppliedPlan: Plan = {
-      id: "0123456789abcdef",
+    const stored = await buildPlan(context, [plugin], {
       agemonVersion: "9.9.9",
-      desiredStateHash: "hash",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      operations: [
-        describeOperation({
-          capabilityId: "alpha",
-          resourceId: "file:alpha.txt",
-          targetPath: "alpha.txt",
-          action: "create",
-          riskClass: "writes-config",
-          requiresConsent: true,
-          preview: { kind: "note", text: "create alpha.txt" },
-        }),
-      ],
-    };
+    });
 
     await reconcile(context, [plugin], {
       ...RECONCILE_OPTIONS,
-      plan: suppliedPlan,
+      plan: stored,
     });
 
-    expect(planCallCount()).toBe(0);
+    expect(planCallCount()).toBe(2);
     expect(installCallCount()).toBe(1);
     await expect(
-      readFile(
-        join(context.cwd, ".agemon/plans/0123456789abcdef.json"),
-        "utf8",
-      ),
-    ).resolves.toContain("0123456789abcdef");
+      readFile(join(context.cwd, `.agemon/plans/${stored.id}.json`), "utf8"),
+    ).resolves.toContain(stored.id);
+  });
+
+  describe("refuses a stored plan that does not rebuild to the same content", () => {
+    async function expectRebuildMismatch(
+      tamper: (stored: Plan) => Plan,
+      message: RegExp,
+      selectedPlugins?: (plugin: AgemonPlugin) => AgemonPlugin[],
+    ): Promise<void> {
+      let consentAsked = false;
+      const context = await createTestContext((gates) => {
+        consentAsked = true;
+        return approveEveryGate(gates);
+      });
+      const { plugin, installCallCount } = createFakeCapability({
+        id: "alpha",
+        targetPath: "alpha.txt",
+      });
+      const stored = await buildPlan(context, [plugin], {
+        agemonVersion: "9.9.9",
+      });
+
+      await expect(
+        reconcile(context, selectedPlugins?.(plugin) ?? [plugin], {
+          ...RECONCILE_OPTIONS,
+          plan: tamper(stored),
+        }),
+      ).rejects.toThrow(message);
+
+      expect(consentAsked).toBe(false);
+      expect(installCallCount()).toBe(0);
+    }
+
+    const editedOperation = (
+      stored: Plan,
+      edit: Partial<Plan["operations"][number]>,
+    ): Plan => ({
+      ...stored,
+      operations: stored.operations.map((operation) => ({
+        ...operation,
+        ...edit,
+      })),
+    });
+
+    it.each([
+      [
+        "an edited preview",
+        (stored: Plan) =>
+          editedOperation(stored, {
+            preview: { kind: "note", text: "harmless" },
+          }),
+      ],
+      [
+        "a relabelled risk class",
+        (stored: Plan) => editedOperation(stored, { riskClass: "inert" }),
+      ],
+      [
+        "an added operation",
+        (stored: Plan) => ({
+          ...stored,
+          operations: [
+            ...stored.operations,
+            describeOperation({
+              capabilityId: "alpha",
+              resourceId: "file:extra.txt",
+              targetPath: "extra.txt",
+              action: "create",
+              riskClass: "writes-config",
+              requiresConsent: true,
+              preview: { kind: "note", text: "create extra.txt" },
+            }),
+          ],
+        }),
+      ],
+      [
+        "an injected decline",
+        (stored: Plan) => ({
+          ...stored,
+          operations: [
+            ...stored.operations,
+            describeOperation({
+              capabilityId: "alpha",
+              resourceId: "skill-group:security",
+              targetPath: "",
+              action: "skip",
+              riskClass: "inert",
+              requiresConsent: true,
+              preview: { kind: "note", text: "declined" },
+            }),
+          ],
+        }),
+      ],
+    ])("%s under the original id", async (_label, tamper) => {
+      await expectRebuildMismatch(
+        tamper,
+        /no longer matches what agemon would do now: the repository changed since it was made, or the plan file was edited\. Run 'agemon plan' again/,
+      );
+    });
+
+    it("names the skill groups the plan was made with", async () => {
+      await expectRebuildMismatch((stored) => {
+        const inputs = { ...stored.inputs, skillGroups: "security" };
+        return {
+          ...stored,
+          inputs,
+          desiredStateHash: resolveDesiredStateHash(inputs),
+        };
+      }, /was made with "security" skill groups; this run has the default\./);
+    });
+
+    it("names the capabilities the plan was made for", async () => {
+      await expectRebuildMismatch(
+        (stored) => stored,
+        /was made for capabilities \[alpha\]; this run selects \[alpha, beta\] \(from --only, --skip-daemon or agemon\.toml\)\./,
+        (plugin) => [
+          plugin,
+          createFakeCapability({ id: "beta", targetPath: "beta.txt" }).plugin,
+        ],
+      );
+    });
   });
 
   describe("with a supplied plan", () => {
@@ -379,6 +481,7 @@ describe("reconcile", () => {
         id: "0123456789abcdef",
         agemonVersion: "9.9.9",
         desiredStateHash: "hash",
+        inputs: { capabilityIds: [], skillGroups: null },
         createdAt: "2026-01-01T00:00:00.000Z",
         operations: [
           describeOperation({

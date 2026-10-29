@@ -13,19 +13,59 @@ vi.mock("@clack/prompts", () => ({
 }));
 
 import type { Context } from "../../../src/core/context.js";
-import { SKILL_GROUPS } from "../../../src/plugins/skills/catalog.js";
-import { resolveGroupsForFreshInstall } from "../../../src/plugins/skills/group-selection.js";
+import {
+  buildCustomSkillGroups,
+  findSkillGroup,
+  SKILL_GROUPS,
+  type SkillGroup,
+} from "../../../src/plugins/skills/catalog.js";
+import {
+  selectGroupsForFreshInstall,
+  selectNewlyOfferedGroups,
+} from "../../../src/plugins/skills/group-selection.js";
 
 function createFakeContext(overrides: {
   dryRun?: boolean;
   yes?: boolean;
   interactive?: boolean;
+  skillGroupsOption?: string;
 }): Context {
   return {
     dryRun: overrides.dryRun ?? false,
     yes: overrides.yes ?? false,
     interactive: overrides.interactive ?? false,
+    skillGroupsOption: overrides.skillGroupsOption,
   } as unknown as Context;
+}
+
+const [HOUSE_STYLE] = buildCustomSkillGroups([
+  {
+    id: "house-style",
+    label: "House style",
+    skills: [
+      {
+        kind: "local",
+        path: "./tools/skills/house-rules",
+        skillName: "house-rules",
+      },
+    ],
+  },
+]);
+
+function ids(groups: SkillGroup[]): string[] {
+  return groups.map((group) => group.id).sort();
+}
+
+async function resolveGroupsForFreshInstall(
+  ctx: Context,
+  skillGroupsOption: string | undefined,
+): Promise<SkillGroup[]> {
+  return (
+    await selectGroupsForFreshInstall(
+      { ...ctx, skillGroupsOption } as Context,
+      [],
+    )
+  ).chosen;
 }
 
 const optionalGroupIds = SKILL_GROUPS.filter(
@@ -38,7 +78,7 @@ afterEach(() => {
   clack.cancel.mockReset();
 });
 
-describe("resolveGroupsForFreshInstall", () => {
+describe("selectGroupsForFreshInstall", () => {
   it("returns only default groups when the flag is 'none'", async () => {
     const groups = await resolveGroupsForFreshInstall(
       createFakeContext({}),
@@ -139,5 +179,90 @@ describe("resolveGroupsForFreshInstall", () => {
 
     expect(clack.multiselect).not.toHaveBeenCalled();
     expect(groups.map((group) => group.id)).toEqual(["essentials"]);
+  });
+});
+
+describe("custom skill groups (D12-1)", () => {
+  it("are never chosen by --yes or 'all'", async () => {
+    for (const ctx of [
+      createFakeContext({ yes: true, interactive: true }),
+      createFakeContext({ skillGroupsOption: "all" }),
+    ]) {
+      const selection = await selectGroupsForFreshInstall(ctx, [HOUSE_STYLE]);
+      expect(ids(selection.chosen)).not.toContain("house-style");
+      expect(ids(selection.offered)).not.toContain("house-style");
+    }
+  });
+
+  it("are chosen when named in the skill groups option", async () => {
+    const selection = await selectGroupsForFreshInstall(
+      createFakeContext({ skillGroupsOption: "house-style" }),
+      [HOUSE_STYLE],
+    );
+
+    expect(ids(selection.chosen)).toEqual(["essentials", "house-style"]);
+  });
+
+  it("appear in the interactive multiselect next to the optional groups", async () => {
+    clack.multiselect.mockResolvedValueOnce([]);
+
+    const selection = await selectGroupsForFreshInstall(
+      createFakeContext({ interactive: true }),
+      [HOUSE_STYLE],
+    );
+
+    const offeredValues = clack.multiselect.mock.calls[0][0].options.map(
+      (option: { value: string }) => option.value,
+    );
+    expect(offeredValues).toEqual([...optionalGroupIds, "house-style"]);
+    expect(ids(selection.offered)).toContain("house-style");
+  });
+});
+
+describe("selectNewlyOfferedGroups", () => {
+  const design = findSkillGroup("design") as SkillGroup;
+
+  it("offers nothing and declines nothing in a non-interactive run without --yes", async () => {
+    const selection = await selectNewlyOfferedGroups(
+      createFakeContext({}),
+      [],
+      [design],
+    );
+
+    expect(selection).toEqual({ chosen: [], offered: [] });
+  });
+
+  it("records new built-in groups as offered under non-interactive --yes, but leaves custom groups pending", async () => {
+    const selection = await selectNewlyOfferedGroups(
+      createFakeContext({ yes: true }),
+      [HOUSE_STYLE],
+      [design, HOUSE_STYLE],
+    );
+
+    expect(selection).toEqual({ chosen: [], offered: [design] });
+  });
+
+  it("chooses an unoffered group that the skill groups option names, even without a terminal", async () => {
+    const selection = await selectNewlyOfferedGroups(
+      createFakeContext({ skillGroupsOption: "essentials,house-style" }),
+      [HOUSE_STYLE],
+      [design, HOUSE_STYLE],
+    );
+
+    expect(ids(selection.chosen)).toEqual(["house-style"]);
+    expect(selection.offered).toEqual([]);
+  });
+
+  it("asks about the remaining groups and reports them as offered", async () => {
+    clack.multiselect.mockResolvedValueOnce(["design"]);
+
+    const selection = await selectNewlyOfferedGroups(
+      createFakeContext({ interactive: true }),
+      [HOUSE_STYLE],
+      [design, HOUSE_STYLE],
+    );
+
+    expect(ids(selection.chosen)).toEqual(["design"]);
+    expect(ids(selection.offered)).toEqual(["design", "house-style"]);
   });
 });

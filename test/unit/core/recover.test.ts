@@ -503,6 +503,7 @@ describe("agemon recover", () => {
           id: PLAN_ID,
           agemonVersion: "9.9.9",
           desiredStateHash: "hash",
+          inputs: { capabilityIds: [], skillGroups: null },
           createdAt: "2026-10-24T00:00:00.000Z",
           operations: [op],
         },

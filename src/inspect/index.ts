@@ -31,6 +31,7 @@ export interface InspectReport {
     trackedAgemonPaths: string[];
     trackingCheckError: string | null;
   };
+  configError: string | null;
   resources: ClassifiedResource[];
   capabilities: CapabilityStateRow[];
   structuredConfig: RedactedStructuredConfig[];
@@ -41,6 +42,7 @@ export interface InspectReport {
 
 export interface InspectOptions {
   checkAgentsUsable?: boolean;
+  configError?: string | null;
 }
 
 export async function inspectRepository(
@@ -111,6 +113,7 @@ export async function inspectRepository(
       trackedAgemonPaths: discovery.isolation.trackedAgemonPaths,
       trackingCheckError: discovery.isolation.trackingCheckError,
     },
+    configError: options.configError ?? null,
     resources,
     capabilities,
     structuredConfig,
@@ -125,11 +128,9 @@ export async function inspectRepository(
 
 export async function runInspect(
   ctx: Context,
-  options: { json: boolean; checkAgentsUsable?: boolean },
+  options: InspectOptions & { json: boolean },
 ): Promise<void> {
-  const report = await inspectRepository(ctx, undefined, {
-    checkAgentsUsable: options.checkAgentsUsable,
-  });
+  const report = await inspectRepository(ctx, undefined, options);
 
   if (options.json) {
     ctx.log.log(JSON.stringify(report, null, 2));

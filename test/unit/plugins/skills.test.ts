@@ -314,6 +314,8 @@ describe("skills plugin", () => {
         "core.hooksPath=/dev/null",
         "-c",
         "core.fsmonitor=false",
+        "-c",
+        "credential.helper=",
         "fetch",
         "--depth",
         "1",

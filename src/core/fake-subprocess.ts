@@ -190,9 +190,12 @@ function buildFakeSkillsAdd(args: string[]): SubprocessResult {
 }
 
 function buildFakeSkillsRemove(args: string[]): SubprocessResult {
+  const agentName = readOptionValue(args, "--agent");
   const skillNames = args
     .slice(1)
-    .filter((arg) => arg.length > 0 && !arg.startsWith("-"));
+    .filter(
+      (arg) => arg.length > 0 && !arg.startsWith("-") && arg !== agentName,
+    );
 
   for (const skillName of skillNames) {
     fakeInstalledSkillNames?.delete(skillName);

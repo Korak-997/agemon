@@ -11,9 +11,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../../src/cli/index.js";
 import { writeJournal } from "../../src/core/apply-journal.js";
+import { resetFakeSubprocessState } from "../../src/core/fake-subprocess.js";
 
 const createdTempDirectories: string[] = [];
 const fixturesRoot = join(process.cwd(), "test/fixtures");
@@ -405,6 +406,130 @@ describe("--verbose", () => {
         /^\s*\$ \S+ \S+\/node_modules\/skills\/bin\/cli\.mjs list --json \(exit 0\)$/m,
       );
       expect(run.stdout).toMatch(/^\s*│ /m);
+    });
+  });
+});
+
+describe("agemon plan → agemon apply --plan", () => {
+  beforeEach(() => {
+    resetFakeSubprocessState();
+  });
+
+  function planIdFrom(run: CliRun): string {
+    const match = /plans\/([0-9a-f]{16})\.json/u.exec(run.stdout);
+    if (match === null) {
+      throw new Error(`no plan id in output:\n${run.stdout}`);
+    }
+    return match[1];
+  }
+
+  async function installedSkillNames(repoDirectory: string): Promise<string[]> {
+    const ledger = JSON.parse(
+      await readFile(join(repoDirectory, ".agemon/state.json"), "utf8"),
+    ) as { actions: { type: string; target: string }[] };
+    return ledger.actions
+      .filter((action) => action.type === "installed-skill")
+      .map((action) => action.target);
+  }
+
+  it("installs only the reviewed groups, although --yes alone would install every group", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const planned = await runFrom(repoDirectory, ["plan"]);
+      expect(planned.stdout).toContain("skill-group:essentials");
+      expect(planned.stdout).not.toContain("skill-group:design");
+
+      const applied = await runFrom(repoDirectory, [
+        "apply",
+        "--plan",
+        planIdFrom(planned),
+        "--yes",
+      ]);
+
+      expect(applied.exitCode).toBe(0);
+      expect((await installedSkillNames(repoDirectory)).sort()).toEqual([
+        "web-design-guidelines",
+        "writing-guidelines",
+      ]);
+    });
+  });
+
+  it("applies a plan made with --skill-groups when apply gets the same option", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const planned = await runFrom(repoDirectory, [
+        "--skill-groups",
+        "security",
+        "plan",
+      ]);
+      expect(planned.stdout).toContain("skill-group:security");
+
+      const applied = await runFrom(repoDirectory, [
+        "--skill-groups",
+        "security",
+        "apply",
+        "--plan",
+        planIdFrom(planned),
+        "--yes",
+      ]);
+
+      expect(applied.exitCode).toBe(0);
+      expect(await installedSkillNames(repoDirectory)).toContain(
+        "agemon-security",
+      );
+    });
+  });
+
+  it("refuses, naming the skill groups, when apply runs with different options", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const planned = await runFrom(repoDirectory, [
+        "--skill-groups",
+        "security",
+        "plan",
+      ]);
+
+      const applied = await runFrom(repoDirectory, [
+        "apply",
+        "--plan",
+        planIdFrom(planned),
+        "--yes",
+      ]);
+
+      expect(applied.exitCode).toBe(1);
+      expect(applied.stderr.replace(/[\s│]+/gu, " ")).toContain(
+        `Plan ${planIdFrom(planned)} was made with "security" skill groups; this run has the default. Run 'agemon plan' again with the options you want, review it, then apply that plan.`,
+      );
+      expect(await exists(join(repoDirectory, ".agemon/state.json"))).toBe(
+        false,
+      );
+    });
+  });
+});
+
+describe("an invalid agemon.toml in status and inspect", () => {
+  const INVALID_CONFIG = 'capabilities = ["skills"]\nskill_group = "x"\n';
+
+  it("status reports it and exits 2, even with no agemon state", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), INVALID_CONFIG);
+
+      const status = await runFrom(repoDirectory, ["status"]);
+
+      expect(status.exitCode).toBe(DRIFT_EXIT_CODE);
+      expect(status.stdout).toContain(
+        "agemon.toml is invalid: unknown key 'skill_group'.",
+      );
+    });
+  });
+
+  it("inspect --json carries it as configError and still exits 0", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), INVALID_CONFIG);
+
+      const inspect = await runFrom(repoDirectory, ["inspect", "--json"]);
+
+      expect(inspect.exitCode).toBe(0);
+      expect(JSON.parse(inspect.stdout).configError).toMatch(
+        /^agemon\.toml is invalid: unknown key 'skill_group'\./u,
+      );
     });
   });
 });

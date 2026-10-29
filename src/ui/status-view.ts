@@ -183,6 +183,11 @@ export function renderStatusReport(report: StatusReport): string {
     `  ${report.agentsSummary.configured}/${report.agentsSummary.total} configured, ${report.agentsSummary.installed}/${report.agentsSummary.total} installed`,
   );
 
+  if (report.configError !== null) {
+    lines.push(section("Configuration"));
+    lines.push(`  ${theme.warn(`${symbol("warn")} ${report.configError}`)}`);
+  }
+
   lines.push(section("Workspace isolation"));
   if (report.trackingCheckError !== null) {
     lines.push(

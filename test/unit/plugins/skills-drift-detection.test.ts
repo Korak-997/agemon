@@ -157,19 +157,11 @@ async function describeSkillsState(context: Context) {
 }
 
 describe("skills plugin drift detection", () => {
-  it("offers a catalog group added after the project's original install", async () => {
+  it("offers a catalog group added after the project's original install only when someone can answer", async () => {
     const context = await createTestContext({ interactive: false });
     await installAsPreUpgradeProject(context);
 
-    const planBeforeInteractive = await planSkills(context);
-    expect(planBeforeInteractive).not.toEqual([]);
-    const [gateOperation] = planBeforeInteractive;
-    for (const groupId of ["design", "code-quality", "architecture"]) {
-      const group = findSkillGroup(groupId);
-      expect(gateOperation.preview.text).toContain(group?.label);
-    }
-    expect(gateOperation.preview.text).not.toContain("Essentials");
-    expect(gateOperation.preview.text).not.toContain("Security");
+    expect(await planSkills(context)).toEqual([]);
 
     context.interactive = true;
     clack.multiselect.mockResolvedValueOnce(["architecture"]);
@@ -203,12 +195,12 @@ describe("skills plugin drift detection", () => {
     await skillsPlugin.install(context);
     expect(clack.multiselect).not.toHaveBeenCalled();
 
-    const planAfterNonInteractiveInstall = await planSkills(context);
-    expect(planAfterNonInteractiveInstall).not.toEqual([]);
-    const [gateOperation] = planAfterNonInteractiveInstall;
-    expect(gateOperation.preview.text).toContain(
-      findSkillGroup("architecture")?.label,
-    );
+    expect(await planSkills(context)).toEqual([]);
+    expect(
+      context.manifest
+        .getActions()
+        .filter((action) => action.type === "offered-skill-group"),
+    ).toEqual([]);
 
     context.interactive = true;
     clack.multiselect.mockResolvedValueOnce(["architecture"]);

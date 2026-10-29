@@ -61,8 +61,51 @@ Selection order:
 - No flag, non-interactive (CI, piped output, or `--dry-run`): only `essentials` installs —
   pass `--skill-groups` explicitly to get optional groups without a prompt.
 
+The group question comes first, while agemon builds the plan, so every group you picked is a
+separate row (`skill-group:<id>`, or `custom-skill-group:<id>` for a project-defined group) in
+the plan, the consent screen and `agemon status`, with each skill and its
+pinned source. Groups you were shown and did not pick are recorded as declined once you approve
+the install gate. Ctrl-C at the question leaves the repository untouched.
+
 Re-running `agemon` in a repo only re-verifies the groups that repo already selected — it never
-asks you to newly opt into groups you previously declined.
+asks you about, or installs, groups you previously declined, even when `--skill-groups` or
+`skill_groups` names them. A group added later (to agemon or to `agemon.toml`) is installed
+when `--skill-groups` or `skill_groups` names it; otherwise it is offered once in an
+interactive run. A non-interactive run without `--yes` leaves it pending; a non-interactive
+`--yes` run records new agemon groups as declined and leaves project-defined groups pending.
+
+#### Project-defined skill groups
+
+A project can define its own groups in `agemon.toml`:
+
+```toml
+skill_groups = "essentials,house-style"
+
+[custom_skill_groups.house-style]
+label = "House style"
+skills = [
+  { source = "./tools/skills/house-rules" },
+  { source = "github:acme/agent-skills", ref = "<40-character commit sha>", skill = "lint-rules" },
+]
+```
+
+- A **local** source is a directory in this repository (`./…`, not under `.agents/`, `.claude/`,
+  `.git/` or `.agemon/`, no symlinks anywhere in it, at most 200 entries and 8 MiB). The skill's
+  name is the directory name.
+- A **GitHub** source names `github:<owner>/<repository>`, a full 40-character commit `ref` (no
+  branches, tags or short shas) and the `skill` to take from `skills/<skill>/` in that
+  repository. agemon fetches exactly that commit without your git credentials.
+- Each skill's `SKILL.md` must declare the same `name`.
+- A group id must not reuse a built-in group id, or be `all`/`none`; a skill name must not
+  reuse a built-in skill name or appear twice.
+
+A custom group is installed only when you pick it in the interactive question or name it in
+`--skill-groups` or `skill_groups`; `--yes` and `--skill-groups all` cover agemon's own groups
+only. Custom groups get their own consent gate, which always prints every source (the local
+content hash, or the GitHub repository and commit), even under `--yes`. A custom skill is
+instructions for your agent from whoever wrote the repository's `agemon.toml`: review it like
+code. A commit sha pins content, not origin — GitHub serves a commit from any fork under the
+original repository's URL, so check the commit itself, not just the repository name.
 
 Every non-essential skill is vendored into agemon's own repo under `assets/skills/`, rather than
 fetched and installed under its original upstream name at bootstrap time — so installs don't
@@ -388,6 +431,10 @@ fallback:
 capabilities = ["crg", "daemon", "skills", "cli-tool", "master-prompt"]
 skill_groups = "essentials,security"   # optional
 
+[custom_skill_groups.house-style]      # optional — see Project-defined skill groups
+label = "House style"
+skills = [{ source = "./tools/skills/house-rules" }]
+
 [conflict_decisions]                   # optional
 "rule-file:CLAUDE.md" = "keep"         # keep | replace | skip
 ```
@@ -413,7 +460,8 @@ It needs a decision. `--yes` never picks one for you, so record it under
 
 `agemon status` exits 2 when it finds a problem in a repository where agemon has state (a
 ledger or an interrupted apply). In a repository agemon never touched, it reports what it
-sees and exits 0.
+sees and exits 0. An invalid `agemon.toml` is always reported, and `status` then exits 2;
+`inspect` reports it too (`configError` in `--json`) and still exits 0.
 
 If `git ls-files` cannot run (git missing, or "dubious ownership" in a CI container),
 `status`, `inspect` and install print `could not check whether .agemon/ is tracked by git`.
@@ -472,7 +520,10 @@ its usual health/drift output.
 	have been committed by someone else. `agemon apply --plan <id>` accepts only a valid
 	16-character plan id, refuses a malformed plan or one made by another agemon version, and
 	never touches a path outside the repository, inside `.git/`, or under a symlinked
-	directory. agemon refuses to use `.agemon/` (or any directory in it) when it is a symlink.
+	directory. It also plans again with this run's options (`--only`, `--skip-daemon`,
+	`--skill-groups`, `agemon.toml`) and refuses unless the result is identical to the stored
+	plan, so it applies exactly what you reviewed — never an edited preview, risk class or
+	operation. Pass the same options you gave `agemon plan`. agemon refuses to use `.agemon/` (or any directory in it) when it is a symlink.
 - `inspect`, `status` and `plan` never follow a symlinked or special file and never read a
 	file larger than 8 MiB; such a file is reported as present but unread.
 

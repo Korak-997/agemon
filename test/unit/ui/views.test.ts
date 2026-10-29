@@ -48,12 +48,45 @@ function planWith(operations: ProposedOperation[]): Plan {
     id: "a1b2c3d4e5f6a7b8",
     agemonVersion: "2.4.0",
     desiredStateHash: "hash",
+    inputs: { capabilityIds: [], skillGroups: null },
     createdAt: "2026-01-01T00:00:00.000Z",
     operations,
   };
 }
 
 describe("renderPlan", () => {
+  it("lists each skill group as its own row with its skills", () => {
+    const skillGroup = (id: string, lines: string[]) =>
+      op({
+        capabilityId: "skills",
+        resourceId: `skill-group:${id}`,
+        targetPath: "",
+        action: "install-package",
+        riskClass: "executes",
+        preview: { kind: "note", text: lines.join("\n") },
+      });
+
+    const rendered = renderPlan(
+      planWith([
+        skillGroup("essentials", [
+          "Essentials:",
+          "web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee9",
+        ]),
+        skillGroup("security", [
+          "Security:",
+          "agemon-security — bundled with agemon",
+        ]),
+      ]),
+    );
+
+    expect(rendered).toMatch(/skill-group:essentials\s+\[executes\]/u);
+    expect(rendered).toMatch(/skill-group:security\s+\[executes\]/u);
+    expect(rendered).toContain(
+      "web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee9",
+    );
+    expect(rendered).toContain("agemon-security — bundled with agemon");
+  });
+
   it("reports an empty plan as nothing to do", () => {
     const rendered = renderPlan(planWith([]));
     expect(rendered).toContain("Plan a1b2c3d4e5f6a7b8");
@@ -133,6 +166,7 @@ describe("renderStatusReport", () => {
     duplication: [],
     trackedAgemonPaths: [],
     trackingCheckError: null,
+    configError: null,
     interruptedApply: null,
     agentsSummary: { total: 3, configured: 1, installed: 0 },
     healthy: true,
@@ -195,6 +229,7 @@ describe("renderStatusReport — shared tools", () => {
     duplication: [],
     trackedAgemonPaths: [],
     trackingCheckError: null,
+    configError: null,
     interruptedApply: null,
     agentsSummary: { total: 0, configured: 0, installed: 0 },
     healthy: true,
@@ -231,6 +266,7 @@ describe("renderInspectReport", () => {
       trackedAgemonPaths: [],
       trackingCheckError: null,
     },
+    configError: null,
     resources: [
       {
         resourceId: "rule-file:AGENTS.md",

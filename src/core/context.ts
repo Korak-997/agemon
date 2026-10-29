@@ -7,6 +7,7 @@ import type { ServiceManager } from "../platform/service-manager/index.js";
 import { createServiceManager } from "../platform/service-manager/index.js";
 import type { StepProgress } from "../ui/progress.js";
 import type { StepSpinner } from "../ui/spinner.js";
+import type { CustomSkillGroupConfig } from "./config.js";
 import {
   type ApprovedOperationSet,
   type ConsentGate,
@@ -66,6 +67,7 @@ export interface Context {
     },
   ) => Promise<ApprovedOperationSet>;
   skillGroupsOption?: string;
+  customSkillGroups?: CustomSkillGroupConfig[];
   removeSharedTools?: ReadonlySet<string>;
 }
 
@@ -77,6 +79,7 @@ export interface CreateContextInput {
   ui: StepSpinner;
   progress: StepProgress;
   skillGroups?: string;
+  customSkillGroups?: CustomSkillGroupConfig[];
   verbose?: boolean;
   removeSharedTools?: ReadonlySet<string>;
 }
@@ -129,6 +132,7 @@ export async function createContext(
     yes: input.yes,
     interactive,
     skillGroupsOption: input.skillGroups,
+    customSkillGroups: input.customSkillGroups,
     removeSharedTools: input.removeSharedTools,
     log: console,
     ui: input.ui,

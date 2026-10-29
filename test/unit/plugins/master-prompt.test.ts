@@ -379,6 +379,7 @@ describe("master-prompt revert — never loses user content", () => {
           id: "0123456789abcdef",
           agemonVersion: "9.9.9",
           desiredStateHash: "hash",
+          inputs: { capabilityIds: [], skillGroups: null },
           createdAt: "2026-01-01T00:00:00.000Z",
           operations,
         },

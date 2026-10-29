@@ -62,6 +62,7 @@ export interface StatusReport {
   duplication: OverlapFinding[];
   trackedAgemonPaths: string[];
   trackingCheckError: string | null;
+  configError: string | null;
   interruptedApply: InterruptedApplySummary | null;
   agentsSummary: AgentsSummary;
   healthy: boolean;
@@ -242,10 +243,16 @@ export async function verifyManagedState(
   return problems;
 }
 
+export interface StatusOptions {
+  configError?: string | null;
+}
+
 export async function buildStatusReport(
   ctx: Context,
   plugins: AgemonPlugin[],
+  options: StatusOptions = {},
 ): Promise<StatusReport> {
+  const configError = options.configError ?? null;
   const managedResources = await checkManagedResources(ctx, plugins);
 
   const discovery = await discoverRepository(ctx);
@@ -279,7 +286,8 @@ export async function buildStatusReport(
         row.health === null || (row.health.ok && row.health.attention === null),
     ) &&
     trackedAgemonPaths.length === 0 &&
-    interruptedApply === null;
+    interruptedApply === null &&
+    configError === null;
 
   return {
     managedResources,
@@ -288,6 +296,7 @@ export async function buildStatusReport(
     duplication,
     trackedAgemonPaths,
     trackingCheckError: discovery.isolation.trackingCheckError,
+    configError,
     interruptedApply,
     agentsSummary,
     healthy,
@@ -338,8 +347,9 @@ async function buildCapabilityStatusRows(
 export async function runStatus(
   ctx: Context,
   plugins: AgemonPlugin[],
+  options: StatusOptions = {},
 ): Promise<StatusReport> {
-  const report = await buildStatusReport(ctx, plugins);
+  const report = await buildStatusReport(ctx, plugins, options);
   ctx.log.log(renderStatusReport(report));
   return report;
 }

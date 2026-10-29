@@ -1,4 +1,6 @@
+import type { CustomSkillGroupConfig } from "../../core/config.js";
 import { resolveVendoredSkillPath } from "../../core/package-assets.js";
+import { printable } from "../../core/untrusted-text.js";
 import {
   ESSENTIALS_SKILLS_COMMIT,
   ESSENTIALS_SKILLS_REPOSITORY_URL,
@@ -14,6 +16,7 @@ export interface SkillBundleEntry {
   skillName: string;
   agent: string;
   pinnedRepository?: PinnedSkillsRepository;
+  localSourcePath?: string;
 }
 
 const ESSENTIALS_REPOSITORY: PinnedSkillsRepository = {
@@ -26,6 +29,7 @@ export interface SkillGroup {
   label: string;
   description: string;
   defaultSelected: boolean;
+  definedByRepository?: boolean;
   skills: SkillBundleEntry[];
 }
 
@@ -180,4 +184,67 @@ export const SKILL_GROUPS: SkillGroup[] = [
 
 export function findSkillGroup(groupId: string): SkillGroup | undefined {
   return SKILL_GROUPS.find((group) => group.id === groupId);
+}
+
+const CUSTOM_GROUP_DESCRIPTION =
+  "Defined in this repository's agemon.toml, not by agemon.";
+
+function localSkill(path: string, skillName: string): SkillBundleEntry {
+  return {
+    id: skillName,
+    source: path,
+    skillName,
+    agent: "claude-code",
+    localSourcePath: path,
+  };
+}
+
+function failCustomGroups(detail: string): never {
+  throw new Error(`agemon.toml is invalid: ${printable(detail)}`);
+}
+
+export function buildCustomSkillGroups(
+  configs: CustomSkillGroupConfig[],
+): SkillGroup[] {
+  const builtInSkillNames = new Set(
+    SKILL_GROUPS.flatMap((group) =>
+      group.skills.map((skill) => skill.skillName),
+    ),
+  );
+  return configs.map((config) => {
+    if (findSkillGroup(config.id) !== undefined) {
+      failCustomGroups(
+        `custom_skill_groups.${config.id} uses the id of a built-in skill group`,
+      );
+    }
+    return {
+      id: config.id,
+      label: config.label,
+      description: CUSTOM_GROUP_DESCRIPTION,
+      defaultSelected: false,
+      definedByRepository: true,
+      skills: config.skills.map((skill) => {
+        if (builtInSkillNames.has(skill.skillName)) {
+          failCustomGroups(
+            `custom_skill_groups.${config.id} names '${skill.skillName}', which is a built-in skill`,
+          );
+        }
+        return skill.kind === "local"
+          ? localSkill(skill.path, skill.skillName)
+          : pinnedSkill(
+              {
+                url: `https://github.com/${skill.owner}/${skill.repository}`,
+                commit: skill.ref,
+              },
+              skill.skillName,
+            );
+      }),
+    };
+  });
+}
+
+export function assertCustomSkillGroupsAreValid(
+  configs: CustomSkillGroupConfig[],
+): void {
+  buildCustomSkillGroups(configs);
 }

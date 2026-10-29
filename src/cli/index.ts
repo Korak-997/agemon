@@ -2,7 +2,11 @@ import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { intro, outro } from "@clack/prompts";
 import { Command, CommanderError } from "commander";
-import { type AgemonConfig, loadConfig } from "../core/config.js";
+import {
+  type AgemonConfig,
+  type CustomSkillGroupConfig,
+  loadConfig,
+} from "../core/config.js";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
 import {
@@ -48,6 +52,7 @@ import {
   pinnedArchiveKeyFor,
 } from "../plugins/cli-tool/index.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
+import { assertCustomSkillGroupsAreValid } from "../plugins/skills/catalog.js";
 import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
 import { box } from "../ui/box.js";
@@ -240,6 +245,7 @@ interface DesiredStateDefaults {
   config: AgemonConfig | null;
   only: string[] | undefined;
   skillGroups: string | undefined;
+  customSkillGroups: CustomSkillGroupConfig[];
 }
 
 async function resolveDesiredStateDefaults(
@@ -249,6 +255,7 @@ async function resolveDesiredStateDefaults(
   const config = await loadConfig(repoRoot);
   if (config) {
     assertConfiguredCapabilitiesAreKnown(config);
+    assertCustomSkillGroupsAreValid(config.customSkillGroups);
   }
 
   const excludedIds = excludedPluginIds(options);
@@ -260,38 +267,70 @@ async function resolveDesiredStateDefaults(
     config,
     only: parseOnlyOption(options) ?? configuredIds,
     skillGroups: options.skillGroups ?? config?.skillGroups ?? undefined,
+    customSkillGroups: config?.customSkillGroups ?? [],
   };
 }
 
+interface ReportConfig {
+  customSkillGroups: CustomSkillGroupConfig[];
+  configError: string | null;
+}
+
+async function loadConfigForReport(repoRoot: string): Promise<ReportConfig> {
+  try {
+    const config = await loadConfig(repoRoot);
+    const customSkillGroups = config?.customSkillGroups ?? [];
+    assertCustomSkillGroupsAreValid(customSkillGroups);
+    return { customSkillGroups, configError: null };
+  } catch (error) {
+    return {
+      customSkillGroups: [],
+      configError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function runInspectCommand(options: CliOptions): Promise<number> {
+  const repoRoot = await resolveRepositoryRootFor(options);
+  const { customSkillGroups, configError } =
+    await loadConfigForReport(repoRoot);
   const context = await createContext({
-    repoRoot: await resolveRepositoryRootFor(options),
+    repoRoot,
     platform: await detectPlatformCapabilities(),
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
     progress: SILENT_PROGRESS,
+    customSkillGroups,
   });
 
   await runInspect(context, {
     json: Boolean(options.json),
     checkAgentsUsable: Boolean(options.checkAgentsUsable),
+    configError,
   });
   return 0;
 }
 
 async function runStatusCommand(options: CliOptions): Promise<number> {
+  const repoRoot = await resolveRepositoryRootFor(options);
+  const { customSkillGroups, configError } =
+    await loadConfigForReport(repoRoot);
   const context = await createContext({
-    repoRoot: await resolveRepositoryRootFor(options),
+    repoRoot,
     platform: await detectPlatformCapabilities(),
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
     progress: SILENT_PROGRESS,
+    customSkillGroups,
   });
 
-  const report = await runStatus(context, getRegisteredPlugins());
-  return report.healthy || !report.hasAgemonState
+  const report = await runStatus(context, getRegisteredPlugins(), {
+    configError,
+  });
+  return report.configError === null &&
+    (report.healthy || !report.hasAgemonState)
     ? 0
     : exitCodeForOutcome("drift");
 }
@@ -302,10 +341,8 @@ async function runPlanCommand(requested: CliOptions): Promise<number> {
   const options = skippingWhatThisMachineCannotRun(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const plugins = selectPlugins(options);
-  const { only, skillGroups } = await resolveDesiredStateDefaults(
-    options,
-    repoRoot,
-  );
+  const { only, skillGroups, customSkillGroups } =
+    await resolveDesiredStateDefaults(options, repoRoot);
   const context = await createContext({
     repoRoot,
     platform,
@@ -314,6 +351,7 @@ async function runPlanCommand(requested: CliOptions): Promise<number> {
     ui: SILENT_SPINNER,
     progress: SILENT_PROGRESS,
     skillGroups,
+    customSkillGroups,
   });
 
   const plan = await buildPlan(context, plugins, {
@@ -333,10 +371,8 @@ async function runInstall(requested: CliOptions): Promise<number> {
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
-  const { config, only, skillGroups } = await resolveDesiredStateDefaults(
-    options,
-    repoRoot,
-  );
+  const { config, only, skillGroups, customSkillGroups } =
+    await resolveDesiredStateDefaults(options, repoRoot);
   openInteractiveFrame(options);
   let outcome: RunOutcome;
   try {
@@ -349,6 +385,7 @@ async function runInstall(requested: CliOptions): Promise<number> {
       verbose: Boolean(options.verbose),
       progress: selectProgress(options),
       skillGroups,
+      customSkillGroups,
     });
 
     outcome = await reconcile(context, plugins, {
@@ -376,10 +413,8 @@ async function runApply(requested: CliOptions): Promise<number> {
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
-  const { config, only, skillGroups } = await resolveDesiredStateDefaults(
-    options,
-    repoRoot,
-  );
+  const { config, only, skillGroups, customSkillGroups } =
+    await resolveDesiredStateDefaults(options, repoRoot);
   openInteractiveFrame(options);
   let outcome: RunOutcome;
   try {
@@ -392,6 +427,7 @@ async function runApply(requested: CliOptions): Promise<number> {
       verbose: Boolean(options.verbose),
       progress: selectProgress(options),
       skillGroups,
+      customSkillGroups,
     });
 
     const plan = options.plan

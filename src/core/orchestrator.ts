@@ -20,6 +20,7 @@ import type { Context } from "./context.js";
 import {
   computePlanId,
   type Plan,
+  planContentFingerprint,
   resolveDesiredStateHash,
   writePlan,
 } from "./plan-store.js";
@@ -157,10 +158,11 @@ export async function buildPlan(
     operations.push(...pluginOperations);
   }
 
-  const desiredStateHash = resolveDesiredStateHash({
+  const inputs = {
     capabilityIds: plugins.map((plugin) => plugin.id),
     skillGroups: ctx.skillGroupsOption ?? null,
-  });
+  };
+  const desiredStateHash = resolveDesiredStateHash(inputs);
 
   return {
     id: computePlanId({
@@ -170,6 +172,7 @@ export async function buildPlan(
     }),
     agemonVersion: options.agemonVersion,
     desiredStateHash,
+    inputs,
     createdAt: new Date().toISOString(),
     operations,
   };
@@ -320,6 +323,44 @@ function assertPlanIsCompatible(
   }
 }
 
+const REPLAN_ADVICE =
+  "Run 'agemon plan' again with the options you want, review it, then apply that plan.";
+
+function describeSkillGroupsInput(skillGroups: string | null): string {
+  return skillGroups === null ? "the default" : `"${printable(skillGroups)}"`;
+}
+
+function describePlanMismatch(stored: Plan, rebuilt: Plan): string {
+  const storedCapabilities = stored.inputs.capabilityIds.map(printable);
+  const rebuiltCapabilities = rebuilt.inputs.capabilityIds;
+  if (storedCapabilities.join(",") !== rebuiltCapabilities.join(",")) {
+    return `Plan ${stored.id} was made for capabilities [${storedCapabilities.join(", ")}]; this run selects [${rebuiltCapabilities.join(", ")}] (from --only, --skip-daemon or agemon.toml).`;
+  }
+  if (stored.inputs.skillGroups !== rebuilt.inputs.skillGroups) {
+    return `Plan ${stored.id} was made with ${describeSkillGroupsInput(stored.inputs.skillGroups)} skill groups; this run has ${describeSkillGroupsInput(rebuilt.inputs.skillGroups)}.`;
+  }
+  return `Plan ${stored.id} no longer matches what agemon would do now: the repository changed since it was made, or the plan file was edited.`;
+}
+
+async function rebuildStoredPlan(
+  ctx: Context,
+  allPlugins: AgemonPlugin[],
+  options: ReconcileOptions,
+  stored: Plan,
+): Promise<Plan> {
+  const rebuilt = await buildPlan(
+    { ...ctx, dryRun: true, yes: false, interactive: false },
+    allPlugins,
+    { only: options.only, agemonVersion: options.agemonVersion },
+  );
+  if (planContentFingerprint(rebuilt) !== planContentFingerprint(stored)) {
+    throw new Error(
+      `${describePlanMismatch(stored, rebuilt)} ${REPLAN_ADVICE}`,
+    );
+  }
+  return rebuilt;
+}
+
 function isSettledConflict(skip: SkippedOperation): boolean {
   return skip.operation.action === "conflict" && !skip.consentMissing;
 }
@@ -365,12 +406,12 @@ export async function reconcile(
     assertPlanIsCompatible(options.plan, allPlugins, options.agemonVersion);
   }
 
-  const plan =
-    options.plan ??
-    (await buildPlan(ctx, allPlugins, {
-      only: options.only,
-      agemonVersion: options.agemonVersion,
-    }));
+  const plan = options.plan
+    ? await rebuildStoredPlan(ctx, allPlugins, options, options.plan)
+    : await buildPlan(ctx, allPlugins, {
+        only: options.only,
+        agemonVersion: options.agemonVersion,
+      });
 
   if (ctx.dryRun) {
     await previewAndStop(ctx, plan);
