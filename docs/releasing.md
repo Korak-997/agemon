@@ -8,8 +8,9 @@ This document describes the complete release process for this repository, includ
 - automated GitHub Release publishing through GitHub Actions
 - CI guards that prevent incomplete releases
 
-`agemon` is distributed as a self-contained tarball attached to GitHub Releases and
-installed via `install.sh` (`curl | sh`). It is **not** published to the npm registry.
+`agemon` is distributed as one self-contained tarball. It is attached to each GitHub
+Release (installed by `install.sh`) and the same file is published to the npm registry
+as `agemon` (installed by `npm install --global agemon`).
 
 ## Release model
 
@@ -36,15 +37,18 @@ Channel mapping to GitHub Release flags:
 ## Tooling in this repo
 
 - GitHub workflow: `.github/workflows/release.yml`
-- `npm pack` (packages `bin/`, `dist/`, `package.json`, `LICENSE`, `README.md` per the
-  `"files"` field in `package.json`) — this produces the tarball, it does not publish
-  anywhere.
+- `scripts/pack-release.sh` — runs `npm pack` (packages `bin/`, `dist/`, `assets/`,
+  `package.json`, `LICENSE`, `README.md` per the `"files"` field in `package.json`), then
+  removes `dependencies` from the packed `package.json`. tsup already bundles them, so
+  `npm install agemon` fetches nothing beyond the checksummed tarball. `npm run smoke`
+  packs through the same script and fails if the manifest still declares dependencies or
+  install scripts.
 - `gh release create` (GitHub CLI, preinstalled on GitHub-hosted runners) — attaches the
   release assets to a GitHub Release for the pushed tag.
 - `actions/attest-build-provenance` — signs a build-provenance attestation for every file
   listed in `SHA256SUMS`.
 
-The Release workflow runs in two jobs so that no repository or dependency code ever runs
+The Release workflow runs in three jobs so that no repository or dependency code ever runs
 with a write token:
 
 - **`build`** (`contents: read`) — `npm ci`, lint, typecheck, test, build, smoke, the tag
@@ -54,6 +58,15 @@ with a write token:
 - **`publish`** (`contents: write`, `id-token: write`, `attestations: write`) — no checkout
   and no `npm`. It checks the artifact against the build job's digest, runs
   `sha256sum -c`, attests, and creates the release.
+- **`npm`** (`contents: read`, `id-token: write`, environment `npm`) — no checkout and no
+  dependency install. It downloads `agemon.tgz` and `SHA256SUMS` **from the GitHub
+  Release**, checks `SHA256SUMS` against the build job's digest and the tarball against
+  `SHA256SUMS`, requires npm ≥ 11.5.1, picks the dist-tag (`next` for `-alpha/-beta/-rc`,
+  otherwise `latest`), refuses to move `latest` backwards, and runs
+  `npm publish ./agemon.tgz` with npm trusted publishing (OIDC, no token; provenance is
+  generated automatically). Because it reads from the Release, not from the one-day
+  workflow artifact, a failed npm publish can be re-run with **Re-run failed jobs** at any
+  time.
 
 `release.yml` is the trust anchor for attestations: `install.sh` and the README accept only
 attestations signed by that workflow. A change to it deserves the same review as a change
@@ -218,11 +231,39 @@ If any check fails, the release is blocked and no GitHub Release is created.
 - **Build provenance attestations** for `agemon.tgz` and `install.sh`
   (`gh attestation verify`).
 
-- **Nothing goes to the npm registry.** `npm pack` only builds a local tarball file; it
-  never talks to `registry.npmjs.org`.
+- **npm**: `agemon@<version>` — the same `agemon.tgz` — under `latest`, or `next` for
+  prereleases, with an npm provenance statement. If the `latest` guard refuses (a newer
+  version already holds `latest`), that version stays off npm; an older version never
+  takes `latest` after a newer one, and the GitHub Release stays the source of truth.
 
 `install.sh` refuses a release that has no `SHA256SUMS`, so releases up to 4.7.2 can no
 longer be installed with it.
+
+## One-time npm setup (owner)
+
+Do this once, before the first release that publishes to npm. All values are
+case-sensitive.
+
+1. **GitHub environment `npm`** (Settings → Environments → New environment, name `npm`):
+   - Required reviewers: the owner. GitHub enforces this whatever a workflow file says, so
+     a modified workflow on a pushed tag or a dispatched branch still stops here.
+   - Deployment branches and tags: "Selected branches and tags" → branch `master` (the
+     **Cut release** caller) and tag pattern `v*` (tag pushes from `npm run deploy` or by
+     hand).
+2. **Tag ruleset** (Settings → Rules → Rulesets → New tag ruleset): target `v*`, restrict
+   creation to the owner (and the Actions bot that **Cut release** pushes as).
+3. **npm trusted publishers** (npmjs.com → `agemon` → Settings → Trusted publishing),
+   two entries, both GitHub Actions with direct `npm publish` allowed:
+   - organization/user `Korak-997`, repository `agemon`, workflow `cut-release.yml`,
+     environment `npm`. npm checks the *calling* workflow's filename, and **Cut release**
+     calls `release.yml` as a reusable workflow.
+   - organization/user `Korak-997`, repository `agemon`, workflow `release.yml`,
+     environment `npm`, for tags pushed by `npm run deploy` or by hand.
+4. On npmjs.com, set the package's publishing access to "Require two-factor
+   authentication and disallow tokens", so only the two workflows can publish.
+5. Add `quality (node 22.x)` to the required status checks of the `master` branch ruleset.
+6. After the first npm release, deprecate the old placeholder:
+   `npm deprecate agemon@0.1.0 "use the latest agemon"`.
 
 ## Rolling out installer changes
 

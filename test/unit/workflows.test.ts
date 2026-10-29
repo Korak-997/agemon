@@ -19,12 +19,15 @@ interface WorkflowStep {
 interface WorkflowJob {
   permissions?: unknown;
   uses?: string;
+  container?: unknown;
+  services?: unknown;
   needs?: string | string[];
   environment?: unknown;
   steps?: WorkflowStep[];
 }
 
 interface Workflow {
+  on?: Record<string, unknown>;
   permissions?: unknown;
   jobs: Record<string, WorkflowJob>;
 }
@@ -74,6 +77,11 @@ function unpinnedActions(workflow: Workflow): string[] {
 }
 
 const NPM_PUBLISH_JOB = { file: "release.yml", job: "npm" } as const;
+const SCORECARD_JOB = { file: "scorecard.yml", job: "analysis" } as const;
+const JOBS_ALLOWED_THIRD_PARTY_CODE_WITH_WRITE_SCOPE = [
+  NPM_PUBLISH_JOB,
+  SCORECARD_JOB,
+];
 
 function privilegedThirdPartyJobs(
   workflow: Workflow,
@@ -159,7 +167,9 @@ describe(".github/workflows", () => {
     const offenders = [...workflows].flatMap(([file, workflow]) =>
       privilegedThirdPartyJobs(
         workflow,
-        file === NPM_PUBLISH_JOB.file ? [NPM_PUBLISH_JOB.job] : [],
+        JOBS_ALLOWED_THIRD_PARTY_CODE_WITH_WRITE_SCOPE.filter(
+          (allowed) => allowed.file === file,
+        ).map((allowed) => allowed.job),
       ).map((jobName) => `${file}:${jobName}`),
     );
     expect(offenders).toEqual([]);
@@ -239,6 +249,54 @@ describe(".github/workflows", () => {
       }
     },
   );
+
+  it("lints the bundled skills in CI", () => {
+    const qualityJob = workflows.get("ci.yml")?.jobs.quality as WorkflowJob;
+
+    expect(stepRunning(qualityJob, /^npm run lint-skills$/)).toBeDefined();
+  });
+
+  describe("the Scorecard job, allowed to run the pinned Scorecard action with write scopes", () => {
+    const scorecardWorkflow = workflows.get(SCORECARD_JOB.file) as Workflow;
+    const scorecardJob = workflows.get(SCORECARD_JOB.file)?.jobs[
+      SCORECARD_JOB.job
+    ] as WorkflowJob;
+
+    it("never runs for pull requests and has no container or services", () => {
+      expect(Object.keys(scorecardWorkflow.on ?? {}).sort()).toEqual([
+        "branch_protection_rule",
+        "push",
+        "schedule",
+        "workflow_dispatch",
+      ]);
+      expect(Object.keys(scorecardWorkflow.jobs)).toEqual([SCORECARD_JOB.job]);
+      expect(scorecardJob.container).toBeUndefined();
+      expect(scorecardJob.services).toBeUndefined();
+    });
+
+    it("holds only the scopes Scorecard needs to publish and upload results", () => {
+      expect(scorecardJob.permissions).toEqual({
+        contents: "read",
+        "security-events": "write",
+        "id-token": "write",
+      });
+    });
+
+    it("runs no repository code: only checkout without credentials, Scorecard and the SARIF upload", () => {
+      const steps = scorecardJob.steps ?? [];
+      expect(steps.filter((step) => step.run)).toEqual([]);
+      expect(steps.map((step) => step.uses?.split("@")[0])).toEqual([
+        "actions/checkout",
+        "ossf/scorecard-action",
+        "github/codeql-action/upload-sarif",
+      ]);
+      expect(
+        stepUsing(scorecardJob, "actions/checkout")?.with?.[
+          "persist-credentials"
+        ],
+      ).toBe(false);
+    });
+  });
 
   describe("the npm publish job, the one job allowed to run npm with id-token: write", () => {
     const npmJob = workflows.get(NPM_PUBLISH_JOB.file)?.jobs[

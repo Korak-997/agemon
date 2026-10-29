@@ -10,7 +10,7 @@
 
 - Removed `allowed-tools` from the frontmatter: no tool is pre-approved, so every web fetch to a new domain, file write and shell command goes through the user's normal permission prompt.
 - Added the "Untrusted content" section after the frontmatter.
-- Template paths are relative to the skill directory (`templates/`), not `~/.claude/skills/geo/templates/`.
+- Template paths are relative to the skill directory (`templates/`), not upstream's absolute path in the user's Claude directory.
 - Cover metadata is checked against allowed patterns and written to `GEO-REPORT-META.yaml` with the Write tool (`--metadata-file`), never put on a command line.
 - pandoc runs `--sandbox` with raw HTML, raw attributes, attribute blocks and YAML metadata blocks disabled in the reader and no `--css`/`--embed-resources`. `templates/geo-report-style.css` is inlined into the template's `<style>` without its Google Fonts `@import`.
 - The template has a Content-Security-Policy that allows only its own script (by SHA-256), inline styles and `data:` images.

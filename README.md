@@ -1,9 +1,27 @@
 # agemon
 
+[![CI](https://github.com/Korak-997/agemon/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Korak-997/agemon/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Korak-997/agemon)](https://github.com/Korak-997/agemon/releases/latest)
+[![npm](https://img.shields.io/npm/v/agemon)](https://www.npmjs.com/package/agemon)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Korak-997/agemon/badge)](https://scorecard.dev/viewer/?uri=github.com/Korak-997/agemon)
+
 Bootstrap and reverse an AI coding agent environment in a repository with one CLI.
 
 `agemon` installs a curated plugin bundle, tracks all managed actions in a state manifest,
 and can cleanly reverse those actions with `nuke`.
+
+![agemon planning skills and a CLI tool in the sandbox, then a roundtrip that leaves the repository byte-identical](docs/demo/agemon.gif)
+
+## Why agemon
+
+- **One command, the same setup everywhere.** Agent rules, skills, subagents, the code
+  graph and its daemon land the same way in every repository, pinned to exact versions.
+- **You approve every change first.** agemon shows a plan with diffs, asks before it
+  writes, and rolls back the whole run if any step fails.
+- **Fully reversible.** Every change is recorded, and `agemon nuke` removes exactly what
+  agemon added, leaving your own files alone.
+
+Want to help? Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What It Does
 
@@ -479,7 +497,9 @@ layout are not; if anything like that would be lost, the original is saved under
 interactive or `--yes` run that did not roll back, and never with `--dry-run`, `--only` or
 `agemon plan`. To opt out, remove the capability from `capabilities` afterwards; because it
 is now in `known_capabilities`, agemon does not add it again. Older agemon releases reject a
-file with `known_capabilities` or `agents`, so upgrade agemon in CI before committing it.
+file with `known_capabilities` or `agents`, so upgrade agemon in CI before committing it. The
+rewrite is skipped while `/.agemon/` is not git-ignored, and a full `agemon nuke` deletes
+`.agemon/`, including that saved original.
 
 A conflict is a rule file that holds your own rules where agemon would write a pointer.
 It needs a decision. `--yes` never picks one for you, so record it under

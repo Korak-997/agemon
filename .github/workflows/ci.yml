@@ -53,6 +53,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Lint bundled skills
+        run: npm run lint-skills
+
       - name: Typecheck
         run: npm run typecheck
 

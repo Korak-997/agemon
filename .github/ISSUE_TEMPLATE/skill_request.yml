@@ -1,0 +1,66 @@
+name: Skill request
+description: Suggest a skill for agemon to bundle
+title: "skill: "
+labels:
+  - skill
+body:
+  - type: markdown
+    attributes:
+      value: |
+        agemon bundles third-party skills only at a pinned commit, with their license and a
+        NOTICE.md. See docs/contributing/adding-a-skill.md for the rules a skill must meet.
+  - type: input
+    id: source
+    attributes:
+      label: Source repository
+      placeholder: https://github.com/owner/repository
+    validations:
+      required: true
+  - type: input
+    id: path
+    attributes:
+      label: Path of the skill in that repository
+      placeholder: skills/example-skill
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Commit or tag to pin
+    validations:
+      required: true
+  - type: dropdown
+    id: license
+    attributes:
+      label: License
+      options:
+        - MIT
+        - Apache-2.0
+        - BSD-2-Clause
+        - BSD-3-Clause
+        - ISC
+        - CC-BY-4.0
+        - Other (agemon cannot bundle it)
+    validations:
+      required: true
+  - type: textarea
+    id: purpose
+    attributes:
+      label: What the skill does and who it helps
+    validations:
+      required: true
+  - type: input
+    id: group
+    attributes:
+      label: Proposed skill group
+      description: An existing group (see the README's Skill Groups table) or a new one.
+  - type: dropdown
+    id: web
+    attributes:
+      label: Does the skill read web pages or search results?
+      description: Web-reading skills get an untrusted-content guard and pre-approve no tools.
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true

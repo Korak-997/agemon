@@ -310,6 +310,16 @@ Current bundle (`src/plugins/cli-tool/catalog.ts`):
 
 - Resolves dependency order with DFS and cycle detection.
 - Supports `--only` selection.
+- **Adding a capability to an existing `agemon.toml`** (`src/core/capability-migration.ts`):
+  a capability on `AUTO_ADDED_TO_EXISTING_CONFIGS` (only `agents`) that the file's
+  `known_capabilities` (or, without that key, the pre-`agents` list) does not name is added
+  to the run when all its dependencies are listed; `--only` is never widened, and exclusions
+  apply afterwards. After an interactive or `--yes` run that ends `applied`,
+  `nothing-to-do`, `partial` or `declined` (never a dry run, `plan` or a rollback), the CLI
+  rewrites the file once: it rereads it and refuses if the bytes changed, keeps every value,
+  sets `capabilities` and `known_capabilities`, checks the output round-trips and validates,
+  and saves the original under `.agemon/backups/` when comments or layout would be lost. It
+  skips the rewrite while `/.agemon/` is not git-ignored (unless `--allow-unignored-state`).
 - Install path, per plugin:
   - `detect`
   - not present: fresh install — `install` then `verify` (throws on failure)

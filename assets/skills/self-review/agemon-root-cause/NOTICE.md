@@ -7,3 +7,4 @@
 - License: MIT — see `LICENSE` in this directory.
 - One of several skills cherry-picked from the much larger superpowers framework; not a full vendor of that repo.
 - Renamed from `systematic-debugging` to `agemon-root-cause` for agemon branding — installed skills should read as agemon's own, not a third-party project name.
+- Left out upstream's `CREATION-LOG.md`: it records how upstream wrote the skill and is not part of the instructions.
