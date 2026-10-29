@@ -189,7 +189,14 @@ describe("macOS", () => {
           .map((entry) => entry.plugin),
       ),
     ).toEqual(
-      new Set(["crg", "daemon", "skills", "cli-tool", "master-prompt"]),
+      new Set([
+        "crg",
+        "daemon",
+        "skills",
+        "agents",
+        "cli-tool",
+        "master-prompt",
+      ]),
     );
   });
 

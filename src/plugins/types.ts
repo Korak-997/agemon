@@ -89,7 +89,10 @@ export interface AgemonPlugin {
   detect(ctx: Context): Promise<PluginPresence>;
   desiredRevision?(ctx: Context, resourceId: string): string | null;
   describeState?(ctx: Context): Promise<CapabilityStateRow[]>;
-  plan?(ctx: Context): Promise<ProposedOperation[]>;
+  plan?(
+    ctx: Context,
+    plannedSoFar?: readonly ProposedOperation[],
+  ): Promise<ProposedOperation[]>;
   materialize?(
     ctx: Context,
     operations: ProposedOperation[],

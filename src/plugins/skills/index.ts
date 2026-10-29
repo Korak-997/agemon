@@ -29,6 +29,16 @@ import {
   selectNewlyOfferedGroups,
 } from "./group-selection.js";
 import {
+  ACTION_TYPE_DECLINED_SKILL_GROUP,
+  ACTION_TYPE_INSTALLED_SKILL,
+  ACTION_TYPE_PREEXISTING_SKILL,
+  declinedSkillGroupIds,
+  recordedSkillNames,
+  SKILL_GROUP_RESOURCE_PREFIX,
+  SKILLS_PLUGIN_ID,
+  skillsLedgerEntries,
+} from "./ledger-view.js";
+import {
   readLocalSkill,
   withSkillsStage,
   writeStagedSkill,
@@ -46,14 +56,10 @@ import {
   SKILLS_LOCK_FILE,
 } from "./skills-cli-targets.js";
 
-const PLUGIN_ID = "skills";
+const PLUGIN_ID = SKILLS_PLUGIN_ID;
 
-const ACTION_TYPE_INSTALLED_SKILL = "installed-skill";
-const ACTION_TYPE_PREEXISTING_SKILL = "preexisting-skill";
 const ACTION_TYPE_GENERATED_SKILLS_LOCK = "generated-skills-lock";
 const ACTION_TYPE_OFFERED_SKILL_GROUP = "offered-skill-group";
-const ACTION_TYPE_DECLINED_SKILL_GROUP = "declined-skill-group";
-const SKILL_GROUP_RESOURCE_PREFIX = "skill-group:";
 const BUILT_IN_SOURCE_DESCRIPTION = "bundled with agemon";
 const DECLINED_GROUP_PREVIEW = "declined — agemon will not offer it again";
 const SKILL_MANIFEST_PATH = "SKILL.md";
@@ -68,12 +74,6 @@ interface SkillsListEntry {
   name: string;
 }
 
-function getPluginActions(ctx: Context) {
-  return ctx.manifest
-    .getActions()
-    .filter((action) => action.plugin === PLUGIN_ID);
-}
-
 function flattenSkills(groups: SkillGroup[]): SkillBundleEntry[] {
   return groups.flatMap((group) => group.skills);
 }
@@ -86,24 +86,15 @@ function getAvailableGroups(ctx: Context): SkillGroup[] {
   return [...SKILL_GROUPS, ...getCustomGroups(ctx)];
 }
 
-const SKILL_RECORD_TYPES: ReadonlySet<string> = new Set([
-  ACTION_TYPE_INSTALLED_SKILL,
-  ACTION_TYPE_PREEXISTING_SKILL,
-]);
-
 function getRecordedGroups(ctx: Context): SkillGroup[] {
-  const recordedSkillNames = new Set(
-    getPluginActions(ctx)
-      .filter((action) => SKILL_RECORD_TYPES.has(action.type))
-      .map((action) => action.target),
-  );
+  const skillNames = recordedSkillNames(ctx);
   return getAvailableGroups(ctx).filter((group) =>
-    group.skills.some((skill) => recordedSkillNames.has(skill.skillName)),
+    group.skills.some((skill) => skillNames.has(skill.skillName)),
   );
 }
 function getOfferedGroupIds(ctx: Context): Set<string> {
   return new Set(
-    getPluginActions(ctx)
+    skillsLedgerEntries(ctx)
       .filter((action) => action.type === ACTION_TYPE_OFFERED_SKILL_GROUP)
       .map((action) => action.target),
   );
@@ -117,16 +108,8 @@ function getUnofferedGroups(ctx: Context): SkillGroup[] {
   );
 }
 
-function getDeclinedGroupIds(ctx: Context): Set<string> {
-  return new Set(
-    getPluginActions(ctx)
-      .filter((action) => action.type === ACTION_TYPE_DECLINED_SKILL_GROUP)
-      .map((action) => action.target),
-  );
-}
-
 function hasManagedInstallRecord(ctx: Context, skillName: string): boolean {
-  return getPluginActions(ctx).some(
+  return skillsLedgerEntries(ctx).some(
     (action) =>
       action.type === ACTION_TYPE_INSTALLED_SKILL &&
       action.target === skillName &&
@@ -135,7 +118,7 @@ function hasManagedInstallRecord(ctx: Context, skillName: string): boolean {
 }
 
 function hasPreexistingRecord(ctx: Context, skillName: string): boolean {
-  return getPluginActions(ctx).some(
+  return skillsLedgerEntries(ctx).some(
     (action) =>
       action.type === ACTION_TYPE_PREEXISTING_SKILL &&
       action.target === skillName &&
@@ -155,7 +138,7 @@ function getSkillsLockPath(cwd: string): string {
 }
 
 function hasManagedSkillsLockRecord(ctx: Context): boolean {
-  return getPluginActions(ctx).some(
+  return skillsLedgerEntries(ctx).some(
     (action) =>
       action.type === ACTION_TYPE_GENERATED_SKILLS_LOCK &&
       action.target === SKILLS_LOCK_FILE &&
@@ -224,7 +207,7 @@ async function detectSkills(ctx: Context): Promise<PluginPresence> {
 
 function getReportableGroups(ctx: Context): SkillGroup[] {
   const recordedGroups = getRecordedGroups(ctx);
-  const declinedGroupIds = getDeclinedGroupIds(ctx);
+  const declinedGroupIds = declinedSkillGroupIds(ctx);
   const combinedGroups = new Map(
     recordedGroups.map((group) => [group.id, group]),
   );
@@ -267,7 +250,7 @@ async function describeSkillsState(
     }));
   }
 
-  const declinedGroupIds = getDeclinedGroupIds(ctx);
+  const declinedGroupIds = declinedSkillGroupIds(ctx);
 
   return reportableGroups.map((group): CapabilityStateRow => {
     const resourceId = groupResourceId(group);
@@ -769,7 +752,7 @@ async function revertSkills(
 }
 
 async function uninstallSkills(ctx: Context): Promise<void> {
-  await revertSkills(ctx, getPluginActions(ctx));
+  await revertSkills(ctx, skillsLedgerEntries(ctx));
 }
 
 export const skillsPlugin: AgemonPlugin = {

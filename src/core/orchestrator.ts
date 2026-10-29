@@ -154,7 +154,7 @@ export async function buildPlan(
 
   const operations: ProposedOperation[] = [];
   for (const plugin of plugins) {
-    const pluginOperations = (await plugin.plan?.(ctx)) ?? [];
+    const pluginOperations = (await plugin.plan?.(ctx, operations)) ?? [];
     operations.push(...pluginOperations);
   }
 
@@ -247,6 +247,7 @@ async function persistDesiredStateConfig(
     capabilities: desiredCapabilityIds(plugins, options),
     skillGroups: ctx.skillGroupsOption ?? null,
     conflictDecisions,
+    knownCapabilities: CORE_CAPABILITY_IDS,
   });
 
   ctx.ui.info(

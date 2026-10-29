@@ -31,14 +31,16 @@ describe("agemon.toml config", () => {
       capabilities: ["crg", "master-prompt"],
       skillGroups: "essentials,design",
       conflictDecisions: { "rule-file:CLAUDE.md": "skip" },
+      knownCapabilities: ["crg", "master-prompt", "agents"],
     });
 
     const reloaded = await loadConfig(cwd);
-    expect(reloaded).toEqual({
+    expect(reloaded).toMatchObject({
       capabilities: ["crg", "master-prompt"],
       skillGroups: "essentials,design",
       customSkillGroups: [],
       conflictDecisions: { "rule-file:CLAUDE.md": "skip" },
+      knownCapabilities: ["crg", "master-prompt", "agents"],
     });
   });
 
@@ -49,6 +51,7 @@ describe("agemon.toml config", () => {
       capabilities: ["crg"],
       skillGroups: null,
       conflictDecisions: {},
+      knownCapabilities: ["crg"],
     });
 
     const contents = await readFile(join(cwd, "agemon.toml"), "utf8");
@@ -92,7 +95,7 @@ describe("agemon.toml config", () => {
     );
 
     await expect(loadConfig(cwd)).rejects.toThrow(
-      "agemon.toml is invalid: unknown key 'skill_group'. Valid keys: capabilities, skill_groups, custom_skill_groups, conflict_decisions.",
+      "agemon.toml is invalid: unknown key 'skill_group'. Valid keys: capabilities, skill_groups, custom_skill_groups, conflict_decisions, known_capabilities.",
     );
   });
 
@@ -289,5 +292,16 @@ skills = [
     await expect(loadToml(group(skills))).rejects.toThrow(
       /at most 10 GitHub repositories/,
     );
+  });
+
+  it("rejects agents in a project-defined skill group", async () => {
+    const cwd = await createSandbox();
+    await writeFile(
+      join(cwd, "agemon.toml"),
+      'capabilities = ["skills"]\n\n[custom_skill_groups.house]\nlabel = "House"\nskills = [{ source = "./tools/skills/house" }]\nagents = ["geo-audit-technical"]\n',
+      "utf8",
+    );
+
+    await expect(loadConfig(cwd)).rejects.toThrow(/unknown key 'agents'/);
   });
 });

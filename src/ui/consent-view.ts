@@ -7,6 +7,7 @@ const GATE_TITLES: Record<string, string> = {
   "workspace-isolation": "Workspace isolation",
   "install-custom-skills": "Install skills from this repository",
   "install-tooling": "Install tooling",
+  "install-subagents": "Install Claude Code subagents",
   "register-service": "Register background service",
   "write-config": "Write structured config",
   "touch-instruction-files": "Write instruction files",

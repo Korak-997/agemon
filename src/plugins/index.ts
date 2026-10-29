@@ -1,3 +1,4 @@
+import { agentsPlugin } from "./agents/index.js";
 import { cliToolPlugin } from "./cli-tool/index.js";
 import { crgPlugin } from "./crg/index.js";
 import { daemonPlugin } from "./daemon/index.js";
@@ -10,6 +11,7 @@ const capabilityRegistry: AgemonPlugin[] = [
   crgPlugin,
   daemonPlugin,
   skillsPlugin,
+  agentsPlugin,
   cliToolPlugin,
   masterPromptPlugin,
 ];

@@ -206,7 +206,9 @@ async function discoverCopilotInstructions(
   return instructions;
 }
 
-async function readIsolationStatus(cwd: string): Promise<IsolationStatus> {
+export async function readIsolationStatus(
+  cwd: string,
+): Promise<IsolationStatus> {
   const { exists, contents } = await readRepoFile(cwd, ".gitignore");
   if (!exists) {
     return "no-gitignore-file";

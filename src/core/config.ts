@@ -1,5 +1,7 @@
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { parse, stringify, TomlError } from "smol-toml";
+import { replaceStaleBackup } from "./backups.js";
 import {
   RefusedFileError,
   readRegularFileIfExists,
@@ -13,7 +15,10 @@ const CONFIG_KEYS: readonly string[] = [
   "skill_groups",
   "custom_skill_groups",
   "conflict_decisions",
+  "known_capabilities",
 ];
+
+const CONFIG_BACKUP_RESOURCE_ID = "config:agemon.toml";
 
 const CUSTOM_GROUP_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/u;
 const RESERVED_GROUP_IDS: readonly string[] = ["all", "none"];
@@ -51,9 +56,14 @@ export interface AgemonConfig {
   skillGroups: string | null;
   customSkillGroups: CustomSkillGroupConfig[];
   conflictDecisions: Record<string, ConflictDecision>;
+  knownCapabilities: string[] | null;
+  sourceText: string;
 }
 
-export type PersistedConfig = Omit<AgemonConfig, "customSkillGroups">;
+export type PersistedConfig = Omit<
+  AgemonConfig,
+  "customSkillGroups" | "knownCapabilities" | "sourceText"
+> & { knownCapabilities: string[] };
 
 export function resolveConfigPath(cwd: string): string {
   return join(cwd, CONFIG_FILE_NAME);
@@ -76,6 +86,19 @@ function validateCapabilities(value: unknown): string[] {
     }
     return entry;
   });
+}
+
+function validateKnownCapabilities(value: unknown): string[] | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== "string" || entry.length === 0)
+  ) {
+    fail("'known_capabilities' must be an array of non-empty strings");
+  }
+  return value;
 }
 
 function validateKnownKeys(record: Record<string, unknown>): void {
@@ -300,22 +323,79 @@ export async function loadConfig(cwd: string): Promise<AgemonConfig | null> {
   if (rawContents === null) {
     return null;
   }
+  return validateConfigText(rawContents);
+}
 
-  let parsed: unknown;
+function parseConfigRecord(text: string): Record<string, unknown> {
   try {
-    parsed = parse(rawContents);
+    return parse(text) as Record<string, unknown>;
   } catch (error) {
     const detail = error instanceof TomlError ? error.message : String(error);
     fail(`not valid TOML — ${detail}`);
   }
+}
 
-  const record = parsed as Record<string, unknown>;
+function validateConfigText(text: string): AgemonConfig {
+  const record = parseConfigRecord(text);
   validateKnownKeys(record);
   return {
     capabilities: validateCapabilities(record.capabilities),
     skillGroups: validateSkillGroups(record.skill_groups),
     customSkillGroups: validateCustomSkillGroups(record.custom_skill_groups),
     conflictDecisions: validateConflictDecisions(record.conflict_decisions),
+    knownCapabilities: validateKnownCapabilities(record.known_capabilities),
+    sourceText: text,
+  };
+}
+
+export type ConfigCapabilityUpdate =
+  | { kind: "written"; backupPath: string | null }
+  | { kind: "not-written"; reason: string };
+
+function serializeConfigRecord(record: Record<string, unknown>): string {
+  return `${stringify(record)}\n`;
+}
+
+export async function rewriteConfigCapabilities(
+  cwd: string,
+  config: AgemonConfig,
+  update: { capabilities: string[]; knownCapabilities: string[] },
+): Promise<ConfigCapabilityUpdate> {
+  const configPath = resolveConfigPath(cwd);
+  const currentText = await readRegularFileIfExists(configPath);
+  if (currentText !== config.sourceText) {
+    return { kind: "not-written", reason: "it changed during this run" };
+  }
+
+  const currentRecord = parseConfigRecord(currentText);
+  const nextRecord = {
+    ...currentRecord,
+    capabilities: update.capabilities,
+    known_capabilities: [
+      ...new Set([
+        ...(config.knownCapabilities ?? []),
+        ...update.knownCapabilities,
+      ]),
+    ],
+  };
+  const nextText = serializeConfigRecord(nextRecord);
+  if (!isDeepStrictEqual(parseConfigRecord(nextText), nextRecord)) {
+    return {
+      kind: "not-written",
+      reason: "rewriting it would change values agemon did not mean to change",
+    };
+  }
+  validateConfigText(nextText);
+
+  const losesCommentsOrLayout =
+    serializeConfigRecord(currentRecord) !== currentText;
+  const backup = losesCommentsOrLayout
+    ? await replaceStaleBackup(cwd, CONFIG_BACKUP_RESOURCE_ID, currentText)
+    : null;
+  await writeFileAtomic(configPath, nextText);
+  return {
+    kind: "written",
+    backupPath: backup === null ? null : relative(cwd, backup.path),
   };
 }
 
@@ -331,6 +411,7 @@ export async function writeConfig(
     payload.skill_groups = config.skillGroups;
   }
   payload.conflict_decisions = config.conflictDecisions;
+  payload.known_capabilities = config.knownCapabilities;
 
   await writeFileAtomic(configPath, `${stringify(payload)}\n`);
   return configPath;

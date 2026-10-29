@@ -87,24 +87,29 @@ lives. The schema subagent detects structured data from the raw HTML.
 
 Delegate analysis to 5 specialized subagents. Each subagent operates on the collected page data and produces a category score (0-100) plus findings.
 
-Launch all five at once as **general-purpose subagents**. Build each subagent's prompt in
-this order:
+Launch all five at once. Each one is a project subagent that agemon installs with this
+skill group; its brief is already its system prompt, and it can use only the tools it
+lists:
 
-1. The full text of its brief, read from this skill's directory. Each brief starts with the
-   untrusted-content rule, so the rule comes first in every prompt:
+| Subagent | `subagent_type` | Tools | Fallback brief |
+|---|---|---|---|
+| AI Visibility | `geo-audit-ai-visibility` | WebFetch | `${CLAUDE_SKILL_DIR}/references/ai-visibility.md` |
+| Platform Optimization | `geo-audit-platform` | WebFetch | `${CLAUDE_SKILL_DIR}/references/platform-analysis.md` |
+| Technical GEO | `geo-audit-technical` | WebFetch, Bash | `${CLAUDE_SKILL_DIR}/references/technical.md` |
+| Content E-E-A-T | `geo-audit-content` | WebFetch | `${CLAUDE_SKILL_DIR}/references/content.md` |
+| Schema | `geo-audit-schema` | WebFetch, Bash | `${CLAUDE_SKILL_DIR}/references/schema.md` |
 
-   | Subagent | Brief |
-   |---|---|
-   | AI Visibility | `${CLAUDE_SKILL_DIR}/references/ai-visibility.md` |
-   | Platform Optimization | `${CLAUDE_SKILL_DIR}/references/platform-analysis.md` |
-   | Technical GEO | `${CLAUDE_SKILL_DIR}/references/technical.md` |
-   | Content E-E-A-T | `${CLAUDE_SKILL_DIR}/references/content.md` |
-   | Schema | `${CLAUDE_SKILL_DIR}/references/schema.md` |
+Give each subagent this prompt:
 
-2. The target URL and the detected business type.
-3. The Phase 1 page data, wrapped in `<untrusted-page-data>` … `</untrusted-page-data>`.
+1. The target URL and the detected business type.
+2. The Phase 1 page data, wrapped in `<untrusted-page-data>` … `</untrusted-page-data>`.
    First replace every `</untrusted-page-data>` inside the page data with
    `<\/untrusted-page-data>`, so the page cannot close the block early.
+
+If the Agent tool rejects one of these `subagent_type` values (the agent is not installed),
+launch a **general-purpose** subagent for that area instead, and put the full text of its
+fallback brief, read from this skill's directory, **first** in its prompt, before items 1
+and 2. Each brief starts with the untrusted-content rule, so the rule always comes first.
 
 Ask each subagent to return its category score and findings as text and not to write files.
 
@@ -112,29 +117,29 @@ Before launching them, tell the user: the technical and schema subagents will ea
 a read-only `curl` command for up to 4 pages; approve each run and do not choose "always
 allow".
 
-**Subagent 1: AI Visibility Analysis (geo-ai-visibility)**
+**Subagent 1: AI Visibility Analysis (`geo-audit-ai-visibility`)**
 - Analyze content blocks for quotability by AI systems (citability scoring)
 - Check AI crawler access via robots.txt and llms.txt presence
 - Scan brand presence across YouTube, Reddit, Wikipedia, LinkedIn
 - Score brand authority signals that AI models use for entity recognition
 
-**Subagent 2: Platform Optimization (geo-platform-analysis)**
+**Subagent 2: Platform Optimization (`geo-audit-platform`)**
 - Assess readiness for Google AI Overviews, ChatGPT, Perplexity, Gemini, Bing Copilot
 - Check platform-specific ranking factors and optimization opportunities
 
-**Subagent 3: Technical GEO Infrastructure (geo-technical)**
+**Subagent 3: Technical GEO Infrastructure (`geo-audit-technical`)**
 - Analyze robots.txt for AI crawler access
 - Verify meta tags, headers, and technical accessibility for AI systems
 - Check page speed, server-side rendering, and Core Web Vitals
 - Assess security headers and mobile optimization
 
-**Subagent 4: Content E-E-A-T Quality (geo-content)**
+**Subagent 4: Content E-E-A-T Quality (`geo-audit-content`)**
 - Evaluate Experience, Expertise, Authoritativeness, Trustworthiness signals
 - Check author bios, credentials, source citations
 - Assess content freshness, depth, and originality
 - Verify "About" page quality and team credentials
 
-**Subagent 5: Schema & Structured Data (geo-schema)**
+**Subagent 5: Schema & Structured Data (`geo-audit-schema`)**
 - Validate all schema.org markup
 - Check for GEO-critical schema types (FAQ, HowTo, Organization, Product, Article)
 - Assess schema completeness and accuracy

@@ -178,7 +178,7 @@ describe("agemon.toml capability validation", () => {
 
       expect(run.exitCode).toBe(1);
       expect(run.stderr.replace(/[\s│]+/g, " ")).toContain(
-        "agemon.toml lists unknown capabilities: skils. Known: crg, daemon, skills, cli-tool, master-prompt",
+        "agemon.toml lists unknown capabilities: skils. Known: crg, daemon, skills, agents, cli-tool, master-prompt",
       );
       expect(await exists(join(repoDirectory, ".agemon"))).toBe(false);
       expect(await exists(join(repoDirectory, "AGENTS.md"))).toBe(false);
@@ -530,6 +530,146 @@ describe("an invalid agemon.toml in status and inspect", () => {
       expect(JSON.parse(inspect.stdout).configError).toMatch(
         /^agemon\.toml is invalid: unknown key 'skill_group'\./u,
       );
+    });
+  });
+});
+
+describe("adding the agents capability to an existing agemon.toml", () => {
+  const PRE_AGENTS_CONFIG =
+    '# team config\ncapabilities = ["crg", "daemon", "skills", "master-prompt"]\n';
+
+  async function readConfig(repoDirectory: string): Promise<string> {
+    return readFile(join(repoDirectory, "agemon.toml"), "utf8");
+  }
+
+  it("includes agents, then records it once with a backup of the original", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
+
+      const run = await runFrom(repoDirectory, ["--yes", "--skip-daemon"]);
+
+      expect(run.exitCode).toBe(0);
+      expect(run.stderr).toContain(
+        "agemon.toml does not list the new capability 'agents' (installs Claude Code subagents for your skill groups) yet; this run includes it (agemon.toml is updated when this run completes).",
+      );
+      expect(run.stdout).toContain(
+        "Updated agemon.toml: added 'agents' (installs Claude Code subagents for your skill groups) to capabilities; remove it there to opt out. Comments and layout were not kept; the original is saved at .agemon/backups/",
+      );
+      const rewritten = await readConfig(repoDirectory);
+      expect(rewritten).toContain(
+        'capabilities = [ "crg", "daemon", "skills", "master-prompt", "agents" ]',
+      );
+      expect(rewritten).toContain("known_capabilities = [");
+      expect(
+        await exists(
+          join(repoDirectory, ".claude/agents/geo-audit-technical.md"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("keeps agents out once the user removes it after the rewrite", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
+      expect((await runFrom(repoDirectory, ["--yes"])).exitCode).toBe(0);
+      const optedOut = (await readConfig(repoDirectory)).replace(
+        ', "agents" ]',
+        " ]",
+      );
+      await writeFile(join(repoDirectory, "agemon.toml"), optedOut);
+
+      const run = await runFrom(repoDirectory, ["--yes"]);
+
+      expect(run.stderr).not.toContain("new capability");
+      expect(await readConfig(repoDirectory)).toBe(optedOut);
+    });
+  });
+
+  it.each([
+    ["a dry run", ["--dry-run"]],
+    ["a run without consent", []],
+    ["an explicit --only", ["--yes", "--only", "crg"]],
+  ])("never rewrites agemon.toml in %s", async (_label, argv) => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
+
+      await runFrom(repoDirectory, argv);
+
+      expect(await readConfig(repoDirectory)).toBe(PRE_AGENTS_CONFIG);
+    });
+  });
+
+  it("writes known_capabilities into a new agemon.toml", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      expect((await runFrom(repoDirectory, ["--yes"])).exitCode).toBe(0);
+
+      expect(await readConfig(repoDirectory)).toContain(
+        'known_capabilities = [ "crg", "daemon", "skills", "agents", "cli-tool", "master-prompt" ]',
+      );
+    });
+  });
+});
+
+describe("plan then apply --plan with subagents", () => {
+  async function planId(
+    runFrom: FixtureRepo["runFrom"],
+    repoDirectory: string,
+  ): Promise<string> {
+    const run = await runFrom(repoDirectory, [
+      "plan",
+      "--skill-groups",
+      "geo-seo",
+    ]);
+    const id = /\.agemon\/plans\/([0-9a-f]+)\.json/u.exec(run.stdout)?.[1];
+    if (id === undefined) {
+      throw new Error(`no plan id in: ${run.stdout}`);
+    }
+    return id;
+  }
+
+  it("installs exactly the planned agents", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const id = await planId(runFrom, repoDirectory);
+
+      const run = await runFrom(repoDirectory, [
+        "apply",
+        "--plan",
+        id,
+        "--skill-groups",
+        "geo-seo",
+        "--yes",
+      ]);
+
+      expect(run.exitCode).toBe(0);
+      expect(
+        await exists(join(repoDirectory, ".claude/agents/geo-audit-schema.md")),
+      ).toBe(true);
+    });
+  });
+
+  it("refuses a stored plan whose skill group operation was edited", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const id = await planId(runFrom, repoDirectory);
+      const planPath = join(repoDirectory, ".agemon/plans", `${id}.json`);
+      await writeFile(
+        planPath,
+        (await readFile(planPath, "utf8")).replace(
+          '"skill-group:geo-seo"',
+          '"skill-group:security"',
+        ),
+      );
+
+      const run = await runFrom(repoDirectory, [
+        "apply",
+        "--plan",
+        id,
+        "--skill-groups",
+        "geo-seo",
+        "--yes",
+      ]);
+
+      expect(run.exitCode).toBe(1);
+      expect(await exists(join(repoDirectory, ".claude/agents"))).toBe(false);
     });
   });
 });

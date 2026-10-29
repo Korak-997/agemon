@@ -1,9 +1,7 @@
-import { mkdir, rm } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
-  type FoundBackup,
   immutableBackupCandidates,
-  readFirstExistingBackup,
   replaceStaleBackup,
   resolveV1RuleFileBackupPath,
   writeImmutableBackup,
@@ -13,10 +11,10 @@ import {
   MAX_READ_FILE_LABEL,
   RefusedFileError,
   readRegularFileIfExists,
-  saveVerifiedCopyBeside,
   writeFileAtomic,
 } from "../../core/files.js";
 import { fingerprintContent, fingerprintJson } from "../../core/fingerprint.js";
+import { revertManagedFile } from "../../core/managed-file-revert.js";
 import { resolveInsideRepo } from "../../core/repo-paths.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { renderUnifiedDiff } from "../../core/text-diff.js";
@@ -738,24 +736,6 @@ function backupCandidatesFor(ctx: Context, action: LedgerEntry): string[] {
   ];
 }
 
-async function findPreferredBackup(
-  ctx: Context,
-  action: LedgerEntry,
-): Promise<FoundBackup | null> {
-  let firstExisting: FoundBackup | null = null;
-  for (const candidatePath of backupCandidatesFor(ctx, action)) {
-    const candidate = await readFirstExistingBackup(ctx.cwd, [candidatePath]);
-    if (candidate === null) {
-      continue;
-    }
-    if (fingerprintContent(candidate.contents) === action.fingerprintBefore) {
-      return candidate;
-    }
-    firstExisting ??= candidate;
-  }
-  return firstExisting;
-}
-
 function exciseAgentRulesBlock(contents: string): string | null {
   try {
     const excised = removeManagedMarkdownBlock(contents, AGENT_RULES_BLOCK_ID);
@@ -765,98 +745,14 @@ function exciseAgentRulesBlock(contents: string): string | null {
   }
 }
 
-async function removeRedundantBackups(
-  ctx: Context,
-  action: LedgerEntry,
-  resolvedBackup: FoundBackup | null,
-  contentsKeptElsewhere: string | null,
-): Promise<void> {
-  for (const candidatePath of backupCandidatesFor(ctx, action)) {
-    const candidate = await readFirstExistingBackup(ctx.cwd, [candidatePath]);
-    if (candidate === null) {
-      continue;
-    }
-    const isVerifiedResolvedBackup =
-      candidate.path === resolvedBackup?.path &&
-      fingerprintContent(candidate.contents) === action.fingerprintBefore;
-    if (
-      isVerifiedResolvedBackup ||
-      candidate.contents === contentsKeptElsewhere
-    ) {
-      await rm(candidate.path, { force: true });
-    }
-  }
-}
-
 async function revertManagedRuleFile(
   ctx: Context,
   action: LedgerEntry,
 ): Promise<void> {
-  const targetPath = await resolveInsideRepo(ctx.cwd, action.target);
-  const currentContents = await readRegularFileIfExists(targetPath);
-  const currentFingerprint =
-    currentContents === null ? null : fingerprintContent(currentContents);
-  const backup = await findPreferredBackup(ctx, action);
-  const backupIsVerified =
-    backup !== null &&
-    fingerprintContent(backup.contents) === action.fingerprintBefore;
-
-  if (
-    currentFingerprint !== null &&
-    currentFingerprint === action.fingerprintBefore
-  ) {
-    await removeRedundantBackups(ctx, action, backup, currentContents);
-    return;
-  }
-
-  const untouchedSinceAgemonWrote =
-    currentContents === null || currentFingerprint === action.fingerprintAfter;
-  if (untouchedSinceAgemonWrote && !action.preExisting) {
-    await rm(targetPath, { force: true });
-    return;
-  }
-  if (untouchedSinceAgemonWrote && backupIsVerified) {
-    await writeFileAtomic(targetPath, backup.contents);
-    await removeRedundantBackups(ctx, action, backup, backup.contents);
-    return;
-  }
-
-  const excised =
-    currentContents === null ? null : exciseAgentRulesBlock(currentContents);
-  if (excised !== null) {
-    if (!action.preExisting && excised.trim().length === 0) {
-      await rm(targetPath, { force: true });
-    } else {
-      await writeFileAtomic(targetPath, excised);
-    }
-    await removeRedundantBackups(ctx, action, backup, null);
-    return;
-  }
-
-  await preserveChangedRuleFile(ctx, action, currentContents === null, backup);
-}
-
-async function preserveChangedRuleFile(
-  ctx: Context,
-  action: LedgerEntry,
-  targetIsMissing: boolean,
-  backup: FoundBackup | null,
-): Promise<void> {
-  const what = targetIsMissing
-    ? `${action.target} was removed since agemon wrote it`
-    : `${action.target} changed since agemon wrote it — kept as is`;
-  if (backup === null) {
-    ctx.ui.info(`manual cleanup needed: ${what}`);
-    return;
-  }
-  const savedPath = await saveVerifiedCopyBeside(
-    await resolveInsideRepo(ctx.cwd, action.target),
-    backup.contents,
-  );
-  await removeRedundantBackups(ctx, action, backup, backup.contents);
-  ctx.ui.info(
-    `manual cleanup needed: ${what}; earlier contents saved as ${relative(ctx.cwd, savedPath)}`,
-  );
+  await revertManagedFile(ctx, action, {
+    backupCandidates: backupCandidatesFor(ctx, action),
+    salvage: exciseAgentRulesBlock,
+  });
 }
 
 async function uninstallMasterPrompt(ctx: Context): Promise<void> {

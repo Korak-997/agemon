@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { CustomSkillGroupConfig } from "../../core/config.js";
 import { resolveVendoredSkillPath } from "../../core/package-assets.js";
 import { printable } from "../../core/untrusted-text.js";
@@ -24,6 +25,13 @@ const ESSENTIALS_REPOSITORY: PinnedSkillsRepository = {
   commit: ESSENTIALS_SKILLS_COMMIT,
 };
 
+export interface AgentDefinition {
+  name: string;
+  description: string;
+  tools: readonly string[];
+  readonly briefPath: string;
+}
+
 export interface SkillGroup {
   id: string;
   label: string;
@@ -31,7 +39,11 @@ export interface SkillGroup {
   defaultSelected: boolean;
   definedByRepository?: boolean;
   skills: SkillBundleEntry[];
+  agents?: AgentDefinition[];
 }
+
+const GEO_AUDIT_AGENT_DESCRIPTION_SUFFIX =
+  "Used by the geo-audit skill; do not use it for other tasks.";
 
 function vendoredSkill(groupId: string, skillId: string): SkillBundleEntry {
   return {
@@ -56,6 +68,26 @@ function pinnedSkill(
     skillName: skillId,
     agent: "claude-code",
     pinnedRepository: repository,
+  };
+}
+
+function geoAuditAgent(
+  name: string,
+  briefFileName: string,
+  purpose: string,
+  tools: readonly string[],
+): AgentDefinition {
+  return {
+    name,
+    description: `${purpose} ${GEO_AUDIT_AGENT_DESCRIPTION_SUFFIX}`,
+    tools,
+    get briefPath() {
+      return join(
+        resolveVendoredSkillPath("geo-seo", "geo-audit"),
+        "references",
+        briefFileName,
+      );
+    },
   };
 }
 
@@ -178,6 +210,38 @@ export const SKILL_GROUPS: SkillGroup[] = [
       vendoredSkill("geo-seo", "geo-report"),
       vendoredSkill("geo-seo", "geo-schema"),
       vendoredSkill("geo-seo", "geo-report-pdf"),
+    ],
+    agents: [
+      geoAuditAgent(
+        "geo-audit-ai-visibility",
+        "ai-visibility.md",
+        "Scores how quotable and visible a website is to AI search: citability, AI crawler access, llms.txt and brand presence.",
+        ["WebFetch"],
+      ),
+      geoAuditAgent(
+        "geo-audit-platform",
+        "platform-analysis.md",
+        "Scores a website's readiness for Google AI Overviews, ChatGPT, Perplexity, Gemini and Bing Copilot.",
+        ["WebFetch"],
+      ),
+      geoAuditAgent(
+        "geo-audit-technical",
+        "technical.md",
+        "Scores a website's technical health for AI crawlers: rendering, meta tags, headers, speed and security headers.",
+        ["WebFetch", "Bash"],
+      ),
+      geoAuditAgent(
+        "geo-audit-content",
+        "content.md",
+        "Scores a website's content quality and E-E-A-T signals: experience, expertise, authority and trust.",
+        ["WebFetch"],
+      ),
+      geoAuditAgent(
+        "geo-audit-schema",
+        "schema.md",
+        "Scores a website's schema.org structured data and finds missing GEO-relevant schema.",
+        ["WebFetch", "Bash"],
+      ),
     ],
   },
 ];

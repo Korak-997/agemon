@@ -3,6 +3,11 @@ import { fileURLToPath } from "node:url";
 import { intro, outro } from "@clack/prompts";
 import { Command, CommanderError } from "commander";
 import {
+  addCapabilitiesToConfig,
+  capabilitiesToAutoAdd,
+  outcomeUpdatesConfig,
+} from "../core/capability-migration.js";
+import {
   type AgemonConfig,
   type CustomSkillGroupConfig,
   loadConfig,
@@ -51,7 +56,7 @@ import {
   hasPinnedBuildFor,
   pinnedArchiveKeyFor,
 } from "../plugins/cli-tool/index.js";
-import { getRegisteredPlugins } from "../plugins/index.js";
+import { CORE_CAPABILITY_IDS, getRegisteredPlugins } from "../plugins/index.js";
 import { assertCustomSkillGroupsAreValid } from "../plugins/skills/catalog.js";
 import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
@@ -241,11 +246,92 @@ function assertConfiguredCapabilitiesAreKnown(config: AgemonConfig): void {
   }
 }
 
+const ADDED_CAPABILITY_PURPOSE =
+  "installs Claude Code subagents for your skill groups";
+
 interface DesiredStateDefaults {
   config: AgemonConfig | null;
   only: string[] | undefined;
   skillGroups: string | undefined;
   customSkillGroups: CustomSkillGroupConfig[];
+  addedCapabilityIds: string[];
+}
+
+function quoteCapabilityIds(capabilityIds: string[]): string {
+  return capabilityIds.map((id) => `'${id}'`).join(", ");
+}
+
+function announceAddedCapabilities(
+  options: CliOptions,
+  addedCapabilityIds: string[],
+  willUpdateConfig: boolean,
+): void {
+  if (addedCapabilityIds.length === 0 || options.quiet) {
+    return;
+  }
+  const when = willUpdateConfig
+    ? "agemon.toml is updated when this run completes"
+    : "agemon.toml is updated on the next interactive or --yes run";
+  console.error(
+    theme.dim(
+      `agemon.toml does not list the new capability ${quoteCapabilityIds(addedCapabilityIds)} (${ADDED_CAPABILITY_PURPOSE}) yet; this run includes it (${when}).`,
+    ),
+  );
+}
+
+async function updateConfigWithAddedCapabilities(
+  repoRoot: string,
+  config: AgemonConfig,
+  addedCapabilityIds: string[],
+  allowUnignoredState: boolean,
+): Promise<string> {
+  const added = quoteCapabilityIds(addedCapabilityIds);
+  const update = await addCapabilitiesToConfig(
+    repoRoot,
+    config,
+    addedCapabilityIds,
+    { knownCapabilities: CORE_CAPABILITY_IDS, allowUnignoredState },
+  );
+  if (update.kind === "state-not-ignored") {
+    return `Left agemon.toml unchanged: /.agemon/ is not git-ignored, so agemon keeps no backup of it there. Add /.agemon/ to .gitignore (or pass --allow-unignored-state) and run agemon again to add ${added}.`;
+  }
+  if (update.kind === "not-written") {
+    return `Left agemon.toml unchanged: ${update.reason}. The next run tries again, or add ${added} to capabilities by hand.`;
+  }
+  const savedOriginal =
+    update.backupPath === null
+      ? ""
+      : ` Comments and layout were not kept; the original is saved at ${update.backupPath} (a full 'agemon nuke' deletes .agemon/, so keep a copy if you need it).`;
+  return `Updated agemon.toml: added ${added} (${ADDED_CAPABILITY_PURPOSE}) to capabilities; remove it there to opt out.${savedOriginal} Commit agemon.toml; older agemon versions reject it, so upgrade agemon in CI first.`;
+}
+
+async function recordAddedCapabilities(
+  repoRoot: string,
+  defaults: DesiredStateDefaults,
+  run: {
+    outcome: RunOutcome;
+    approvable: boolean;
+    allowUnignoredState: boolean;
+  },
+): Promise<void> {
+  const { config, addedCapabilityIds } = defaults;
+  if (config === null || addedCapabilityIds.length === 0 || !run.approvable) {
+    return;
+  }
+  if (!outcomeUpdatesConfig(run.outcome)) {
+    console.log(
+      "Left agemon.toml unchanged: this run applied nothing that was approved. The next run tries again.",
+    );
+    return;
+  }
+  console.log(
+    await updateConfigWithAddedCapabilities(
+      repoRoot,
+      config,
+      addedCapabilityIds,
+      run.allowUnignoredState,
+    ),
+  );
 }
 
 async function resolveDesiredStateDefaults(
@@ -258,16 +344,22 @@ async function resolveDesiredStateDefaults(
     assertCustomSkillGroupsAreValid(config.customSkillGroups);
   }
 
+  const addedCapabilityIds =
+    config === null
+      ? []
+      : capabilitiesToAutoAdd(config, getRegisteredPlugins());
   const excludedIds = excludedPluginIds(options);
-  const configuredIds = config?.capabilities.filter(
-    (id) => !excludedIds.includes(id),
-  );
+  const configuredIds = config?.capabilities
+    .concat(addedCapabilityIds)
+    .filter((id) => !excludedIds.includes(id));
+  const only = parseOnlyOption(options);
 
   return {
     config,
-    only: parseOnlyOption(options) ?? configuredIds,
+    only: only ?? configuredIds,
     skillGroups: options.skillGroups ?? config?.skillGroups ?? undefined,
     customSkillGroups: config?.customSkillGroups ?? [],
+    addedCapabilityIds: only === undefined ? addedCapabilityIds : [],
   };
 }
 
@@ -341,8 +433,9 @@ async function runPlanCommand(requested: CliOptions): Promise<number> {
   const options = skippingWhatThisMachineCannotRun(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const plugins = selectPlugins(options);
-  const { only, skillGroups, customSkillGroups } =
+  const { only, skillGroups, customSkillGroups, addedCapabilityIds } =
     await resolveDesiredStateDefaults(options, repoRoot);
+  announceAddedCapabilities(options, addedCapabilityIds, false);
   const context = await createContext({
     repoRoot,
     platform,
@@ -371,15 +464,22 @@ async function runInstall(requested: CliOptions): Promise<number> {
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
-  const { config, only, skillGroups, customSkillGroups } =
-    await resolveDesiredStateDefaults(options, repoRoot);
+  const defaults = await resolveDesiredStateDefaults(options, repoRoot);
+  const { config, only, skillGroups, customSkillGroups } = defaults;
+  const dryRun = Boolean(options.dryRun);
+  const approvable = Boolean(options.yes) || isInteractiveTerminal();
+  announceAddedCapabilities(
+    options,
+    defaults.addedCapabilityIds,
+    approvable && !dryRun,
+  );
   openInteractiveFrame(options);
   let outcome: RunOutcome;
   try {
     const context = await createContext({
       repoRoot,
       platform,
-      dryRun: Boolean(options.dryRun),
+      dryRun,
       yes: Boolean(options.yes),
       ui: spinner,
       verbose: Boolean(options.verbose),
@@ -401,6 +501,13 @@ async function runInstall(requested: CliOptions): Promise<number> {
     throw error;
   }
   closeInteractiveFrame(options);
+  if (!dryRun) {
+    await recordAddedCapabilities(repoRoot, defaults, {
+      outcome,
+      approvable,
+      allowUnignoredState: Boolean(options.allowUnignoredState),
+    });
+  }
   return exitCodeForOutcome(outcome);
 }
 
@@ -413,8 +520,10 @@ async function runApply(requested: CliOptions): Promise<number> {
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
-  const { config, only, skillGroups, customSkillGroups } =
-    await resolveDesiredStateDefaults(options, repoRoot);
+  const defaults = await resolveDesiredStateDefaults(options, repoRoot);
+  const { config, only, skillGroups, customSkillGroups } = defaults;
+  const approvable = Boolean(options.yes) || isInteractiveTerminal();
+  announceAddedCapabilities(options, defaults.addedCapabilityIds, approvable);
   openInteractiveFrame(options);
   let outcome: RunOutcome;
   try {
@@ -448,6 +557,11 @@ async function runApply(requested: CliOptions): Promise<number> {
     throw error;
   }
   closeInteractiveFrame(options);
+  await recordAddedCapabilities(repoRoot, defaults, {
+    outcome,
+    approvable,
+    allowUnignoredState: Boolean(options.allowUnignoredState),
+  });
   return exitCodeForOutcome(outcome);
 }
 
@@ -628,7 +742,10 @@ function createProgram(recordExitCode: (code: number) => void): Command {
       "--allow-unignored-state",
       "let apply write .agemon/ state even when it cannot be git-ignored (discouraged)",
     )
-    .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .option(
+      "--only <plugins>",
+      "comma-separated list of plugin ids to run (their dependencies run too, e.g. agents runs skills)",
+    )
     .option(
       "--skill-groups <groups>",
       "comma-separated skill group ids to install, or 'all'/'none' (default: interactive prompt per group, or essentials-only when non-interactive)",
@@ -683,7 +800,10 @@ function createProgram(recordExitCode: (code: number) => void): Command {
     .description(
       "Deterministic, fingerprinted proposed-operation set written to .agemon/plans/",
     )
-    .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .option(
+      "--only <plugins>",
+      "comma-separated list of plugin ids to run (their dependencies run too, e.g. agents runs skills)",
+    )
     .option(
       "--skill-groups <groups>",
       "comma-separated skill group ids to install, or 'all'/'none'",
@@ -702,7 +822,10 @@ function createProgram(recordExitCode: (code: number) => void): Command {
       "--allow-unignored-state",
       "write .agemon/ state even when it cannot be git-ignored (discouraged)",
     )
-    .option("--only <plugins>", "comma-separated list of plugin ids to run")
+    .option(
+      "--only <plugins>",
+      "comma-separated list of plugin ids to run (their dependencies run too, e.g. agents runs skills)",
+    )
     .action((_options: CliOptions, command: Command) =>
       refusingUnsupportedPlatforms(
         recordWithUpdateCheck(lockingTheRepository(runApply)),

@@ -17,6 +17,7 @@ export type ConsentGateId =
   | "workspace-isolation"
   | "install-custom-skills"
   | "install-tooling"
+  | "install-subagents"
   | "register-service"
   | "write-config"
   | "touch-instruction-files"
@@ -27,6 +28,7 @@ export interface ConsentGate {
   summary: string;
   operations: ProposedOperation[];
   forcesDiff: boolean;
+  announcementWithYes: string | null;
   satisfiableWithYes: boolean;
 }
 
@@ -60,10 +62,17 @@ const INSTRUCTION_FILE_ACTIONS: ReadonlySet<ProposedOperationAction> = new Set([
 type OperationGateId = Exclude<ConsentGateId, "workspace-isolation">;
 
 export const CUSTOM_SKILL_GROUP_RESOURCE_PREFIX = "custom-skill-group:";
+export const AGENT_FILE_RESOURCE_PREFIX = "agent-file:";
+
+const DIFF_HEADER_LINE_COUNT = 2;
+const FRONTMATTER_FENCE = "---";
+const TOOLS_LINE_PATTERN = /^tools: (.+)$/u;
+const UNKNOWN_TOOLS = "tools: unknown — see diff";
 
 const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
   "install-custom-skills",
   "install-tooling",
+  "install-subagents",
   "register-service",
   "write-config",
   "touch-instruction-files",
@@ -86,6 +95,7 @@ export function buildConsentGates(
       summary: isolationGateSummary(input.isolationStatus),
       operations: [],
       forcesDiff: false,
+      announcementWithYes: null,
       satisfiableWithYes: true,
     });
   }
@@ -118,6 +128,10 @@ export function buildConsentGates(
         operations.some(
           (operation) => operation.riskClass === "credential-adjacent",
         ),
+      announcementWithYes:
+        gateId === "install-subagents"
+          ? `Installing ${describeSubagents(operations)}.`
+          : null,
       satisfiableWithYes: gateId !== "resolve-conflict",
     });
   }
@@ -136,6 +150,9 @@ function gateForOperation(
 ): OperationGateId | null {
   if (operation.action === "conflict") {
     return "resolve-conflict";
+  }
+  if (operation.resourceId.startsWith(AGENT_FILE_RESOURCE_PREFIX)) {
+    return "install-subagents";
   }
   const isCustomSkillGroup = operation.resourceId.startsWith(
     CUSTOM_SKILL_GROUP_RESOURCE_PREFIX,
@@ -208,6 +225,36 @@ function installToolingSummary(operations: ProposedOperation[]): string {
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}. Proceed?`;
 }
 
+function postImageFrontmatter(diffPreview: string): string[] | null {
+  const postImage = diffPreview
+    .split("\n")
+    .slice(DIFF_HEADER_LINE_COUNT)
+    .filter((line) => line.startsWith("+") || line.startsWith(" "))
+    .map((line) => line.slice(1));
+  if (postImage[0] !== FRONTMATTER_FENCE) {
+    return null;
+  }
+  const closingFence = postImage.indexOf(FRONTMATTER_FENCE, 1);
+  return closingFence === -1 ? null : postImage.slice(1, closingFence);
+}
+
+function describeSubagent(operation: ProposedOperation): string {
+  const name = operation.resourceId.slice(AGENT_FILE_RESOURCE_PREFIX.length);
+  if (operation.preview.kind !== "diff") {
+    return `${name} (already identical; nothing written)`;
+  }
+  const toolsLines = (postImageFrontmatter(operation.preview.text) ?? [])
+    .map((line) => TOOLS_LINE_PATTERN.exec(line)?.[1])
+    .filter((tools) => tools !== undefined);
+  const tools =
+    toolsLines.length === 1 ? `tools: ${toolsLines[0]}` : UNKNOWN_TOOLS;
+  return `${name} [${tools}]`;
+}
+
+function describeSubagents(operations: ProposedOperation[]): string {
+  return `${operations.length} Claude Code subagent definition(s) into .claude/agents: ${operations.map(describeSubagent).join(", ")}. Each agent can use only the tools listed`;
+}
+
 function operationGateSummary(
   gateId: OperationGateId,
   operations: ProposedOperation[],
@@ -218,6 +265,8 @@ function operationGateSummary(
       return `Install skills from ${operations.length} skill group(s) defined in this repository's agemon.toml (${targets}). They come from the repository's own sources, not from agemon — review every source shown. Proceed?`;
     case "install-tooling":
       return installToolingSummary(operations);
+    case "install-subagents":
+      return `Install ${describeSubagents(operations)}. Proceed?`;
     case "register-service":
       return `Register ${operations.length} background service unit(s) (${targets}). Proceed?`;
     case "write-config":
@@ -359,6 +408,8 @@ async function askGate(
   if (ctx.yes && gate.satisfiableWithYes) {
     if (gate.forcesDiff) {
       printOperationPreviews(gate.operations, ctx.log);
+    } else if (gate.announcementWithYes !== null) {
+      ctx.log.log(gate.announcementWithYes);
     }
     return true;
   }

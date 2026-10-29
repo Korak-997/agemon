@@ -17,8 +17,11 @@ Current v0.1 behavior is plugin-driven and runs in this order:
    additional groups (design, security, code quality, architecture, self-review, performance,
    team lead) are selected interactively, via `--skill-groups`, or skipped entirely in a
    non-interactive session — see [Skill Groups](#skill-groups).
-4. `cli-tool`: installs bundled global CLI tools.
-5. `master-prompt`: consolidates agent rule files and pointer files.
+4. `agents`: installs the Claude Code subagents that come with an installed skill group into
+   `.claude/agents/` — see [Subagents](#subagents). It depends on `skills`, so `--only agents`
+   also runs `skills`.
+5. `cli-tool`: installs bundled global CLI tools.
+6. `master-prompt`: consolidates agent rule files and pointer files.
 
 Every mutating plugin action is recorded in `.agemon/state.json` and used by `nuke` for
 targeted reversal.
@@ -73,6 +76,33 @@ asks you about, or installs, groups you previously declined, even when `--skill-
 when `--skill-groups` or `skill_groups` names it; otherwise it is offered once in an
 interactive run. A non-interactive run without `--yes` leaves it pending; a non-interactive
 `--yes` run records new agemon groups as declined and leaves project-defined groups pending.
+
+#### Subagents
+
+Some groups come with Claude Code subagents, which the `agents` capability installs into
+the project's `.claude/agents/` together with the group. Today only `geo-seo` has any: the
+five audit agents `geo-audit-ai-visibility`, `geo-audit-platform`, `geo-audit-technical`,
+`geo-audit-content` and `geo-audit-schema`, which `/geo audit` launches in parallel.
+
+- Each agent file has only `name`, `description` and `tools`. `tools` is an allowlist:
+  `WebFetch` for every agent, plus `Bash` (for one fixed, read-only `curl` you approve per
+  run) for the technical and schema agents. Nothing is pre-approved, and no agent sets a
+  permission mode, hooks or MCP servers.
+- The agents have their own consent step, which names every agent with its tools. With
+  `--yes`, agemon prints that list instead of asking.
+- Agent files are handled like rule files: an agent you edited is a conflict and is never
+  overwritten without a decision (`[conflict_decisions] "agent-file:<name>" = "keep"`,
+  `"replace"` or `"skip"`); a replaced file is backed up first; `nuke` removes the agents
+  agemon created and restores the files it replaced.
+- An agent's group must be installed for the agent to be written; if you decline the group,
+  its agents are skipped.
+- Claude Code picks up a new `.claude/agents/` directory in sessions started after it exists.
+
+**Updating an older `geo-seo` install:** agemon does not re-copy a skill that is already
+installed, so a `geo-audit` installed by an earlier release still runs its subagents from
+the briefs in `geo-audit/references/` (it keeps working). To switch it to the installed
+agents, delete `.claude/skills/geo-audit` and run `agemon` again: it reinstalls the missing
+skill from the current release.
 
 #### Project-defined skill groups
 
@@ -428,7 +458,8 @@ unknown capability id, or an empty `capabilities` list is an error, never a sile
 fallback:
 
 ```toml
-capabilities = ["crg", "daemon", "skills", "cli-tool", "master-prompt"]
+capabilities = ["crg", "daemon", "skills", "agents", "cli-tool", "master-prompt"]
+known_capabilities = ["crg", "daemon", "skills", "agents", "cli-tool", "master-prompt"]
 skill_groups = "essentials,security"   # optional
 
 [custom_skill_groups.house-style]      # optional — see Project-defined skill groups
@@ -438,6 +469,17 @@ skills = [{ source = "./tools/skills/house-rules" }]
 [conflict_decisions]                   # optional
 "rule-file:CLAUDE.md" = "keep"         # keep | replace | skip
 ```
+
+`known_capabilities` lists the capabilities the agemon that wrote the file knew about. When
+a later release adds a capability that existing repositories should get (so far only
+`agents`, and only when `skills` is listed), agemon includes it in the run and then adds
+it to `capabilities` once, rewriting `agemon.toml`. All values are kept, but comments and
+layout are not; if anything like that would be lost, the original is saved under
+`.agemon/backups/` and the message names the file. The rewrite happens only in an
+interactive or `--yes` run that did not roll back, and never with `--dry-run`, `--only` or
+`agemon plan`. To opt out, remove the capability from `capabilities` afterwards; because it
+is now in `known_capabilities`, agemon does not add it again. Older agemon releases reject a
+file with `known_capabilities` or `agents`, so upgrade agemon in CI before committing it.
 
 A conflict is a rule file that holds your own rules where agemon would write a pointer.
 It needs a decision. `--yes` never picks one for you, so record it under
@@ -563,6 +605,8 @@ By default, agemon may manage these paths:
 - `GEMINI.md`
 - `.cursorrules`
 - `.windsurfrules`
+- `.claude/agents/<name>.md` (the subagents of installed skill groups)
+- `agemon.toml` (written on the first run; rewritten once when a capability is added)
 
 It also invokes external installers (`pipx`, `npm -g`, the pinned `skills` CLI) when required.
 Every third-party tool and source is pinned to an exact version or commit
@@ -673,8 +717,10 @@ content, so agemon's copy changes them in ways each skill's `NOTICE.md` lists in
 - no skill pre-approves any tool, so every web fetch to a new domain, file write and shell
   command asks for your approval;
 - every skill and subagent brief starts with an untrusted-content rule;
-- the five audit subagents run as general-purpose subagents from briefs in
-  `geo-audit/references/`, not as installed agents;
+- the five audit subagents are installed as project agents (`geo-audit-*`, see
+  [Subagents](#subagents)) whose system prompt is the brief in `geo-audit/references/`,
+  with only the tools they need; without them, `geo-audit` falls back to general-purpose
+  subagents given the same briefs;
 - raw HTML and headers come from one fixed, read-only `curl` command that you approve per run;
 - the PDF step builds its cover from checked values in a metadata file, runs pandoc sandboxed
   with raw HTML off, and prints with a sandboxed Chrome under a strict Content-Security-Policy.

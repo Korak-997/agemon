@@ -36,23 +36,41 @@ Context is created in `src/core/context.ts` and includes:
   `--global` or `--prefix`, so npm never reads a `.npmrc` from the repository it runs in;
   the fake subprocess backend throws on any `npm` call without one of them.
 - `manifest`: `.agemon/state.json` handler.
-- `serviceManager`: platform-specific daemon manager. Without systemd it is an
-  unavailable manager: reads answer "not active", and changes fail with a message naming
-  the unit file to remove by hand.
+- `serviceManager`: platform-specific daemon manager, with a `kind`: `systemd-user`
+  (`systemctl --user`, `loginctl` linger), `launchd` (`/bin/launchctl` in the `gui/<uid>`
+  domain, no linger) or `none`. Without systemd it is an unavailable manager: reads
+  answer "not active", and changes fail with a message naming the unit file to remove by
+  hand.
 - `confirm`: shared mid-run confirmation policy (`src/core/prompt.ts`) — resolves `true`
   immediately under `--yes`, `false` immediately with no TTY to prompt on, otherwise
   shows a real y/N prompt.
 
 Platform detection lives in `src/platform/detect.ts`. `detectPlatformCapabilities`
-returns the OS `family` (`linux`, `darwin`, `other`), the `serviceManager`
-(`systemd-user` when `/run/systemd/system` exists, otherwise `none`) and an
-`unsupportedReason`. Linux is supported when `/etc/os-release` `ID` is `ubuntu` or
-`debian`, or `ID_LIKE` lists either. The CLI detects once per command: install, `apply`
-and `nuke` refuse an unsupported platform before the update check, the state directory or
-the run lock; `inspect`, `status`, `plan` and `recover` run everywhere. Without a service
-manager, install, `apply` and `plan` skip the daemon as if `--skip-daemon` were passed
-(without removing it from `agemon.toml`). `install.sh` applies the same rule before it
-downloads anything.
+returns the OS `family` (`linux`, `darwin`, `other`), the CPU `arch`, the
+`serviceManager` (`systemd-user` when `/run/systemd/system` exists, otherwise `none`;
+`launchd` on macOS) and
+an `unsupportedReason`; `Context.platform` carries it to the plugins. Linux is supported
+when `/etc/os-release` `ID` is `ubuntu` or `debian`, or `ID_LIKE` lists either; macOS is
+always supported. On macOS, install, `apply`, `nuke`, `plan`, `recover`, `upgrade` and
+`self-uninstall` refuse to run as root, because the agent, the state directory and the
+tools all belong to one user (on Intel Macs Homebrew also makes `/usr/local`
+user-writable). The CLI detects once per command: install, `apply` and `nuke` refuse an
+unsupported platform before the update check, the state directory or the run lock;
+`inspect`, `status`, `plan` and `recover` run everywhere. Without a service manager,
+install, `apply` and `plan` skip the daemon as if `--skip-daemon` were passed (without
+removing it from `agemon.toml`). They skip `cli-tool` the same way when agnix has no
+pinned build for `<family>-<arch>`. `install.sh` applies the same platform rule before it
+downloads anything, and refuses root on macOS.
+
+agemon's machine state lives in `${XDG_STATE_HOME:-~/.local/state}/agemon` on Linux and in
+`~/Library/Application Support/agemon` on macOS (`XDG_STATE_HOME` still wins there when
+set). On macOS the pipx home is `PIPX_HOME`, else `~/.local/pipx` if it exists, else
+`~/Library/Application Support/pipx`, as pipx itself resolves it. Lock liveness uses the
+boot id (`/proc/sys/kernel/random/boot_id` on Linux, `sysctl kern.bootsessionuuid` on
+macOS) and, on Linux only, the process start time; on macOS a pid reused within one boot
+can make a crashed run's lock look held, and the error names the lock file. Repository
+paths are compared after case folding and removing default-ignorable code points, so
+`.GIT` and `.g<U+00AD>it` are refused like `.git` on case-insensitive filesystems.
 
 ## Plugin Model
 
@@ -68,8 +86,12 @@ Registered core plugin order (`src/plugins/index.ts`):
 1. `crg`
 2. `daemon` (depends on `crg`)
 3. `skills`
-4. `cli-tool`
-5. `master-prompt`
+4. `agents` (depends on `skills`)
+5. `cli-tool`
+6. `master-prompt`
+
+`buildPlan` passes each plugin's `plan` the operations planned before it, so `agents` sees
+the skill groups this run installs.
 
 Dev-only plugins are enabled when `AGEMON_DEV=1`.
 
@@ -111,9 +133,25 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
 
 ### `daemon`
 
-- Registers `agemon-crg-daemon-<slug>-<hash>.service` with `systemd --user`. `<slug>` is
-  the repository directory's name and `<hash>` is the first 8 hex digits of the SHA-256 of
-  its real path, so repos with the same name stay independent. No git command runs.
+- Registers `agemon-crg-daemon-<slug>-<hash>.service` with `systemd --user`, or on macOS
+  the launch agent `dev.agemon.crg.<slug>-<hash>.plist`. `<slug>` is the repository
+  directory's name and `<hash>` is the first 8 hex digits of the SHA-256 of its real path,
+  so repos with the same name stay independent. No git command runs.
+- launchd: the plist (`ProgramArguments` array, `WorkingDirectory`, `RunAtLoad`,
+  `KeepAlive`, `ProcessType=Background`, crg's environment plus `PATH` limited to system
+  directories; the variables systemd unsets are set to `""`, because `launchctl setenv`
+  values reach every agent) is written atomically with mode `0644`, then
+  `launchctl bootstrap gui/<uid>`. Readiness comes from `launchctl print`: running with one
+  run for 2 s is ready; a second run, a non-zero last exit code or a stopped job after it
+  ran is a failure (the agent is booted out and the plist removed); anything else is
+  pending for up to 10 s. `bootout` is confirmed by polling `print` until the job is gone
+  (5 s). A plist that is binary, has no single `Label`/`WorkingDirectory`, or whose
+  `Label` differs from its name is treated as not agemon's and kept. There is no
+  hardening profile: the ledger records `launchd`, and agemon says so. Linger is never
+  used or recorded under launchd.
+- Ledger entries whose name belongs to the other service manager (a ledger carried from
+  Linux to a Mac, or back) are never acted on and do not count as linger users; `nuke`
+  fails and names them, so the entry stays until it is run on that OS.
 - Revert uses the unit name recorded in the ledger (validated against the agemon unit
   pattern), never a recomputed one. Before removing a unit it reads the unit's
   `WorkingDirectory`; a unit that now runs for another existing repository is kept.
@@ -150,7 +188,27 @@ Dev-only plugins are enabled when `AGEMON_DEV=1`.
   integrity. It then runs `node <tools>/node_modules/skills/bin/cli.mjs` with the repo as
   `cwd`. A tools dir without the CLI is reinstalled. Dependabot bumps the lockfile, with
   a 7-day cooldown.
-- Uses `skills list --json` to detect current skills.
+- Uses `skills list --json` to detect current skills. `detect` never writes the ledger.
+- `plan` emits one `install-package` operation per group (`skill-group:<id>`, or
+  `custom-skill-group:<id>` for a group from `agemon.toml`) whose preview lists every
+  skill and its source, plus one consent-requiring `skip` operation per group the user was
+  shown and did not pick. The group question runs inside `plan`, before any consent gate,
+  and only when the run is interactive and not a dry run. `apply` resolves each operation's
+  group by its resource id from the catalog (never from the preview) and records declines
+  as `offered-skill-group` + `declined-skill-group`.
+- Every `skills add`/`skills remove` passes `--agent claude-code`, so the CLI touches only
+  `.agents/skills/` and `.claude/skills/`. Before it runs, both must be real directories
+  (no symlinked component; created for `add`, never for `remove`), `.agents/skills/<name>`
+  must not be a symlink, and `skills-lock.json` must be absent or a regular file. After a
+  managed skill is removed, agemon deletes a leftover `.agents/skills/<name>` itself.
+- Custom local skills are read without following symlinks, copied into a private
+  `<state>/agemon/skills-stage/run-*` directory, and installed from there; the content hash
+  of the copy must equal the one in the plan. Custom GitHub skills use the same pinned
+  fetch as Essentials, with `credential.helper=`, `GIT_CONFIG_GLOBAL=/dev/null` and
+  `GIT_CONFIG_NOSYSTEM=1`.
+- `agemon apply --plan <id>` rebuilds the plan (dry run, no `--yes`, no prompt) from the
+  run's own options and applies the rebuilt operations only if their canonical content
+  equals the stored plan's; otherwise it names the option that differs and stops.
 - Installs skill bundle entries via `skills add <source> ...`. Vendored groups install
   from `assets/skills/`. Essentials installs from `<state>/agemon/skills-src/<commit>/`:
   agemon fetches that directory fresh before each install (`git fetch --depth 1 <url>
@@ -164,6 +222,27 @@ Current bundle (`src/plugins/skills/catalog.ts`):
 
 - `web-design-guidelines`
 - `writing-guidelines`
+
+### `agents`
+
+- Installs the subagents of installed built-in skill groups (`SkillGroup.agents` in
+  `src/plugins/skills/catalog.ts`) as `.claude/agents/<name>.md`, one `agent-file:<name>`
+  operation each. Desired agents = groups in this plan's skills `install-package`
+  operations ∪ groups recorded in the skills ledger (`skills/ledger-view.ts`, declined and
+  custom groups excluded).
+- An agent file is rendered from its catalog entry (`name`, `description`, `tools`) and the
+  brief it names in agemon's own `assets/skills/` (never the repository's installed copy).
+- States: absent → `create`; equal → nothing (or `adopt` when unrecorded); untouched since
+  recorded → `replace`; changed or unrecorded and different → `conflict`; symlink, special
+  file or symlinked directory → `conflict` that is never written.
+- Own consent gate `install-subagents`; its summary and `--yes` announcement list each agent
+  with the tools from the operation's own preview.
+- Apply skips an agent whose group is not recorded after the skills capability ran. A
+  conflict resolved as `replace` re-records the file as pre-existing with a backup, unless an
+  earlier, different original is already backed up (then it is skipped with a message).
+- Revert uses the shared `revertManagedFile` (`src/core/managed-file-revert.ts`), then
+  removes `.claude/agents` if it is an empty real directory; `.claude` is never touched.
+- Verify reports a missing or non-regular recorded agent as `attention`.
 
 ### `cli-tool`
 
@@ -276,6 +355,7 @@ input:
   another agemon version, one naming an unknown capability, or one asking a capability for
   a file action it never performs.
 - Plugins act only on their own ledger targets: master-prompt on its five rule files,
+  agents on `.claude/agents/<catalog name>.md` with the matching `agent-file:` resource id,
   cli-tool on its bundle. Other entries are reported and dropped.
 - `readRegularFileIfExists` refuses symlinks and special files and caps reads at 8 MiB.
 - Ledger text is checked when the ledger loads (every version) and when agemon writes an
@@ -330,7 +410,7 @@ agemon keeps two ledgers with separate jobs:
 | Ledger | Path | Owns |
 |---|---|---|
 | Repository ledger | `.agemon/state.json` | everything agemon changed inside this repository, and which shared tools this repository installed or uses |
-| Shared-tools ledger | `${XDG_STATE_HOME:-~/.local/state}/agemon/machine.json` | which repositories use each machine-wide resource, and who installed it |
+| Shared-tools ledger | `<state directory>/agemon/machine.json` ([Runtime Context](#runtime-context)) | which repositories use each machine-wide resource, and who installed it |
 
 The repository ledger stays the source of truth for repository files. The shared-tools
 ledger exists because code-review-graph (pipx), agnix (npm `-g`) and user linger (for
