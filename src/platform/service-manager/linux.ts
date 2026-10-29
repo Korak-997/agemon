@@ -1,12 +1,8 @@
-import { mkdir, readdir, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, rm } from "node:fs/promises";
+import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { errorMessage } from "../../core/error-message.js";
-import {
-  RefusedFileError,
-  readRegularFileIfExists,
-  writeFileAtomic,
-} from "../../core/files.js";
+import { RefusedFileError, writeFileAtomic } from "../../core/files.js";
 import { resolveHomeDirectory } from "../home.js";
 import type {
   AutostartAttempt,
@@ -17,10 +13,7 @@ import type {
   ServiceStatus,
   UnregisterAutostartInput,
 } from "./index.js";
-import {
-  isAgemonDaemonUnitFile,
-  workingDirectoryOfUnit,
-} from "./unit-files.js";
+import { createUserUnitFiles } from "./user-unit-files.js";
 
 export interface ServiceClock {
   now(): number;
@@ -59,10 +52,6 @@ function resolveUser(user?: string): string {
     );
   }
   return resolvedUser;
-}
-
-function resolveUnitPath(homeDir: string, unitName: string): string {
-  return join(homeDir, ".config", "systemd", "user", unitName);
 }
 
 function isMissingUnitError(stderr: string): boolean {
@@ -104,7 +93,9 @@ function parseProperties(output: string): Map<string, string> {
 export function createLinuxServiceManager(
   input: CreateLinuxServiceManagerInput,
 ): ServiceManager {
-  const homeDir = input.homeDir ?? resolveHomeDirectory();
+  const unitFiles = createUserUnitFiles(
+    input.homeDir ?? resolveHomeDirectory(),
+  );
   const user = resolveUser(input.user);
   const clock = input.clock ?? systemClock;
 
@@ -260,7 +251,7 @@ export function createLinuxServiceManager(
   const registerAutostart = async (
     registration: RegisterAutostartInput,
   ): Promise<RegisterAutostartResult> => {
-    const unitPath = resolveUnitPath(homeDir, registration.unitName);
+    const unitPath = unitFiles.unitPathFor(registration.unitName);
     await mkdir(dirname(unitPath), { recursive: true });
 
     const failures: string[] = [];
@@ -293,21 +284,11 @@ export function createLinuxServiceManager(
     );
   };
 
-  const findAgemonDaemonUnit = async (): Promise<string | null> => {
-    let unitFiles: string[];
-    try {
-      unitFiles = await readdir(dirname(resolveUnitPath(homeDir, "unit")));
-    } catch {
-      return null;
-    }
-    return unitFiles.find(isAgemonDaemonUnitFile) ?? null;
-  };
-
   const unregisterAutostart = async (
     registration: UnregisterAutostartInput,
   ): Promise<void> => {
     await stopAndDisable(registration.unitName);
-    await rm(resolveUnitPath(homeDir, registration.unitName), { force: true });
+    await rm(unitFiles.unitPathFor(registration.unitName), { force: true });
     await assertSucceeded(
       input.run,
       "systemctl",
@@ -325,24 +306,15 @@ export function createLinuxServiceManager(
     );
   };
 
-  const readUnitWorkingDirectory = async (
-    unitName: string,
-  ): Promise<string | null> => {
-    const unitContents = await readRegularFileIfExists(
-      resolveUnitPath(homeDir, unitName),
-    );
-    return unitContents === null ? null : workingDirectoryOfUnit(unitContents);
-  };
-
   return {
     isActive,
     registerAutostart,
     unregisterAutostart,
-    readUnitWorkingDirectory,
-    unitPathFor: (unitName) => resolveUnitPath(homeDir, unitName),
+    readUnitWorkingDirectory: unitFiles.readUnitWorkingDirectory,
+    unitPathFor: unitFiles.unitPathFor,
     isLingerEnabled: readLingerIsOn,
     enableLinger: () => setLinger(true),
     disableLinger: () => setLinger(false),
-    findAgemonDaemonUnit,
+    findAgemonDaemonUnit: unitFiles.findAgemonDaemonUnit,
   };
 }

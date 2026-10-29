@@ -79,7 +79,6 @@ async function createTestContext(skillGroupsOption?: string): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
     binaries: [],
     dryRun: false,
     yes: false,

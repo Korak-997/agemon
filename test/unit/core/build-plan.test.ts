@@ -56,7 +56,6 @@ async function createTestContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
     binaries: [],
     dryRun: true,
     yes: false,

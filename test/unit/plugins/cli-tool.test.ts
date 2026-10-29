@@ -140,7 +140,6 @@ async function createTestContext(
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
     binaries: [],
     dryRun: false,
     yes: true,

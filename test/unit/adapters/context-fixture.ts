@@ -51,7 +51,6 @@ export async function createAdapterTestContext(
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
     binaries: [],
     dryRun: false,
     yes: true,

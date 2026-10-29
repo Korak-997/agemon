@@ -12,6 +12,7 @@ RELEASES_URL="https://github.com/${REPO}/releases"
 SIGNER_WORKFLOW="${REPO}/.github/workflows/release.yml"
 INSTALL_MARKER=".agemon-install"
 MAX_VERSION_LENGTH=64
+MAX_PRINTED_OS_ID_LENGTH=64
 
 WORK_DIR=""
 STAGE_DIR=""
@@ -32,6 +33,44 @@ require_command() {
     print_error "$1 is required but was not found on PATH."
     exit 1
   fi
+}
+
+read_os_release_field() {
+  tr -d '\r' < "$OS_RELEASE_PATH" | sed -n "s/^$1=//p" | head -n 1 |
+    sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/" | tr '[:upper:]' '[:lower:]'
+}
+
+printable_os_id() {
+  printf '%s' "$1" | tr -cd 'A-Za-z0-9._-' | head -c "$MAX_PRINTED_OS_ID_LENGTH"
+}
+
+check_supported_platform() {
+  kernel_name="$(uname -s 2>/dev/null || true)"
+  case "$kernel_name" in
+    Linux) ;;
+    Darwin)
+      print_error "agemon cannot install on macOS yet."
+      print_error "To run its read-only commands (inspect, status, plan), install it with: npm install -g agemon"
+      exit 1
+      ;;
+    *)
+      print_error "agemon installs only on Linux (Ubuntu, Debian and their derivatives). Detected: $(printable_os_id "$kernel_name")"
+      exit 1
+      ;;
+  esac
+
+  OS_RELEASE_PATH="${AGEMON_OS_RELEASE_PATH:-/etc/os-release}"
+  if [ ! -r "$OS_RELEASE_PATH" ]; then
+    print_error "Could not identify this Linux distribution: ${OS_RELEASE_PATH} is missing or unreadable."
+    exit 1
+  fi
+  os_id="$(read_os_release_field ID)"
+  os_id_like="$(read_os_release_field ID_LIKE)"
+  case " ${os_id} ${os_id_like} " in
+    *" ubuntu "* | *" debian "*) return 0 ;;
+  esac
+  print_error "agemon installs only on Ubuntu, Debian and their derivatives. ${OS_RELEASE_PATH} reports '$(printable_os_id "$os_id")'."
+  exit 1
 }
 
 fetch() {
@@ -278,6 +317,7 @@ main() {
   LC_ALL=C
   export LC_ALL
 
+  check_supported_platform
   require_command curl
   require_command tar
 

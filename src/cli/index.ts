@@ -35,6 +35,11 @@ import { printable } from "../core/untrusted-text.js";
 import { startUpdateCheck } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { runStatus } from "../inspect/status.js";
+import {
+  assertPlatformSupportsChanges,
+  detectPlatformCapabilities,
+  type PlatformCapabilities,
+} from "../platform/detect.js";
 import { getRegisteredPlugins } from "../plugins/index.js";
 import type { AgemonPlugin } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
@@ -68,6 +73,7 @@ interface CliOptions {
   removeShared?: string;
   print?: boolean;
   rollback?: boolean;
+  daemonSkippedByPlatform?: boolean;
 }
 
 const SILENT_SPINNER: StepSpinner = {
@@ -134,6 +140,30 @@ function selectPlugins(options: CliOptions): AgemonPlugin[] {
   );
 }
 
+function describeMissingServiceManager(platform: PlatformCapabilities): string {
+  return platform.family === "linux"
+    ? "systemd is not running on this machine"
+    : "agemon has no service manager for this OS yet";
+}
+
+function skippingTheDaemonWithoutServiceManager(
+  options: CliOptions,
+  platform: PlatformCapabilities,
+): CliOptions {
+  if (options.skipDaemon || platform.serviceManager !== "none") {
+    return options;
+  }
+  const reason = describeMissingServiceManager(platform);
+  const onlyIds = parseOnlyOption(options);
+  if (onlyIds?.includes("daemon")) {
+    throw new Error(`--only daemon cannot run here: ${reason}.`);
+  }
+  if (onlyIds === undefined && !options.quiet && !options.json) {
+    console.error(theme.dim(`daemon skipped: ${reason}.`));
+  }
+  return { ...options, skipDaemon: true, daemonSkippedByPlatform: true };
+}
+
 function parseOnlyOption(options: CliOptions): string[] | undefined {
   if (options.only === undefined) {
     return undefined;
@@ -198,6 +228,7 @@ async function resolveDesiredStateDefaults(
 async function runInspectCommand(options: CliOptions): Promise<number> {
   const context = await createContext({
     repoRoot: await resolveRepositoryRootFor(options),
+    platform: await detectPlatformCapabilities(),
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
@@ -214,6 +245,7 @@ async function runInspectCommand(options: CliOptions): Promise<number> {
 async function runStatusCommand(options: CliOptions): Promise<number> {
   const context = await createContext({
     repoRoot: await resolveRepositoryRootFor(options),
+    platform: await detectPlatformCapabilities(),
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
@@ -226,7 +258,9 @@ async function runStatusCommand(options: CliOptions): Promise<number> {
     : exitCodeForOutcome("drift");
 }
 
-async function runPlanCommand(options: CliOptions): Promise<number> {
+async function runPlanCommand(requested: CliOptions): Promise<number> {
+  const platform = await detectPlatformCapabilities();
+  const options = skippingTheDaemonWithoutServiceManager(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const plugins = selectPlugins(options);
   const { only, skillGroups } = await resolveDesiredStateDefaults(
@@ -235,6 +269,7 @@ async function runPlanCommand(options: CliOptions): Promise<number> {
   );
   const context = await createContext({
     repoRoot,
+    platform,
     dryRun: true,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
@@ -253,7 +288,9 @@ async function runPlanCommand(options: CliOptions): Promise<number> {
   return 0;
 }
 
-async function runInstall(options: CliOptions): Promise<number> {
+async function runInstall(requested: CliOptions): Promise<number> {
+  const platform = await detectPlatformCapabilities();
+  const options = skippingTheDaemonWithoutServiceManager(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
@@ -266,6 +303,7 @@ async function runInstall(options: CliOptions): Promise<number> {
   try {
     const context = await createContext({
       repoRoot,
+      platform,
       dryRun: Boolean(options.dryRun),
       yes: Boolean(options.yes),
       ui: spinner,
@@ -280,6 +318,7 @@ async function runInstall(options: CliOptions): Promise<number> {
       allowUnignoredState: Boolean(options.allowUnignoredState),
       conflictDecisions: config?.conflictDecisions,
       persistConfig: config === null,
+      platformSkippedCapabilities: platformSkippedCapabilities(options),
     });
   } catch (error) {
     closeInteractiveFrame(options, "failure");
@@ -289,10 +328,12 @@ async function runInstall(options: CliOptions): Promise<number> {
   return exitCodeForOutcome(outcome);
 }
 
-async function runApply(options: CliOptions): Promise<number> {
-  if (options.plan) {
-    assertValidPlanId(options.plan);
+async function runApply(requested: CliOptions): Promise<number> {
+  if (requested.plan) {
+    assertValidPlanId(requested.plan);
   }
+  const platform = await detectPlatformCapabilities();
+  const options = skippingTheDaemonWithoutServiceManager(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
@@ -305,6 +346,7 @@ async function runApply(options: CliOptions): Promise<number> {
   try {
     const context = await createContext({
       repoRoot,
+      platform,
       dryRun: false,
       yes: Boolean(options.yes),
       ui: spinner,
@@ -324,6 +366,7 @@ async function runApply(options: CliOptions): Promise<number> {
       plan,
       conflictDecisions: config?.conflictDecisions,
       persistConfig: config === null,
+      platformSkippedCapabilities: platformSkippedCapabilities(options),
     });
   } catch (error) {
     closeInteractiveFrame(options, "failure");
@@ -331,6 +374,10 @@ async function runApply(options: CliOptions): Promise<number> {
   }
   closeInteractiveFrame(options);
   return exitCodeForOutcome(outcome);
+}
+
+function platformSkippedCapabilities(options: CliOptions): string[] {
+  return options.daemonSkippedByPlatform ? ["daemon"] : [];
 }
 
 function parseRemoveSharedOption(
@@ -367,6 +414,7 @@ async function runNuke(options: CliOptions): Promise<number> {
   const removeSharedTools = parseRemoveSharedOption(options, plugins);
   const context = await createContext({
     repoRoot,
+    platform: await detectPlatformCapabilities(),
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: spinner,
@@ -380,6 +428,15 @@ async function runNuke(options: CliOptions): Promise<number> {
     skipIds: options.skipDaemon ? ["daemon"] : [],
   });
   return exitCodeForOutcome(outcome);
+}
+
+function refusingUnsupportedPlatforms(
+  run: (options: CliOptions) => Promise<void>,
+): (options: CliOptions) => Promise<void> {
+  return async (options) => {
+    assertPlatformSupportsChanges(await detectPlatformCapabilities());
+    await run(options);
+  };
 }
 
 function lockingTheRepository(
@@ -434,6 +491,7 @@ async function runSelfUninstallCommand(options: CliOptions): Promise<number> {
 async function runRecover(options: CliOptions): Promise<number> {
   const context = await createContext({
     repoRoot: await resolveRepositoryRootFor(options),
+    platform: await detectPlatformCapabilities(),
     dryRun: Boolean(options.dryRun),
     yes: Boolean(options.yes),
     ui: selectSpinner(options),
@@ -510,7 +568,11 @@ function createProgram(recordExitCode: (code: number) => void): Command {
         process.env.NO_COLOR = "1";
       }
     })
-    .action(recordWithUpdateCheck(lockingTheRepository(runInstall)));
+    .action(
+      refusingUnsupportedPlatforms(
+        recordWithUpdateCheck(lockingTheRepository(runInstall)),
+      ),
+    );
 
   program
     .command("inspect")
@@ -567,7 +629,9 @@ function createProgram(recordExitCode: (code: number) => void): Command {
     )
     .option("--only <plugins>", "comma-separated list of plugin ids to run")
     .action((_options: CliOptions, command: Command) =>
-      recordWithUpdateCheck(lockingTheRepository(runApply))({
+      refusingUnsupportedPlatforms(
+        recordWithUpdateCheck(lockingTheRepository(runApply)),
+      )({
         ...command.parent?.opts(),
         ...command.opts(),
       }),
@@ -585,7 +649,9 @@ function createProgram(recordExitCode: (code: number) => void): Command {
       "also remove these shared tools agemon installed before it tracked them per machine (code-review-graph, agnix)",
     )
     .action((_options: CliOptions, command: Command) =>
-      recordWithUpdateCheck(lockingTheRepository(runNuke))({
+      refusingUnsupportedPlatforms(
+        recordWithUpdateCheck(lockingTheRepository(runNuke)),
+      )({
         ...command.parent?.opts(),
         ...command.opts(),
       }),

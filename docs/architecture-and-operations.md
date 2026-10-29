@@ -20,7 +20,6 @@ Core flow:
 Context is created in `src/core/context.ts` and includes:
 
 - `cwd`: repository working directory.
-- `os`: currently `ubuntu` only.
 - `binaries`: runtime checks for `python3`, `pip`, `pipx`, `uv`, `crg`.
 - `dryRun`, `yes`.
 - `run`: subprocess runner abstraction (`src/core/subprocess-runner.ts`). Calls without
@@ -37,13 +36,23 @@ Context is created in `src/core/context.ts` and includes:
   `--global` or `--prefix`, so npm never reads a `.npmrc` from the repository it runs in;
   the fake subprocess backend throws on any `npm` call without one of them.
 - `manifest`: `.agemon/state.json` handler.
-- `serviceManager`: platform-specific daemon manager.
+- `serviceManager`: platform-specific daemon manager. Without systemd it is an
+  unavailable manager: reads answer "not active", and changes fail with a message naming
+  the unit file to remove by hand.
 - `confirm`: shared mid-run confirmation policy (`src/core/prompt.ts`) — resolves `true`
   immediately under `--yes`, `false` immediately with no TTY to prompt on, otherwise
   shows a real y/N prompt.
 
-Platform detection lives in `src/platform/detect.ts` and validates Ubuntu via
-`/etc/os-release` (`ID=ubuntu`).
+Platform detection lives in `src/platform/detect.ts`. `detectPlatformCapabilities`
+returns the OS `family` (`linux`, `darwin`, `other`), the `serviceManager`
+(`systemd-user` when `/run/systemd/system` exists, otherwise `none`) and an
+`unsupportedReason`. Linux is supported when `/etc/os-release` `ID` is `ubuntu` or
+`debian`, or `ID_LIKE` lists either. The CLI detects once per command: install, `apply`
+and `nuke` refuse an unsupported platform before the update check, the state directory or
+the run lock; `inspect`, `status`, `plan` and `recover` run everywhere. Without a service
+manager, install, `apply` and `plan` skip the daemon as if `--skip-daemon` were passed
+(without removing it from `agemon.toml`). `install.sh` applies the same rule before it
+downloads anything.
 
 ## Plugin Model
 

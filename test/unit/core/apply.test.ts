@@ -81,7 +81,6 @@ async function createSandboxContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
     binaries: [],
     dryRun: false,
     yes: true,

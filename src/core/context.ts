@@ -1,4 +1,8 @@
-import { detectPlatform, REQUIRED_BINARIES } from "../platform/detect.js";
+import {
+  detectRequiredBinaries,
+  type PlatformCapabilities,
+  REQUIRED_BINARIES,
+} from "../platform/detect.js";
 import type { ServiceManager } from "../platform/service-manager/index.js";
 import { createServiceManager } from "../platform/service-manager/index.js";
 import type { StepProgress } from "../ui/progress.js";
@@ -13,6 +17,7 @@ import { createConfirmer, isInteractiveTerminal } from "./prompt.js";
 import { clackPrompts } from "./prompt-clack.js";
 import { StateManifest } from "./state-manifest.js";
 import {
+  agemonSubprocessEnvironment,
   type RunSubprocessOptions,
   runSubprocess,
   type SubprocessResult,
@@ -36,7 +41,6 @@ export interface BinaryAvailability {
 
 export interface Context {
   cwd: string;
-  os: "ubuntu";
   binaries: BinaryAvailability[];
   dryRun: boolean;
   yes: boolean;
@@ -66,6 +70,7 @@ export interface Context {
 
 export interface CreateContextInput {
   repoRoot: string;
+  platform: PlatformCapabilities;
   dryRun: boolean;
   yes: boolean;
   ui: StepSpinner;
@@ -91,9 +96,9 @@ export async function createContext(
   input: CreateContextInput,
 ): Promise<Context> {
   assertFakeBackendsAreDevOnly();
-  const platform = await detectPlatform({
-    osReleasePath: process.env.AGEMON_OS_RELEASE_PATH,
-  });
+  const binaries = await detectRequiredBinaries(
+    agemonSubprocessEnvironment().PATH ?? "",
+  );
   const interactive = isInteractiveTerminal();
   const runInRepo: RunSubprocess = (command, args, options) =>
     runSubprocess(command, args, { cwd: input.repoRoot, ...options });
@@ -101,9 +106,7 @@ export async function createContext(
     ? traceSubprocessCalls(runInRepo, input.ui)
     : runInRepo;
 
-  const checkedBinaries = REQUIRED_BINARIES.map(
-    (name) => platform.binaries[name],
-  );
+  const checkedBinaries = REQUIRED_BINARIES.map((name) => binaries[name]);
   const presentBinaries = checkedBinaries.filter((binary) => binary.present);
   const presentNames = presentBinaries.map((binary) => binary.name).join(", ");
   input.ui.info(
@@ -119,7 +122,6 @@ export async function createContext(
 
   return {
     cwd: input.repoRoot,
-    os: platform.os,
     binaries: checkedBinaries,
     dryRun: input.dryRun,
     yes: input.yes,
@@ -132,7 +134,7 @@ export async function createContext(
     run,
     manifest: await StateManifest.load(input.repoRoot),
     serviceManager: createServiceManager({
-      os: platform.os,
+      kind: input.platform.serviceManager,
       run: runSubprocess,
       user: process.env.USER,
     }),

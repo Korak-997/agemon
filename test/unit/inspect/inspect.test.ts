@@ -68,7 +68,6 @@ async function createInspectContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
     binaries: [
       { name: "python3", present: true },
       { name: "code-review-graph", present: false },

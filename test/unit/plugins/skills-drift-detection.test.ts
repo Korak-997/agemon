@@ -96,7 +96,6 @@ async function createTestContext(overrides: {
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
     binaries: [],
     dryRun: false,
     yes: overrides.yes ?? false,

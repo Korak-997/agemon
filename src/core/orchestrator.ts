@@ -87,6 +87,7 @@ export interface ReconcileOptions {
   plan?: Plan;
   conflictDecisions?: ConflictDecisionMap;
   persistConfig?: boolean;
+  platformSkippedCapabilities?: string[];
 }
 
 export interface BuildPlanOptions {
@@ -214,9 +215,24 @@ async function runPostApplySweep(
   return problems;
 }
 
+function desiredCapabilityIds(
+  plugins: AgemonPlugin[],
+  options: ReconcileOptions,
+): string[] {
+  const selectedIds = plugins.map((plugin) => plugin.id);
+  const skippedOnlyByThisMachine =
+    options.only === undefined
+      ? (options.platformSkippedCapabilities ?? [])
+      : [];
+  return CORE_CAPABILITY_IDS.filter(
+    (id) => selectedIds.includes(id) || skippedOnlyByThisMachine.includes(id),
+  );
+}
+
 async function persistDesiredStateConfig(
   ctx: Context,
   plugins: AgemonPlugin[],
+  options: ReconcileOptions,
   conflictResolutions: ConflictResolution[],
 ): Promise<void> {
   const conflictDecisions: ConflictDecisionMap = {};
@@ -225,9 +241,7 @@ async function persistDesiredStateConfig(
   }
 
   const configPath = await writeConfig(ctx.cwd, {
-    capabilities: plugins
-      .map((plugin) => plugin.id)
-      .filter((id) => CORE_CAPABILITY_IDS.includes(id)),
+    capabilities: desiredCapabilityIds(plugins, options),
     skillGroups: ctx.skillGroupsOption ?? null,
     conflictDecisions,
   });
@@ -323,7 +337,7 @@ async function finishWithNothingToApply(
     return "drift";
   }
   if (options.persistConfig) {
-    await persistDesiredStateConfig(ctx, plugins, conflictResolutions);
+    await persistDesiredStateConfig(ctx, plugins, options, conflictResolutions);
   }
   ctx.ui.succeed(
     "Nothing to do — every managed resource already matches the desired state.",
@@ -468,7 +482,12 @@ export async function reconcile(
   }
 
   if (options.persistConfig) {
-    await persistDesiredStateConfig(ctx, plugins, approval.conflictResolutions);
+    await persistDesiredStateConfig(
+      ctx,
+      plugins,
+      options,
+      approval.conflictResolutions,
+    );
   }
 
   ctx.log.log(

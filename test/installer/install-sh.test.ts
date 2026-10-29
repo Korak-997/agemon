@@ -80,6 +80,7 @@ interface Sandbox {
   toolsDir: string;
   releaseRoot: string;
   curlLog: string;
+  osReleasePath: string;
 }
 
 let sandbox: Sandbox;
@@ -94,6 +95,12 @@ function resolveTool(tool: string): string {
   }).trim();
 }
 
+function writeFakeUname(toolsDir: string, kernelName: string): void {
+  writeFileSync(join(toolsDir, "uname"), `#!/bin/sh\necho ${kernelName}\n`, {
+    mode: 0o755,
+  });
+}
+
 function createSandbox(): Sandbox {
   const root = mkdtempSync(join(tmpdir(), "agemon-install-sh-test-"));
   const home = join(root, "home");
@@ -106,7 +113,17 @@ function createSandbox(): Sandbox {
     symlinkSync(resolveTool(tool), join(toolsDir, tool));
   }
   writeFileSync(join(toolsDir, "curl"), FAKE_CURL, { mode: 0o755 });
-  return { root, home, toolsDir, releaseRoot, curlLog: join(root, "curl.log") };
+  writeFakeUname(toolsDir, "Linux");
+  const osReleasePath = join(root, "os-release");
+  writeFileSync(osReleasePath, "ID=ubuntu\n");
+  return {
+    root,
+    home,
+    toolsDir,
+    releaseRoot,
+    curlLog: join(root, "curl.log"),
+    osReleasePath,
+  };
 }
 
 function linkTool(tool: string): void {
@@ -178,6 +195,7 @@ function runInstaller(
       HOME: sandbox.home,
       FAKE_RELEASE_ROOT: sandbox.releaseRoot,
       FAKE_CURL_LOG: sandbox.curlLog,
+      AGEMON_OS_RELEASE_PATH: sandbox.osReleasePath,
       ...env,
     },
   });
@@ -713,6 +731,82 @@ describe.skipIf(!SHA256SUM_AVAILABLE)("install.sh Node.js version gate", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Required: Node.js 22.12+");
     expect(curlCalls()).toBe("");
+  });
+});
+
+describe.skipIf(!SHA256SUM_AVAILABLE)("install.sh platform gate", () => {
+  function expectRefusedBeforeDownloading(message: string): void {
+    const result = runInstaller({
+      AGEMON_INSTALL_DIR: join(sandbox.root, "agemon"),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
+    expect(curlCalls()).toBe("");
+    expect(existsSync(join(sandbox.root, "agemon"))).toBe(false);
+  }
+
+  it("refuses macOS before downloading", () => {
+    writeFakeUname(sandbox.toolsDir, "Darwin");
+
+    expectRefusedBeforeDownloading(
+      "To run its read-only commands (inspect, status, plan), install it with: npm install -g agemon",
+    );
+  });
+
+  it("refuses an unsupported distro before downloading", () => {
+    writeFileSync(sandbox.osReleasePath, 'VERSION_ID="41"\nID=fedora\n');
+
+    expectRefusedBeforeDownloading(
+      `agemon installs only on Ubuntu, Debian and their derivatives. ${sandbox.osReleasePath} reports 'fedora'.`,
+    );
+  });
+
+  it("refuses when os-release is missing", () => {
+    rmSync(sandbox.osReleasePath);
+
+    expectRefusedBeforeDownloading(
+      `Could not identify this Linux distribution: ${sandbox.osReleasePath} is missing or unreadable.`,
+    );
+  });
+
+  it("refuses an ID_LIKE of '*' and a substring match", () => {
+    writeFileSync(sandbox.osReleasePath, "ID=custom\nID_LIKE=*\n");
+    expectRefusedBeforeDownloading("reports 'custom'.");
+
+    writeFileSync(
+      sandbox.osReleasePath,
+      "ID=custom\nID_LIKE='notdebian ubuntulike'\n",
+    );
+    expectRefusedBeforeDownloading("reports 'custom'.");
+  });
+
+  it("does not print escape sequences from os-release", () => {
+    writeFileSync(sandbox.osReleasePath, "ID=evil\u001b]0;pwned\u0007\n");
+
+    const result = runInstaller();
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("reports 'evil0pwned'.");
+    expect(result.stderr).not.toContain("\u001b");
+  });
+
+  it.each([
+    [
+      "Linux Mint",
+      'NAME="Linux Mint"\nID=linuxmint\nID_LIKE="ubuntu debian"\n',
+    ],
+    ["Pop!_OS", "ID=pop\nID_LIKE='ubuntu debian'\n"],
+    ["Debian", 'VERSION_ID="12"\nID=debian\n'],
+    ["Ubuntu with CRLF line endings", "ID=ubuntu\r\n"],
+  ])("installs on %s", (_name, contents) => {
+    writeFileSync(sandbox.osReleasePath, contents);
+
+    const result = runInstaller({
+      AGEMON_INSTALL_DIR: join(sandbox.root, "agemon"),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
   });
 });
 

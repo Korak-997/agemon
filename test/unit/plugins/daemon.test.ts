@@ -193,7 +193,6 @@ async function createTestContext(options: {
   const infos: string[] = [];
   const ctx: Context = {
     cwd: options.cwd,
-    os: "ubuntu",
     binaries: [],
     dryRun: false,
     yes: true,

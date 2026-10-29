@@ -215,7 +215,7 @@ describe("nuke roundtrip", () => {
 
   it("fails install on unsupported non-Ubuntu platform", async () => {
     const { installExitCode, beforeSnapshot, afterSnapshot } =
-      await runInstallFixture("non-ubuntu", "debian");
+      await runInstallFixture("non-ubuntu", "fedora");
     expect(installExitCode).toBe(1);
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });

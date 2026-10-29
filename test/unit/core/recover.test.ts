@@ -89,7 +89,6 @@ async function createHarness(
     output,
     ctx: {
       cwd: repo,
-      os: "ubuntu",
       binaries: [],
       dryRun: false,
       yes: true,

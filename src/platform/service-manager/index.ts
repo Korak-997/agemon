@@ -1,5 +1,9 @@
+import type { ServiceManagerKind } from "../detect.js";
+import { resolveHomeDirectory } from "../home.js";
 import { createFakeServiceManager } from "./fake.js";
 import { createLinuxServiceManager } from "./linux.js";
+import { createUnavailableServiceManager } from "./unavailable.js";
+import { createUserUnitFiles } from "./user-unit-files.js";
 
 export interface RunCommandResult {
   code: number;
@@ -57,7 +61,7 @@ export interface ServiceManager {
 }
 
 export interface CreateServiceManagerInput {
-  os: "ubuntu";
+  kind: ServiceManagerKind;
   run: RunCommand;
   user?: string;
 }
@@ -71,6 +75,11 @@ export function createServiceManager(
     });
   }
 
+  if (input.kind === "none") {
+    return createUnavailableServiceManager(
+      createUserUnitFiles(resolveHomeDirectory()),
+    );
+  }
   return createLinuxServiceManager({
     run: input.run,
     user: input.user,
