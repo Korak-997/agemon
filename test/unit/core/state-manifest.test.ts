@@ -10,7 +10,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { StateManifest } from "../../../src/core/state-manifest.js";
+import {
+  parseStateManifestContents,
+  StateManifest,
+} from "../../../src/core/state-manifest.js";
 import { printable } from "../../../src/core/untrusted-text.js";
 
 const createdTempDirectories: string[] = [];
@@ -491,5 +494,35 @@ describe("StateManifest refuses control characters in ledger text", () => {
       }),
     ).rejects.toThrow("'type' contains a control character");
     expect(manifest.getActions()).toEqual([]);
+  });
+});
+
+describe("parseStateManifestContents", () => {
+  it("reads what StateManifest.load reads, reports the migration and writes nothing", async () => {
+    for (const [manifest, migratedFromVersion] of [
+      [V1_MANIFEST, 1],
+      [V2_MANIFEST, 2],
+      [{ ...V2_MANIFEST, version: 3, actions: [] }, null],
+    ] as const) {
+      const cwd = await createSandbox();
+      const manifestPath = await writeManifest(cwd, manifest);
+      const rawContents = await readFile(manifestPath, "utf8");
+
+      const parsed = parseStateManifestContents(rawContents);
+
+      expect(parsed.migratedFromVersion).toBe(migratedFromVersion);
+      expect(await readdir(join(cwd, ".agemon"))).toEqual(["state.json"]);
+      const loaded = await StateManifest.load(cwd);
+      expect(parsed.state.actions).toEqual(loaded.getActions());
+    }
+  });
+
+  it("refuses invalid JSON and unknown versions", () => {
+    expect(() => parseStateManifestContents("{")).toThrow(/not valid JSON/u);
+    expect(() =>
+      parseStateManifestContents(
+        JSON.stringify({ ...V2_MANIFEST, version: 9 }),
+      ),
+    ).toThrow(/Unrecognised state manifest version: 9/u);
   });
 });

@@ -53,10 +53,99 @@ const fakeHelp: HelpRunner = (commandArguments) =>
     ? FAKE_ROOT_HELP
     : `banner\nUsage: agemon ${commandArguments[0]} [options]\n`;
 
+const SAFETY_POST_PATH = "src/content/docs/posts/safety-model.mdx";
+const RECORDED_LEDGER_PATH = "src/data/recorded-ledger.json";
+
+interface FixtureEntry {
+  plugin: string;
+  type: string;
+  target: string;
+  preExisting?: boolean;
+  ownershipMode?: string | null;
+  agemonVersion?: string | null;
+}
+
+function ledgerEntry(entry: FixtureEntry, index: number) {
+  return {
+    id: `entry-${index}`,
+    plugin: entry.plugin,
+    type: entry.type,
+    target: entry.target,
+    preExisting: entry.preExisting ?? false,
+    createdAt: "2026-10-31T12:00:00.000Z",
+    planId: "0123456789abcdef",
+    resourceId: null,
+    ownershipMode: entry.ownershipMode ?? null,
+    agemonVersion:
+      entry.agemonVersion === undefined ? "4.7.2" : entry.agemonVersion,
+    fingerprintBefore: null,
+    fingerprintAfter: null,
+    desiredRevision: null,
+    validation: null,
+    backup: null,
+  };
+}
+
+function recordedLedger(entries: FixtureEntry[], version = 3): string {
+  return JSON.stringify({
+    version,
+    createdAt: "2026-10-31T12:00:00.000Z",
+    updatedAt: "2026-10-31T12:00:00.000Z",
+    os: "linux",
+    actions: entries.map(ledgerEntry),
+  });
+}
+
+const RECORDED_ENTRIES: FixtureEntry[] = [
+  {
+    plugin: "crg",
+    type: "installed-binary",
+    target: "code-review-graph (pipx)",
+  },
+  {
+    plugin: "skills",
+    type: "installed-skill",
+    target: "web-design-guidelines",
+  },
+  { plugin: "skills", type: "installed-skill", target: "writing-guidelines" },
+  {
+    plugin: "agents",
+    type: "managed-agent-file",
+    target: ".claude/agents/geo-audit-content.md",
+    ownershipMode: "created",
+  },
+  {
+    plugin: "agents",
+    type: "managed-agent-file",
+    target: ".claude/agents/geo-audit-schema.md",
+    ownershipMode: "created",
+  },
+  {
+    plugin: "master-prompt",
+    type: "managed-rule-file",
+    target: "AGENTS.md",
+    ownershipMode: "delimited-block",
+  },
+  {
+    plugin: "master-prompt",
+    type: "managed-rule-file",
+    target: "CLAUDE.md",
+    ownershipMode: "delimited-block",
+    preExisting: true,
+  },
+];
+
+function writeWebsiteInput(path: string, contents: string): void {
+  mkdirSync(join(websiteRoot, path, ".."), { recursive: true });
+  writeFileSync(join(websiteRoot, path), contents);
+}
+
 let websiteRoot: string;
 
 beforeEach(() => {
   websiteRoot = mkdtempSync(join(tmpdir(), "agemon-site-content-"));
+  writeWebsiteInput(SAFETY_POST_PATH, "---\ntitle: Post\n---\n");
+  writeWebsiteInput(RECORDED_LEDGER_PATH, recordedLedger(RECORDED_ENTRIES));
 });
 
 afterEach(() => {
@@ -433,11 +522,16 @@ describe("site data for the home page", () => {
         "gettingStarted",
         "governance",
         "install",
+        "safetyPost",
         "security",
         "skills",
       ].sort(),
     );
-    for (const route of Object.values(routes)) {
+    const { safetyPost, ...generatedRoutes } = routes;
+    expect(join("src/content/docs", `${safetyPost.slice(1, -1)}.mdx`)).toBe(
+      SAFETY_POST_PATH,
+    );
+    for (const route of Object.values(generatedRoutes)) {
       const path = route.replace(/#.*$/u, "");
       const file =
         path === "/skills/" ? "skills/index.md" : `${path.slice(1, -1)}.md`;
@@ -450,6 +544,13 @@ describe("site data for the home page", () => {
     );
     expect([...headingSlugs(gettingStarted.children).values()]).toContain(
       installAnchor,
+    );
+  });
+
+  it("fails when the safety-model post the home page links to is missing", () => {
+    rmSync(join(websiteRoot, SAFETY_POST_PATH));
+    expect(() => generate()).toThrow(
+      /src\/content\/docs\/posts\/safety-model\.mdx/u,
     );
   });
 
@@ -635,5 +736,136 @@ describe("skill group template", () => {
     expect(geoPage).toMatch(/^## NOTICE$/mu);
     expect(geoPage).toContain("Removed `allowed-tools` from the frontmatter");
     expect(generatedPage("skills/commit.md")).not.toMatch(/^## NOTICE$/mu);
+  });
+});
+
+describe("recorded ledger for the home page", () => {
+  it("groups every repository entry by plugin and type in first-seen order, with the files agemon owns", () => {
+    writeWebsiteInput(
+      RECORDED_LEDGER_PATH,
+      recordedLedger([
+        ...RECORDED_ENTRIES,
+        { plugin: "skills", type: "installed-skill", target: "geo" },
+        {
+          plugin: "daemon",
+          type: "registered-unit",
+          target: "/work/run/home/.config/systemd/user/agemon.service",
+        },
+      ]),
+    );
+    generate();
+    expect(siteData().recordedLedger).toEqual({
+      rows: [
+        {
+          plugin: "crg",
+          type: "installed-binary",
+          firstTarget: "code-review-graph (pipx)",
+          count: 1,
+        },
+        {
+          plugin: "skills",
+          type: "installed-skill",
+          firstTarget: "web-design-guidelines",
+          count: 3,
+        },
+        {
+          plugin: "agents",
+          type: "managed-agent-file",
+          firstTarget: ".claude/agents/geo-audit-content.md",
+          count: 2,
+        },
+        {
+          plugin: "master-prompt",
+          type: "managed-rule-file",
+          firstTarget: "AGENTS.md",
+          count: 2,
+        },
+      ],
+      addedPaths: [".claude/", "AGENTS.md"],
+    });
+  });
+
+  it("fails with the re-record hint on a ledger the real loader refuses, migrates or cannot show", () => {
+    const refused: [string, RegExp][] = [
+      ["{", /not valid JSON/u],
+      [recordedLedger(RECORDED_ENTRIES, 9), /version: 9/u],
+      [recordedLedger(RECORDED_ENTRIES, 2), /older ledger version/u],
+      [recordedLedger([]), /no repository entries/u],
+      [
+        recordedLedger([
+          { plugin: "a", type: "b", target: "/work/run/home/x.service" },
+        ]),
+        /no repository entries/u,
+      ],
+      [
+        recordedLedger([
+          { plugin: "a", type: "b", target: "x" },
+          { plugin: "c", type: "d", target: "/home/someone/.ssh/id_ed25519" },
+        ]),
+        /outside the recording's \/work\//u,
+      ],
+      [
+        recordedLedger([
+          { plugin: "a", type: "b", target: "x" },
+          { plugin: "c", type: "d", target: "/work/x/.." },
+        ]),
+        /outside the recording's \/work\//u,
+      ],
+      [
+        recordedLedger([{ plugin: "a", type: "b", target: "~/x" }]),
+        /relative/u,
+      ],
+      [
+        recordedLedger([{ plugin: "a", type: "b", target: "a/../b" }]),
+        /relative/u,
+      ],
+      [
+        recordedLedger([
+          { plugin: "a", type: "b", target: "evil\u202eexe.md" },
+        ]),
+        /character/u,
+      ],
+      [
+        recordedLedger([{ plugin: "a", type: "b", target: "x".repeat(121) }]),
+        /120/u,
+      ],
+      [
+        recordedLedger([
+          { plugin: "a", type: "b", target: "x", agemonVersion: null },
+        ]),
+        /agemon version/u,
+      ],
+      [
+        recordedLedger([
+          { plugin: "a", type: "b", target: "x" },
+          { plugin: "a", type: "b", target: "y", agemonVersion: "4.7.1" },
+        ]),
+        /agemon version/u,
+      ],
+    ];
+    for (const [contents, message] of refused) {
+      writeWebsiteInput(RECORDED_LEDGER_PATH, contents);
+      expect(() => generate(), contents).toThrow(message);
+      expect(() => generate(), contents).toThrow(
+        /src\/data\/recorded-ledger\.json: .*re-record the website recordings \(website\/recordings\/README\.md\)/u,
+      );
+    }
+  });
+
+  it("accepts the committed recording", () => {
+    rmSync(join(websiteRoot, RECORDED_LEDGER_PATH));
+    writeWebsiteInput(
+      RECORDED_LEDGER_PATH,
+      readFileSync(
+        join(REPOSITORY_ROOT, "website", RECORDED_LEDGER_PATH),
+        "utf8",
+      ),
+    );
+    generate();
+    expect(siteData().recordedLedger).toMatchObject({
+      rows: expect.arrayContaining([
+        expect.objectContaining({ plugin: "skills" }),
+      ]),
+    });
   });
 });

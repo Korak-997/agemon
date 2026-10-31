@@ -1,9 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, rm, watch } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  cp,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  watch,
+} from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
+import { parseArgs } from "node:util";
 import { runCli } from "../src/cli/index.js";
 import { takeFakeVerifiedBinaryInstallRequests } from "../src/core/fake-subprocess.js";
+import { quoteForShlex } from "../src/core/untrusted-text.js";
 import { AGNIX_VERSION } from "../src/plugins/pins.js";
 import {
   type DiffLine,
@@ -17,6 +27,24 @@ const REPO_ROOT = process.cwd();
 const SANDBOX_ROOT = join(REPO_ROOT, ".sandbox");
 const RUNS_DIR = join(SANDBOX_ROOT, "runs");
 const FIXTURES_DIR = join(REPO_ROOT, "test/fixtures");
+const SANDBOX_NAME_PATTERN = /^[a-z0-9-]+$/u;
+const ISOLATED_GIT_ENVIRONMENT = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+};
+const FIXTURE_COMMIT_GIT_OPTIONS = [
+  "-c",
+  "commit.gpgsign=false",
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "user.name=agemon",
+  "-c",
+  "user.email=recording@example.invalid",
+];
 
 interface RunFlags {
   dryRun: boolean;
@@ -77,19 +105,30 @@ function buildNukeArgv(flags: RunFlags): string[] {
 }
 
 function defaultLabel(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
+  return new Date().toISOString().toLowerCase().replace(/[:.]/g, "-");
+}
+
+function assertSandboxName(kind: "fixture" | "label", value: string): void {
+  if (!SANDBOX_NAME_PATTERN.test(value)) {
+    throw new Error(
+      `The ${kind} ${JSON.stringify(value)} may use only a-z, 0-9 and -`,
+    );
+  }
 }
 
 async function prepareRun(
+  runsDir: string,
   fixture: string,
   label: string,
 ): Promise<{ runDir: string; repoDir: string; homeDir: string }> {
+  assertSandboxName("fixture", fixture);
+  assertSandboxName("label", label);
   const fixtureDir = join(FIXTURES_DIR, fixture);
   if (!existsSync(fixtureDir)) {
     throw new Error(`Unknown fixture: ${fixture} (expected ${fixtureDir})`);
   }
 
-  const runDir = join(RUNS_DIR, label);
+  const runDir = join(runsDir, label);
   const repoDir = join(runDir, "repo");
   const homeDir = join(runDir, "home");
 
@@ -97,7 +136,11 @@ async function prepareRun(
   await mkdir(repoDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
   await cp(fixtureDir, repoDir, { recursive: true });
-  execFileSync("git", ["init", "-q"], { cwd: repoDir, stdio: "ignore" });
+  execFileSync("git", ["init", "-q"], {
+    cwd: repoDir,
+    stdio: "ignore",
+    env: ISOLATED_GIT_ENVIRONMENT,
+  });
 
   return { runDir, repoDir, homeDir };
 }
@@ -137,6 +180,27 @@ async function withCapturedOutput(
   }
 }
 
+function sandboxEnvironment(
+  repoDir: string,
+  homeDir: string,
+  real: boolean,
+  fixture: string,
+): Record<string, string | undefined> {
+  const fixtureOsReleasePath = join(repoDir, ".sandbox", "os-release");
+  return {
+    HOME: homeDir,
+    XDG_STATE_HOME: join(homeDir, ".local", "state"),
+    AGEMON_DEV: "1",
+    AGEMON_FAKE_SUBPROCESS: real ? undefined : "1",
+    AGEMON_FAKE_SERVICES: real ? undefined : "1",
+    AGEMON_FAKE_PREINSTALLED_CRG:
+      !real && fixture === "preexisting-crg" ? "1" : undefined,
+    AGEMON_OS_RELEASE_PATH: existsSync(fixtureOsReleasePath)
+      ? fixtureOsReleasePath
+      : undefined,
+  };
+}
+
 async function invokeAgemon(
   argv: string[],
   repoDir: string,
@@ -145,41 +209,23 @@ async function invokeAgemon(
   fixture: string,
 ): Promise<{ exitCode: number; output: string }> {
   const originalCwd = process.cwd();
-  const originalHome = process.env.HOME;
-  const originalStateHome = process.env.XDG_STATE_HOME;
-  const originalDev = process.env.AGEMON_DEV;
-  const originalFakeSubprocess = process.env.AGEMON_FAKE_SUBPROCESS;
-  const originalFakeServices = process.env.AGEMON_FAKE_SERVICES;
-  const originalFakePreinstalledCrg = process.env.AGEMON_FAKE_PREINSTALLED_CRG;
-  const originalOsReleasePath = process.env.AGEMON_OS_RELEASE_PATH;
-  const fixtureOsReleasePath = join(repoDir, ".sandbox", "os-release");
+  const environment = sandboxEnvironment(repoDir, homeDir, real, fixture);
+  const originalEnvironment = Object.fromEntries(
+    Object.keys(environment).map((name) => [name, process.env[name]]),
+  );
 
   process.chdir(repoDir);
-  process.env.HOME = homeDir;
-  process.env.XDG_STATE_HOME = join(homeDir, ".local", "state");
-  process.env.AGEMON_DEV = "1";
-  setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", real ? undefined : "1");
-  setOrDeleteEnv("AGEMON_FAKE_SERVICES", real ? undefined : "1");
-  setOrDeleteEnv(
-    "AGEMON_FAKE_PREINSTALLED_CRG",
-    !real && fixture === "preexisting-crg" ? "1" : undefined,
-  );
-  setOrDeleteEnv(
-    "AGEMON_OS_RELEASE_PATH",
-    existsSync(fixtureOsReleasePath) ? fixtureOsReleasePath : undefined,
-  );
+  for (const [name, value] of Object.entries(environment)) {
+    setOrDeleteEnv(name, value);
+  }
 
   try {
     return await withCapturedOutput(() => runCli(argv));
   } finally {
     process.chdir(originalCwd);
-    setOrDeleteEnv("HOME", originalHome);
-    setOrDeleteEnv("XDG_STATE_HOME", originalStateHome);
-    setOrDeleteEnv("AGEMON_DEV", originalDev);
-    setOrDeleteEnv("AGEMON_FAKE_SUBPROCESS", originalFakeSubprocess);
-    setOrDeleteEnv("AGEMON_FAKE_SERVICES", originalFakeServices);
-    setOrDeleteEnv("AGEMON_FAKE_PREINSTALLED_CRG", originalFakePreinstalledCrg);
-    setOrDeleteEnv("AGEMON_OS_RELEASE_PATH", originalOsReleasePath);
+    for (const [name, value] of Object.entries(originalEnvironment)) {
+      setOrDeleteEnv(name, value);
+    }
   }
 }
 
@@ -199,7 +245,11 @@ function printDiff(label: string, before: Snapshot, after: Snapshot): void {
 
 async function cmdRun(fixture: string, flags: RunFlags): Promise<void> {
   const label = flags.label ?? defaultLabel();
-  const { runDir, repoDir, homeDir } = await prepareRun(fixture, label);
+  const { runDir, repoDir, homeDir } = await prepareRun(
+    RUNS_DIR,
+    fixture,
+    label,
+  );
 
   const before = await snapshotTree(runDir);
   const { exitCode, output } = await invokeAgemon(
@@ -255,7 +305,11 @@ function pluginRan(flags: RunFlags, pluginId: string): boolean {
 
 async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
   const label = flags.label ?? defaultLabel();
-  const { runDir, repoDir, homeDir } = await prepareRun(fixture, label);
+  const { runDir, repoDir, homeDir } = await prepareRun(
+    RUNS_DIR,
+    fixture,
+    label,
+  );
 
   const beforeInstall = await snapshotTree(runDir);
 
@@ -324,6 +378,87 @@ async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
   );
 }
 
+async function assertUsableRunsRoot(runsRoot: string): Promise<void> {
+  if (!isAbsolute(runsRoot)) {
+    throw new Error(`--runs-root must be an absolute path: ${runsRoot}`);
+  }
+  const resolvedRunsRoot = await realpath(runsRoot).catch(() => null);
+  if (resolvedRunsRoot === null) {
+    throw new Error(
+      `--runs-root must be an existing, empty directory: ${runsRoot}`,
+    );
+  }
+  const fromRepository = relative(await realpath(REPO_ROOT), resolvedRunsRoot);
+  const outsideRepository =
+    fromRepository === ".." ||
+    fromRepository.startsWith(`..${sep}`) ||
+    isAbsolute(fromRepository);
+  if (!outsideRepository) {
+    throw new Error(
+      `--runs-root must be outside the repository, so nothing a recording writes can land in it: ${runsRoot}`,
+    );
+  }
+  if ((await readdir(resolvedRunsRoot)).length > 0) {
+    throw new Error(
+      `--runs-root must be an existing, empty directory: ${runsRoot}`,
+    );
+  }
+}
+
+function commitFixture(repoDir: string): void {
+  for (const args of [
+    ["add", "-A"],
+    ["commit", "-q", "-m", "fixture"],
+  ]) {
+    execFileSync("git", [...FIXTURE_COMMIT_GIT_OPTIONS, ...args], {
+      cwd: repoDir,
+      stdio: "ignore",
+      env: ISOLATED_GIT_ENVIRONMENT,
+    });
+  }
+}
+
+async function cmdPrepare(fixture: string, args: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      label: { type: "string" },
+      "runs-root": { type: "string" },
+      "shell-runs-root": { type: "string" },
+    },
+  });
+  if (values.label === undefined) {
+    throw new Error("prepare needs --label <label>");
+  }
+  if (values["runs-root"] === undefined) {
+    throw new Error("prepare needs --runs-root <empty directory>");
+  }
+  await assertUsableRunsRoot(values["runs-root"]);
+  const shellRunsRoot = values["shell-runs-root"] ?? values["runs-root"];
+  if (!isAbsolute(shellRunsRoot)) {
+    throw new Error(
+      `--shell-runs-root must be an absolute path: ${shellRunsRoot}`,
+    );
+  }
+
+  const { runDir, repoDir, homeDir } = await prepareRun(
+    values["runs-root"],
+    fixture,
+    values.label,
+  );
+  commitFixture(repoDir);
+
+  const shellRunDir = join(shellRunsRoot, values.label);
+  const asSeenByShell = (path: string): string =>
+    path.startsWith(runDir) ? shellRunDir + path.slice(runDir.length) : path;
+  const environment = sandboxEnvironment(repoDir, homeDir, false, fixture);
+  for (const [name, value] of Object.entries(environment)) {
+    if (value !== undefined)
+      console.log(`export ${name}=${quoteForShlex(asSeenByShell(value))}`);
+  }
+  console.log(`cd ${quoteForShlex(asSeenByShell(repoDir))}`);
+}
+
 async function cmdReset(): Promise<void> {
   await rm(SANDBOX_ROOT, { recursive: true, force: true });
   console.log("Wiped .sandbox/");
@@ -373,6 +508,17 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (mode === "prepare") {
+    const [fixture, ...flagArgs] = rest;
+    if (!fixture) {
+      throw new Error(
+        "Usage: npm run sandbox -- prepare <fixture> --label <label> --runs-root <empty directory>",
+      );
+    }
+    await cmdPrepare(fixture, flagArgs);
+    return;
+  }
+
   if (mode === "run" || mode === "roundtrip" || mode === "watch") {
     const [fixture, ...flagArgs] = rest;
     if (!fixture) {
@@ -387,7 +533,7 @@ async function main(): Promise<void> {
   }
 
   throw new Error(
-    `Usage: npm run sandbox -- <run|roundtrip|reset> <fixture> [flags]`,
+    `Usage: npm run sandbox -- <run|roundtrip|prepare|reset> <fixture> [flags]`,
   );
 }
 

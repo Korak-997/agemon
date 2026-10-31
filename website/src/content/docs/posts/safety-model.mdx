@@ -1,0 +1,70 @@
+---
+title: What happens when an installer is not allowed to be sure
+description: The safety model behind agemon, in five steps — plan, consent, apply, rollback, ledger.
+tableOfContents: false
+---
+
+import SafetyDiagram from "../../../components/SafetyDiagram.astro";
+
+<p class="post-lead">The safety model behind agemon, in five steps: plan, consent, apply, rollback, ledger.</p>
+
+A tool that writes into your repository has to earn that access. agemon shows the plan with
+diffs before it touches anything, asks before it writes, restores the whole run if any step
+fails, and records every change in a ledger, so it can later remove exactly what it added.
+
+<figure class="post-figure">
+  <SafetyDiagram animated={false} />
+</figure>
+
+## Plan, then consent
+
+Every run starts as a plan: the operations agemon would perform in this repository, grouped by
+capability, with a diff for every file it would write. Nothing is applied until you say yes,
+and some kinds of change have their own consent step: skill groups are offered one by
+one,[^consent] and subagents get a step that names every agent together with the tools it may
+use.
+
+A plan can also be stored and applied later with `agemon apply --plan <id>`. agemon then plans
+again with the options of this run and refuses unless the result is identical to the stored
+plan. It applies exactly what you reviewed, never an edited copy.[^plan] The flags are listed
+on the [commands page](/reference/commands/).
+
+## Apply, or roll back
+
+Before an apply changes anything, agemon writes a journal outside the repository with the
+contents every file had before the run. Files are written atomically, keep their permissions,
+and agemon refuses to write through a symlink, a special file or a read-only file.
+
+> If any step fails, the whole run is restored.
+
+A failed apply rolls back every file it touched and exits with code 1, and lists anything it
+could not restore. If the process is killed instead — a power cut, `kill -9` — the journal
+stays behind, and every later run in that repository refuses to start until `agemon recover`
+has put the files back.[^recover]
+
+## The ledger
+
+Every change is recorded in `.agemon/state.json`. `agemon nuke` reads it and removes exactly
+what agemon added, leaving your own files alone. Rule-file edits are restored from a backup
+only when the backup provably matches the file agemon found, and a managed file you edited
+after agemon wrote it is never overwritten or deleted.[^ledger]
+
+Tools shared by every repository on the machine, such as code-review-graph and agnix, have a
+second, machine-wide ledger: `nuke` removes one only when this repository installed it and no
+other repository still uses it.
+
+The [security page](/project/security/) describes how to report a problem, and the
+[configuration reference](/reference/configuration/) lists the exit codes each of these
+outcomes uses.
+
+[^consent]: Declining a skill group is recorded in the plan as a skip operation, so applying
+    that plan later cannot install it.
+
+[^plan]: The plan id must be a valid 16-character id, and a plan made by another agemon
+    version is refused.
+
+[^recover]: `agemon recover` asks before restoring, keeps a file you edited after the
+    interruption, and saves its earlier contents beside it as `<file>.agemon-original`.
+
+[^ledger]: Such a file keeps its contents; agemon removes only its own block, or leaves the
+    file as it is and prints `manual cleanup needed`.

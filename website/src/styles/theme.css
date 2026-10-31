@@ -213,6 +213,18 @@
   margin-top: 2rem;
 }
 
+.run-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: 2rem;
+  margin-top: 2rem;
+}
+
+.home-section .safety-post-link {
+  margin-top: 2rem;
+  text-align: center;
+}
+
 .why-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(17.5rem, 100%), 1fr));
@@ -278,4 +290,17 @@
   .page > .header {
     animation: none;
   }
+}
+
+.post-lead {
+  color: var(--ag-text-muted);
+  font-size: 1.25rem;
+}
+
+.post-figure {
+  margin: 3rem 0;
+  padding: 1.5rem;
+  border: 1px solid var(--ag-border);
+  border-radius: 10px;
+  background: var(--ag-surface);
 }

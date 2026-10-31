@@ -337,6 +337,39 @@ describe("verify-site.sh", () => {
     expect(verify().stderr).toMatch(/evil\.HTML does not start with/u);
   });
 
+  it("serves .webm and .png only when the file starts with its format's magic bytes", () => {
+    const webm = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00]);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    writeSite({});
+    mkdirSync(join(siteDirectory, "media"), { recursive: true });
+    writeFileSync(join(siteDirectory, "media/run.webm"), webm);
+    writeFileSync(join(siteDirectory, "media/run.png"), png);
+    expect(verify().stderr).toBe("");
+
+    for (const [name, contents] of [
+      ["media/run.webm", "<html><script>alert(1)</script>"],
+      ["media/run.webm", ""],
+      ["media/run.png", "<html><script>alert(1)</script>"],
+      ["media/upper.PNG", "<html><script>alert(1)</script>"],
+      ["media/upper.WEBM", "<html>"],
+    ]) {
+      writeFileSync(join(siteDirectory, "media/run.webm"), webm);
+      writeFileSync(join(siteDirectory, "media/run.png"), png);
+      writeFileSync(join(siteDirectory, name), contents);
+      const result = verify();
+      expect(result.status, name).toBe(1);
+      expect(result.stderr, name).toMatch(
+        /does not start with the .* signature/u,
+      );
+      rmSync(join(siteDirectory, name));
+    }
+  });
+
+  it("still refuses other media types", () => {
+    writeSite({ "media/run.webp": "RIFF" });
+    expect(verify().stderr).toMatch(/unexpected file type/u);
+  });
+
   it("fails on a file name containing a newline", () => {
     writeSite({ "docs/a\nb.css": "" });
     expect(verify().stderr).toMatch(/containing a newline/u);

@@ -45,9 +45,25 @@ find "$site_dir" -name "*$newline*" >"$file_list"
 find "$site_dir" -type f ! -iname '*.html' ! -iname '*.css' ! -iname '*.js' \
   ! -iname '*.json' ! -name 'sitemap-index.xml' ! -name 'sitemap-[0-9]*.xml' ! -iname '*.svg' ! -iname '*.png' ! -iname '*.ico' \
   ! -iname '*.woff2' ! -iname '*.webmanifest' ! -iname '*.sh' ! -iname '*.wasm' \
+  ! -iname '*.webm' \
   ! -iname '*.pagefind' ! -iname '*.pf_fragment' ! -iname '*.pf_index' ! -iname '*.pf_meta' \
   >"$file_list"
 [ ! -s "$file_list" ] || fail "unexpected file type: $(head -n 1 "$file_list")"
+
+# Pages serves these by extension with a concrete media type, which browsers do not
+# sniff up to HTML; the signature check only catches a misnamed or truncated file.
+check_signature() {
+  extension="$1"
+  format="$2"
+  signature="$3"
+  find "$site_dir" -type f -iname "*.$extension" >"$file_list"
+  while IFS= read -r media_file; do
+    [ "$(head -c "$((${#signature} / 2))" "$media_file" | od -An -tx1 | tr -d ' \n')" = "$signature" ] ||
+      fail "$media_file does not start with the $format signature"
+  done <"$file_list"
+}
+check_signature png PNG 89504e470d0a1a0a
+check_signature webm WebM 1a45dfa3
 
 # A NUL byte makes grep treat a file as binary, which hides matches from any
 # check that forgets -a; an ESC byte lets a file decoded as ISO-2022-JP hide

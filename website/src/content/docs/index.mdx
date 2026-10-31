@@ -10,11 +10,24 @@ hero:
 ---
 
 import CopyButton from "../../components/CopyButton.astro";
+import LedgerPanel from "../../components/LedgerPanel.astro";
 import SafetyDiagram from "../../components/SafetyDiagram.astro";
 import TetractysIndex from "../../components/TetractysIndex.astro";
+import TerminalFrame from "../../components/TerminalFrame.astro";
 import TrustRow from "../../components/TrustRow.astro";
 import siteData from "../../generated/site-data.json";
 import { NPM_INSTALL_COMMAND } from "../../install-commands";
+import { FAILURE_AND_ROLLBACK, PLAN_AND_CONSENT, ROUNDTRIP } from "../../recordings";
+
+<section class="home-section" aria-labelledby="run">
+  <div class="ag-divider" aria-hidden="true"><i></i><b></b></div>
+  <h2 id="run">See it run</h2>
+  <TerminalFrame recording={ROUNDTRIP} />
+  <div class="run-grid">
+    <TerminalFrame recording={PLAN_AND_CONSENT} />
+    <TerminalFrame recording={FAILURE_AND_ROLLBACK} />
+  </div>
+</section>
 
 <section class="home-section" aria-labelledby="why">
   <div class="ag-divider" aria-hidden="true"><i></i><b></b></div>
@@ -43,6 +56,14 @@ import { NPM_INSTALL_COMMAND } from "../../install-commands";
   <p class="ag-label">The safety model</p>
   <h2 id="safety-heading">plan, consent, apply, rollback, ledger</h2>
   <SafetyDiagram />
+  <p class="safety-post-link"><a href={siteData.routes.safetyPost}>Read the full safety model</a></p>
+</section>
+
+<section class="home-section" aria-labelledby="ledger-heading">
+  <div class="ag-divider" aria-hidden="true"><i></i><b></b></div>
+  <p class="ag-label">The ledger</p>
+  <h2 id="ledger-heading">A thread you can follow back out</h2>
+  <LedgerPanel />
 </section>
 
 <div class="home-section">

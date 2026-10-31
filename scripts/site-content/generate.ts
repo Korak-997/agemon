@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import type { Heading, RootContent } from "mdast";
 import { GITHUB_REPOSITORY } from "../../src/core/github-release.js";
@@ -21,6 +27,10 @@ import {
 } from "./markdown.js";
 import { type GeneratedPage, renderPage } from "./page.js";
 import {
+  RECORDED_LEDGER_PATH,
+  summarizeRecordedLedger,
+} from "./recorded-ledger.js";
+import {
   SKILL_LIBRARY_ROUTE,
   skillGroupRoute,
   skillLibraryPages,
@@ -31,6 +41,7 @@ const GENERATED_DOCS_DIRECTORIES = ["start", "reference", "skills", "project"];
 const SITE_DATA_PATH = "src/generated/site-data.json";
 const SERVED_INSTALL_SCRIPT_PATH = "public/install.sh";
 const COMMANDS_ROUTE = "/reference/commands/";
+const SAFETY_POST_ROUTE = "/posts/safety-model/";
 const INSTALL_HEADING = "Install";
 const SKILL_INDEX_PLACES = 10;
 
@@ -294,7 +305,20 @@ function siteRoutes(pages: readonly GeneratedPage[]): Record<string, string> {
     install: `${routes.gettingStarted}#${headingAnchor(gettingStarted, INSTALL_HEADING)}`,
     commands: COMMANDS_ROUTE,
     skills: SKILL_LIBRARY_ROUTE,
+    safetyPost: SAFETY_POST_ROUTE,
   };
+}
+
+function assertSafetyPostExists(websiteRoot: string): void {
+  const postPath = join(
+    DOCS_DIRECTORY,
+    `${SAFETY_POST_ROUTE.slice(1, -1)}.mdx`,
+  );
+  if (!existsSync(join(websiteRoot, postPath))) {
+    throw new SiteContentError(
+      `${postPath} is missing; the home page and the footer link to it`,
+    );
+  }
 }
 
 function linkUrls(nodes: readonly RootContent[]): Set<string> {
@@ -330,6 +354,10 @@ function writeFile(path: string, contents: string | Buffer): void {
 
 export function generateSiteContent(options: SiteContentOptions): void {
   assertSkillIndexFits(options.skillGroups);
+  assertSafetyPostExists(options.websiteRoot);
+  const recordedLedger = summarizeRecordedLedger(
+    readFileSync(join(options.websiteRoot, RECORDED_LEDGER_PATH), "utf8"),
+  );
   const { version, description, license } = JSON.parse(
     readFileSync(join(options.repositoryRoot, "package.json"), "utf8"),
   ) as { version: string; description: string; license: string };
@@ -375,6 +403,7 @@ export function generateSiteContent(options: SiteContentOptions): void {
           skillCount: group.skills.length,
           route: skillGroupRoute(group),
         })),
+        recordedLedger,
         releaseTag: options.releaseTag ?? null,
         installSh,
       },

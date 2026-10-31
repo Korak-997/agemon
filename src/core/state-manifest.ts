@@ -408,6 +408,12 @@ function parseManifestJson(rawContents: string): unknown {
   }
 }
 
+export function parseStateManifestContents(
+  rawContents: string,
+): LoadedManifest {
+  return interpretManifestContents(parseManifestJson(rawContents));
+}
+
 export class StateManifest {
   private recordingAgemonVersion: string | null = null;
   private recordingPlanId: string | null = null;
@@ -448,9 +454,8 @@ export class StateManifest {
       return new StateManifest(cwd, manifestPath, createDefaultState(now));
     }
 
-    const { state, migratedFromVersion } = interpretManifestContents(
-      parseManifestJson(rawContents),
-    );
+    const { state, migratedFromVersion } =
+      parseStateManifestContents(rawContents);
     const manifest = new StateManifest(cwd, manifestPath, state);
 
     if (migratedFromVersion !== null) {

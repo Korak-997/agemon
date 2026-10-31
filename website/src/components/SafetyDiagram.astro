@@ -1,4 +1,9 @@
 ---
+interface Props {
+  animated?: boolean;
+}
+
+const { animated = true } = Astro.props;
 const steps = [
   {
     name: "plan",
@@ -29,7 +34,7 @@ const steps = [
 ];
 ---
 
-<div class="safety-diagram">
+<div class:list={["safety-diagram", { animated }]}>
   <div class="track" aria-hidden="true"></div>
   <div class="progress" aria-hidden="true"></div>
   <ol>
@@ -183,13 +188,13 @@ const steps = [
 
   @supports (animation-timeline: view()) {
     @media (prefers-reduced-motion: no-preference) {
-      .progress {
+      .animated .progress {
         animation: safety-progress linear both;
         animation-timeline: view();
         animation-range: cover 25% cover 65%;
       }
 
-      .step-dot::after {
+      .animated .step-dot::after {
         animation: safety-step linear both;
         animation-timeline: view();
         animation-range: entry 30% entry 90%;
