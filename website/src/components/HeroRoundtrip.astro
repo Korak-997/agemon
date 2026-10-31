@@ -1,0 +1,253 @@
+---
+import {
+  APEX_INDEX,
+  BOTTOM_LEFT_INDEX,
+  BOTTOM_RIGHT_INDEX,
+  DOT_RADIUS,
+  MARK_HOLLOW_INDEXES,
+  RING_RADIUS,
+  RING_STROKE_WIDTH,
+  TETRACTYS_DOTS,
+  TETRACTYS_VIEW_BOX_SIZE,
+} from "../tetractys";
+
+const apex = TETRACTYS_DOTS[APEX_INDEX];
+const bottomLeft = TETRACTYS_DOTS[BOTTOM_LEFT_INDEX];
+const bottomRight = TETRACTYS_DOTS[BOTTOM_RIGHT_INDEX];
+const applyThread = `M${apex.x} ${apex.y} L${bottomLeft.x} ${bottomLeft.y} L${bottomRight.x} ${bottomRight.y} Z`;
+const nukeThread = `M${apex.x} ${apex.y} L${bottomRight.x} ${bottomRight.y} L${bottomLeft.x} ${bottomLeft.y} Z`;
+const filledDots = TETRACTYS_DOTS.map((dot, index) => ({
+  ...dot,
+  index,
+})).filter(({ index }) => !MARK_HOLLOW_INDEXES.includes(index));
+const captions = [
+  { step: "plan", text: "$ plan" },
+  { step: "consent", text: "$ consent" },
+  { step: "apply", text: "$ apply" },
+  { step: "ledger", text: "$ ledger" },
+  { step: "nuke", text: "$ nuke" },
+  { step: "clean", text: "repo clean" },
+];
+---
+
+<figure class="hero-roundtrip">
+  <svg viewBox={`0 0 ${TETRACTYS_VIEW_BOX_SIZE} ${TETRACTYS_VIEW_BOX_SIZE}`} aria-hidden="true">
+    {
+      TETRACTYS_DOTS.map(({ x, y }) => (
+        <circle class="ring" cx={x} cy={y} r={RING_RADIUS} stroke-width={RING_STROKE_WIDTH} />
+      ))
+    }
+    <path class="thread thread-apply" pathLength="100" d={applyThread}></path>
+    <path class="thread thread-nuke" pathLength="100" d={nukeThread}></path>
+    {
+      filledDots.map(({ x, y, index }) => (
+        <circle
+          class={`dot dot-${index}`}
+          cx={x}
+          cy={y}
+          r={DOT_RADIUS}
+          fill={index === APEX_INDEX ? "var(--ag-secondary)" : "var(--ag-accent)"}
+        />
+      ))
+    }
+  </svg>
+  <div class="roundtrip-text">
+    <div class="captions" aria-hidden="true">
+      {captions.map(({ step, text }) => <span class={`caption caption-${step}`}>{text}</span>)}
+    </div>
+    <div class="ledger-lines" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="roundtrip-footer">
+      <span class="ag-label">roundtrip</span>
+      <button type="button" class="pause-button" data-roundtrip-pause aria-pressed="false" aria-label="Pause animation">
+        <svg class="when-playing" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <rect x="4" y="3" width="3" height="10"></rect><rect x="9" y="3" width="3" height="10"></rect>
+        </svg>
+        <svg class="when-paused" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M5 3l8 5-8 5z"></path>
+        </svg>
+      </button>
+    </div>
+  </div>
+  <figcaption class="sr-only">
+    The roundtrip: agemon shows a plan, asks for consent, applies it, records every change in its
+    ledger, and agemon nuke removes exactly what it added, leaving the repository clean.
+  </figcaption>
+</figure>
+
+<script>
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-roundtrip-pause]")) {
+    const figure = button.closest(".hero-roundtrip");
+    button.addEventListener("click", () => {
+      const paused = button.getAttribute("aria-pressed") !== "true";
+      button.setAttribute("aria-pressed", String(paused));
+      button.setAttribute("aria-label", paused ? "Play animation" : "Pause animation");
+      figure?.toggleAttribute("data-paused", paused);
+    });
+  }
+</script>
+
+<style>
+  .hero-roundtrip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    margin: 0;
+  }
+
+  svg {
+    width: 100%;
+    max-width: 27.5rem;
+    overflow: visible;
+  }
+
+  .ring {
+    fill: none;
+    stroke: var(--ag-text);
+  }
+
+  .thread {
+    fill: none;
+    stroke: var(--ag-secondary);
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 100 100;
+    opacity: 0;
+  }
+
+  .roundtrip-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+    max-width: 27.5rem;
+    font-family: var(--sl-font-mono);
+  }
+
+  .captions {
+    position: relative;
+    height: 1.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .caption {
+    position: absolute;
+    inset: 0 auto auto 0;
+    opacity: 0;
+    white-space: nowrap;
+  }
+
+  .caption-clean {
+    opacity: 1;
+  }
+
+  .ledger-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    opacity: 0;
+  }
+
+  .ledger-lines i {
+    height: 1px;
+    background: var(--ag-border-strong);
+  }
+
+  .ledger-lines i:nth-child(1) {
+    width: 90%;
+  }
+
+  .ledger-lines i:nth-child(2) {
+    width: 70%;
+  }
+
+  .ledger-lines i:nth-child(3) {
+    width: 80%;
+  }
+
+  .roundtrip-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .pause-button {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ag-text-muted);
+    cursor: pointer;
+  }
+
+  .pause-button:hover {
+    color: var(--ag-text);
+  }
+
+  .when-paused,
+  .pause-button[aria-pressed="true"] .when-playing {
+    display: none;
+  }
+
+  .pause-button[aria-pressed="true"] .when-paused {
+    display: block;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .pause-button {
+      display: inline-flex;
+    }
+
+    .dot,
+    .thread,
+    .ledger-lines,
+    .caption {
+      animation-duration: 46s;
+      animation-timing-function: linear;
+      animation-iteration-count: infinite;
+    }
+
+    .dot-0 { animation-name: roundtrip-dot-0; }
+    .dot-1 { animation-name: roundtrip-dot-1; }
+    .dot-2 { animation-name: roundtrip-dot-2; }
+    .dot-3 { animation-name: roundtrip-dot-3; }
+    .dot-5 { animation-name: roundtrip-dot-5; }
+    .dot-6 { animation-name: roundtrip-dot-6; }
+    .dot-9 { animation-name: roundtrip-dot-9; }
+    .thread-apply { animation-name: roundtrip-thread-apply; }
+    .thread-nuke { animation-name: roundtrip-thread-nuke; }
+    .ledger-lines { animation-name: roundtrip-ledger; }
+    .caption-plan { animation-name: roundtrip-caption-plan; }
+    .caption-consent { animation-name: roundtrip-caption-consent; }
+    .caption-apply { animation-name: roundtrip-caption-apply; }
+    .caption-ledger { animation-name: roundtrip-caption-ledger; }
+    .caption-nuke { animation-name: roundtrip-caption-nuke; }
+    .caption-clean { animation-name: roundtrip-caption-clean; }
+
+    .hero-roundtrip[data-paused] :is(.dot, .thread, .ledger-lines, .caption) {
+      animation-play-state: paused;
+    }
+  }
+
+  @keyframes roundtrip-dot-1{0%{opacity:0}1.74%{opacity:0}2.61%{opacity:1}32.39%{opacity:1}33.26%{opacity:0}35.65%{opacity:0}36.96%{opacity:1}98.7%{opacity:1}100%{opacity:0}}
+  @keyframes roundtrip-dot-2{0%{opacity:0}3.04%{opacity:0}3.91%{opacity:1}31.3%{opacity:1}32.17%{opacity:0}35.65%{opacity:0}36.96%{opacity:1}98.7%{opacity:1}100%{opacity:0}}
+  @keyframes roundtrip-dot-3{0%{opacity:0}4.35%{opacity:0}5.22%{opacity:1}30.22%{opacity:1}31.09%{opacity:0}35.65%{opacity:0}36.96%{opacity:1}98.7%{opacity:1}100%{opacity:0}}
+  @keyframes roundtrip-dot-5{0%{opacity:0}5.65%{opacity:0}6.52%{opacity:1}29.13%{opacity:1}30%{opacity:0}35.65%{opacity:0}36.96%{opacity:1}98.7%{opacity:1}100%{opacity:0}}
+  @keyframes roundtrip-dot-6{0%{opacity:0}6.96%{opacity:0}7.83%{opacity:1}28.04%{opacity:1}28.91%{opacity:0}35.65%{opacity:0}36.96%{opacity:1}98.7%{opacity:1}100%{opacity:0}}
+  @keyframes roundtrip-dot-9{0%{opacity:0}8.26%{opacity:0}9.13%{opacity:1}26.96%{opacity:1}27.83%{opacity:0}35.65%{opacity:0}36.96%{opacity:1}98.7%{opacity:1}100%{opacity:0}}
+  @keyframes roundtrip-dot-0{0%{opacity:0}9.57%{opacity:0}10.43%{opacity:1}33.04%{opacity:1}33.91%{opacity:0}35.65%{opacity:0}36.96%{opacity:1}98.7%{opacity:1}100%{opacity:0}}
+  @keyframes roundtrip-thread-apply{0%,13.04%{stroke-dashoffset:100;opacity:1}21.74%,25.87%{stroke-dashoffset:0;opacity:1}26.09%,100%{stroke-dashoffset:0;opacity:0}}
+  @keyframes roundtrip-thread-nuke{0%,25.87%{stroke-dashoffset:0;opacity:0}26.09%{stroke-dashoffset:0;opacity:1}34.78%{stroke-dashoffset:100;opacity:1}35%,100%{stroke-dashoffset:100;opacity:0}}
+  @keyframes roundtrip-ledger{0%{opacity:0}22.17%{opacity:0}23.04%{opacity:1}26.09%{opacity:1}26.96%{opacity:0}100%{opacity:0}}
+  @keyframes roundtrip-caption-plan{0%{opacity:1}8.04%{opacity:1}8.7%{opacity:0}99.35%{opacity:0}100%{opacity:1}}
+  @keyframes roundtrip-caption-consent{0%{opacity:0}8.04%{opacity:0}8.7%{opacity:1}12.39%{opacity:1}13.04%{opacity:0}100%{opacity:0}}
+  @keyframes roundtrip-caption-apply{0%{opacity:0}12.39%{opacity:0}13.04%{opacity:1}21.09%{opacity:1}21.74%{opacity:0}100%{opacity:0}}
+  @keyframes roundtrip-caption-ledger{0%{opacity:0}21.09%{opacity:0}21.74%{opacity:1}25.43%{opacity:1}26.09%{opacity:0}100%{opacity:0}}
+  @keyframes roundtrip-caption-nuke{0%{opacity:0}25.43%{opacity:0}26.09%{opacity:1}34.13%{opacity:1}34.78%{opacity:0}100%{opacity:0}}
+  @keyframes roundtrip-caption-clean{0%{opacity:0}34.13%{opacity:0}34.78%{opacity:1}99.35%{opacity:1}100%{opacity:0}}
+</style>

@@ -1,0 +1,160 @@
+---
+import Search from "@astrojs/starlight/components/Search.astro";
+import SocialIcons from "@astrojs/starlight/components/SocialIcons.astro";
+import siteData from "../generated/site-data.json";
+import Mark from "./Mark.astro";
+import ThemeSelect from "./ThemeSelect.astro";
+import Wordmark from "./Wordmark.astro";
+
+const { routes } = siteData;
+const mainLinks = [
+  { label: "Docs", href: routes.gettingStarted },
+  { label: "Commands", href: routes.commands },
+  { label: "Skills", href: routes.skills },
+  { label: "Security", href: routes.security },
+  { label: "Changelog", href: routes.changelog },
+];
+const currentPath = Astro.url.pathname;
+const isCurrent = (href: string) =>
+  href === routes.skills ? currentPath.startsWith(href) : currentPath === href;
+---
+
+<div class="site-header">
+  <a class="home-link" href="/" aria-label="agemon home">
+    <Mark size={32} />
+    <Wordmark />
+  </a>
+  <nav class="main-nav" aria-label="Main">
+    {
+      mainLinks.map(({ label, href }) => (
+        <a class="nav-link" href={href} aria-current={isCurrent(href) ? "page" : undefined}>
+          {label}
+        </a>
+      ))
+    }
+  </nav>
+  <div class="header-search print:hidden">
+    <Search />
+  </div>
+  <div class="header-actions print:hidden">
+    <ThemeSelect />
+    <SocialIcons />
+  </div>
+</div>
+
+<style>
+  .site-header {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    height: 100%;
+  }
+
+  .home-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 44px;
+    flex: none;
+  }
+
+  .main-nav {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .nav-link {
+    position: relative;
+    padding: 0.75rem 0;
+    color: var(--ag-text-muted);
+    text-decoration: none;
+    transition: color 160ms;
+  }
+
+  .nav-link:hover,
+  .nav-link[aria-current="page"] {
+    color: var(--ag-text);
+  }
+
+  .nav-link::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0.5rem;
+    height: 1px;
+    background: currentColor;
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 180ms var(--ease-out);
+  }
+
+  .nav-link:hover::after,
+  .nav-link[aria-current="page"]::after {
+    transform: scaleX(1);
+  }
+
+  .header-search {
+    margin-inline-start: auto;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .header-actions :global(a[rel="me"]) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--ag-border-strong);
+    border-radius: 6px;
+    color: var(--ag-text);
+  }
+
+  @media (max-width: 49.99rem) {
+    .site-header {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      grid-template-areas:
+        "home search actions"
+        "nav nav nav";
+      gap: 0 0.75rem;
+    }
+
+    .home-link {
+      grid-area: home;
+    }
+
+    .home-link :global(.wordmark) {
+      display: none;
+    }
+
+    .header-search {
+      grid-area: search;
+      justify-self: end;
+    }
+
+    .header-actions {
+      grid-area: actions;
+    }
+
+    .main-nav {
+      grid-area: nav;
+      overflow-x: auto;
+      gap: 1.25rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nav-link,
+    .nav-link::after {
+      transition: none;
+    }
+  }
+</style>

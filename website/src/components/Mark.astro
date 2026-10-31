@@ -1,0 +1,43 @@
+---
+import {
+  APEX_INDEX,
+  DOT_RADIUS,
+  MARK_HOLLOW_INDEXES,
+  RING_RADIUS,
+  RING_STROKE_WIDTH,
+  TETRACTYS_DOTS,
+  TETRACTYS_VIEW_BOX_SIZE,
+} from "../tetractys";
+
+interface Props {
+  size: number;
+  hollowIndexes?: readonly number[];
+  label?: string;
+}
+
+const { size, hollowIndexes = MARK_HOLLOW_INDEXES, label } = Astro.props;
+---
+
+<svg
+  width={size}
+  height={size}
+  viewBox={`0 0 ${TETRACTYS_VIEW_BOX_SIZE} ${TETRACTYS_VIEW_BOX_SIZE}`}
+  role={label ? "img" : undefined}
+  aria-label={label}
+  aria-hidden={label ? undefined : "true"}
+>
+  {
+    TETRACTYS_DOTS.map(({ x, y }, index) =>
+      hollowIndexes.includes(index) ? (
+        <circle cx={x} cy={y} r={RING_RADIUS} fill="none" stroke="var(--ag-text)" stroke-width={RING_STROKE_WIDTH} />
+      ) : (
+        <circle
+          cx={x}
+          cy={y}
+          r={DOT_RADIUS}
+          fill={index === APEX_INDEX ? "var(--ag-secondary)" : "var(--ag-accent)"}
+        />
+      ),
+    )
+  }
+</svg>

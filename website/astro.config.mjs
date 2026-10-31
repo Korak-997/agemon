@@ -13,11 +13,6 @@ export default defineConfig({
     starlight({
       title: "agemon",
       description: siteData.description,
-      logo: {
-        light: "./src/assets/brand/lockup-horizontal-light.svg",
-        dark: "./src/assets/brand/lockup-horizontal-dark.svg",
-        replacesTitle: true,
-      },
       favicon: "/favicon.svg",
       head: [
         {
@@ -40,6 +35,13 @@ export default defineConfig({
           href: `https://github.com/${siteData.repository}`,
         },
       ],
+      components: {
+        Header: "./src/components/Header.astro",
+        Footer: "./src/components/Footer.astro",
+        Hero: "./src/components/Hero.astro",
+        PageTitle: "./src/components/PageTitle.astro",
+        ThemeSelect: "./src/components/ThemeSelect.astro",
+      },
       customCss: ["./src/styles/theme.css"],
       sidebar: [
         { label: "Start", items: [{ autogenerate: { directory: "start" } }] },

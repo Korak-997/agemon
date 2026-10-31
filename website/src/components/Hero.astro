@@ -1,0 +1,56 @@
+---
+import siteData from "../generated/site-data.json";
+import { PAGE_TITLE_ID } from "../page-title-id";
+import HeroRoundtrip from "./HeroRoundtrip.astro";
+import InstallBlock from "./InstallBlock.astro";
+
+const { title, hero } = Astro.locals.starlightRoute.entry.data;
+const { releaseTag, version, license, routes } = siteData;
+---
+
+<div class="home-hero">
+  <div class="home-hero-text">
+    <p class="ag-label">{releaseTag ?? `v${version}`} · open source · {license}</p>
+    <h1 id={PAGE_TITLE_ID} class="ag-display">{hero?.title ?? title}</h1>
+    <p class="lead">{hero?.tagline}</p>
+    <InstallBlock />
+    <div class="actions">
+      <a class="ag-button primary" href={routes.gettingStarted}>Get started</a>
+      <a class="ag-button" href="#safety">Read the safety model</a>
+    </div>
+  </div>
+  <HeroRoundtrip />
+</div>
+
+<style>
+  .home-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: 2rem;
+    align-items: center;
+    padding-top: 2rem;
+  }
+
+  .ag-label {
+    margin: 0 0 1.5rem;
+  }
+
+  .lead {
+    max-width: 56ch;
+    margin: 1.5rem 0 2rem;
+    color: var(--ag-text-muted);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  @media (max-width: 56rem) {
+    .home-hero {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

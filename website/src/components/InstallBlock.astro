@@ -1,24 +1,25 @@
 ---
 import siteData from "../generated/site-data.json";
+import { curlInstallCommand, NPM_INSTALL_COMMAND } from "../install-commands";
+import CopyButton from "./CopyButton.astro";
 
-const curlOptions = "--proto '=https' --tlsv1.2 -fsSL";
-const installScriptUrl = new URL("/install.sh", Astro.site).href;
+const SHA256_GROUP_LENGTH = 8;
 
 const methods = [
-  { id: "npm", label: "npm", command: "npm install --global agemon" },
-  {
-    id: "curl",
-    label: "curl",
-    command: `curl ${curlOptions} ${installScriptUrl} | sh`,
-  },
+  { id: "npm", label: "npm", command: NPM_INSTALL_COMMAND },
+  { id: "curl", label: "curl", command: curlInstallCommand(Astro.site) },
 ];
-
-const isReleaseBuild = siteData.installSh.source === "release";
+const { installSh, releaseTag, repository, routes } = siteData;
+const isReleaseBuild = installSh.source === "release";
+const sha256Groups =
+  installSh.sha256.match(new RegExp(`.{${SHA256_GROUP_LENGTH}}`, "gu")) ?? [];
+const releasePage = isReleaseBuild
+  ? `https://github.com/${repository}/releases/tag/${releaseTag}`
+  : `https://github.com/${repository}/releases`;
 ---
 
-<section class="install-block" aria-labelledby="install-heading" data-install-sha256={siteData.installSh.sha256}>
-  <h2 id="install-heading">Install</h2>
-  <div role="tablist" aria-label="Install method">
+<section class="install-block ag-card" aria-label="Install" data-install-sha256={installSh.sha256}>
+  <div class="install-tabs" role="tablist" aria-label="Install method">
     {
       methods.map((method, index) => (
         <button
@@ -36,43 +37,39 @@ const isReleaseBuild = siteData.installSh.source === "release";
   </div>
   {
     methods.map((method, index) => (
-      <div
-        role="tabpanel"
-        id={`install-panel-${method.id}`}
-        aria-labelledby={`install-tab-${method.id}`}
-        hidden={index !== 0}
-      >
+      <div role="tabpanel" id={`install-panel-${method.id}`} aria-labelledby={`install-tab-${method.id}`} hidden={index !== 0}>
         <div class="install-command">
-          <code>{method.command}</code>
-          <button type="button" class="copy-button" data-copy={method.command}>
-            Copy
-          </button>
-          <span class="copy-status" role="status" aria-live="polite"></span>
+          <code><span class="prompt" aria-hidden="true">$ </span>{method.command}</code>
+          <CopyButton text={method.command} label={`Copy the ${method.label} install command`} />
         </div>
+        {method.id === "curl" && (
+          <div class="checksum">
+            <span class:list={["ag-label", { development: !isReleaseBuild }]}>
+              {isReleaseBuild
+                ? `SHA-256 of install.sh (${releaseTag}), in groups of ${SHA256_GROUP_LENGTH}`
+                : `Development build: this checksum is not from a release`}
+            </span>
+            <div class="sha256-groups">
+              {sha256Groups.map((group) => (
+                <span>{group}</span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     ))
   }
-  <p class:list={["checksum", { development: !isReleaseBuild }]}>
-    {
-      isReleaseBuild
-        ? `install.sh (${siteData.releaseTag}) SHA-256: ${siteData.installSh.sha256}`
-        : `Development build — checksum not from a release: ${siteData.installSh.sha256}`
-    }
-  </p>
-  <details>
-    <summary>Verify before running</summary>
-    <p>
-      The checksum above is served by this site. To check the installer independently,
-      download it from the GitHub release, compare it with the release's
-      <code>SHA256SUMS</code> and verify its build attestation, as shown in
-      <a href="/start/getting-started/#install">Getting started</a>.
-    </p>
+  <details class="verify">
+    <summary>Verify it yourself</summary>
+    <ol>
+      <li>Download <code>install.sh</code> from the <a href={releasePage}>release page</a> and keep it unexecuted.</li>
+      <li>Run <code>sha256sum install.sh</code> and compare the output with the groups on the curl tab.</li>
+      <li>Check the release's <code>SHA256SUMS</code> and build attestation as shown in <a href={routes.install}>Getting started</a>, then run it.</li>
+    </ol>
   </details>
 </section>
 
 <script>
-  const COPIED_MESSAGE_MS = 2000;
-
   for (const block of document.querySelectorAll(".install-block")) {
     const tabs = [...block.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
 
@@ -81,9 +78,7 @@ const isReleaseBuild = siteData.installSh.source === "release";
         const isSelected = tab === selected;
         tab.setAttribute("aria-selected", String(isSelected));
         tab.tabIndex = isSelected ? 0 : -1;
-        const panel = block.querySelector<HTMLElement>(
-          `#${tab.getAttribute("aria-controls")}`,
-        );
+        const panel = block.querySelector<HTMLElement>(`#${tab.getAttribute("aria-controls")}`);
         if (panel) panel.hidden = !isSelected;
       }
       selected.focus();
@@ -98,17 +93,103 @@ const isReleaseBuild = siteData.installSh.source === "release";
         selectTab(tabs[(index + step + tabs.length) % tabs.length]);
       });
     }
-
-    for (const button of block.querySelectorAll<HTMLButtonElement>(".copy-button")) {
-      const status = button.nextElementSibling;
-      button.addEventListener("click", async () => {
-        await navigator.clipboard.writeText(button.dataset.copy ?? "");
-        if (!status) return;
-        status.textContent = "Copied";
-        setTimeout(() => {
-          status.textContent = "";
-        }, COPIED_MESSAGE_MS);
-      });
-    }
   }
 </script>
+
+<style>
+  .install-block {
+    max-width: 37.5rem;
+  }
+
+  .install-tabs {
+    display: flex;
+    padding: 0 0.5rem;
+    border-bottom: 1px solid var(--ag-border);
+  }
+
+  [role="tab"] {
+    min-height: 44px;
+    padding: 0 1rem;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--ag-text-muted);
+    font: 0.875rem var(--sl-font-mono);
+    cursor: pointer;
+  }
+
+  [role="tab"][aria-selected="true"] {
+    color: var(--ag-text);
+    border-bottom-color: var(--ag-accent);
+  }
+
+  .install-command {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+
+  .install-command code {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 0;
+    background: none;
+    font: 0.9375rem / 1.6 var(--sl-font-mono);
+    white-space: nowrap;
+  }
+
+  .prompt {
+    color: var(--ag-text-muted);
+  }
+
+  .checksum {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0 1rem 1rem;
+  }
+
+  .checksum .development {
+    color: var(--ag-warning);
+  }
+
+  .sha256-groups {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.5rem;
+    font: 0.8125rem var(--sl-font-mono);
+  }
+
+  .sha256-groups span {
+    padding: 0.125rem 0.5rem;
+    border: 1px solid var(--ag-border);
+    border-radius: 6px;
+    text-align: center;
+  }
+
+  .verify {
+    border-top: 1px solid var(--ag-border);
+  }
+
+  .verify summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 1rem;
+    cursor: pointer;
+    font-size: 0.9375rem;
+  }
+
+  .verify ol {
+    margin: 0;
+    padding: 0 1rem 1rem 2.25rem;
+    color: var(--ag-text-muted);
+    font-size: 0.9375rem;
+  }
+
+  .verify a {
+    color: var(--ag-accent);
+  }
+</style>

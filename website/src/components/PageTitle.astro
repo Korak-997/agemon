@@ -1,0 +1,60 @@
+---
+import { PAGE_TITLE_ID } from "../page-title-id";
+
+const { title, provenance } = Astro.locals.starlightRoute.entry.data;
+---
+
+{provenance && <p class="ag-label provenance">Generated at build time from {provenance.generatedFrom}</p>}
+<h1 id={PAGE_TITLE_ID}>{title}</h1>
+{
+  provenance?.chips && provenance.chips.length > 0 && (
+    <ul class="chips" aria-label="Provenance">
+      {provenance.chips.map(({ label, value }) => (
+        <li class="chip">
+          <span class="ag-label">{label}</span>
+          <span class="chip-value">{value}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+<style>
+  .provenance {
+    margin: 0 0 1rem;
+  }
+
+  h1 {
+    margin-top: 0;
+    font-size: var(--sl-text-h1);
+    line-height: 1.15;
+    font-weight: 600;
+    color: var(--ag-text);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin: 1.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--ag-border);
+    border-radius: 999px;
+    background: var(--ag-surface);
+  }
+
+  .chip-value {
+    font-family: var(--sl-font-mono);
+    font-size: 0.875rem;
+    overflow-wrap: anywhere;
+  }
+</style>

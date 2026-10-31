@@ -1,0 +1,100 @@
+---
+import StarlightFooter from "@astrojs/starlight/components/Footer.astro";
+import siteData from "../generated/site-data.json";
+import Mark from "./Mark.astro";
+
+const { routes, repository, repositoryRef, license } = siteData;
+const repositoryUrl = `https://github.com/${repository}`;
+const columns = [
+  {
+    label: "Docs",
+    links: [
+      { label: "Getting started", href: routes.gettingStarted },
+      { label: "Commands", href: routes.commands },
+      { label: "Configuration", href: routes.configuration },
+      { label: "Skill library", href: routes.skills },
+    ],
+  },
+  {
+    label: "Project",
+    links: [
+      { label: "Security", href: routes.security },
+      { label: "Changelog", href: routes.changelog },
+      { label: "GitHub", href: repositoryUrl },
+    ],
+  },
+  {
+    label: "Community",
+    links: [
+      { label: "Contributing", href: routes.contributing },
+      { label: "Code of conduct", href: routes.codeOfConduct },
+      { label: "Governance", href: routes.governance },
+    ],
+  },
+  {
+    label: "Legal",
+    links: [
+      {
+        label: "License",
+        href: `${repositoryUrl}/blob/${repositoryRef}/LICENSE`,
+      },
+      { label: "Third-party notices", href: routes.skills },
+    ],
+  },
+];
+---
+
+<StarlightFooter />
+<div class="site-footer print:hidden" data-pagefind-ignore>
+  <div class="footer-brand">
+    <Mark size={40} />
+    <span class="mono">agemon</span>
+    <span class="ag-label">{license}</span>
+  </div>
+  {
+    columns.map(({ label, links }) => (
+      <nav aria-label={label} class="footer-column">
+        <span class="ag-label">{label}</span>
+        {links.map((link) => (
+          <a href={link.href}>{link.label}</a>
+        ))}
+      </nav>
+    ))
+  }
+</div>
+
+<style>
+  .site-footer {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
+    gap: 2rem;
+    margin-top: 5rem;
+    padding: 3rem 0;
+    border-top: 1px solid var(--ag-border);
+  }
+
+  .footer-brand,
+  .footer-column {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .footer-column .ag-label {
+    margin-bottom: 0.5rem;
+  }
+
+  .footer-column a {
+    padding: 0.25rem 0;
+    color: var(--ag-text-muted);
+    text-decoration: none;
+  }
+
+  .footer-column a:hover {
+    color: var(--ag-text);
+  }
+
+  .mono {
+    font-family: var(--sl-font-mono);
+  }
+</style>

@@ -37,6 +37,10 @@ const OFF_SITE_STYLE_URL_PATTERN =
   /url\(\s*["']?\s*(?!data:)(?:[a-z][a-z0-9+.-]*:|\/\/)/iu;
 const SVG_ACTIVE_CONTENT_PATTERN =
   /script|xmlns:|<foreignObject|<a[\s>]|<set[\s>]|<animate|\son[a-z]+\s*=|javascript:|@import|&|http-equiv|<meta|<form|<input|<iframe|<embed|<object|<link/iu;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: an ESC byte lets an SVG declared as ISO-2022-JP hide markup from these patterns
+const SVG_ESCAPE_BYTE_PATTERN = /\u001b/u;
+const SVG_NON_UTF8_ENCODING_PATTERN =
+  /<\?xml[^>]*encoding\s*=\s*["'](?!utf-8["'])/iu;
 const SVG_FOREIGN_NAMESPACE_PATTERN =
   /xmlns\s*=\s*["'](?!http:\/\/www\.w3\.org\/2000\/svg["'])/iu;
 const SVG_EXTERNAL_REFERENCE_PATTERN =
@@ -200,6 +204,12 @@ export function applyContentSecurityPolicy(
 
 export function findSvgProblems(svg: string, svgPath: string): string[] {
   const problems: string[] = [];
+  if (SVG_ESCAPE_BYTE_PATTERN.test(svg)) {
+    problems.push(`${svgPath}: contains an ESC byte`);
+  }
+  if (SVG_NON_UTF8_ENCODING_PATTERN.test(svg)) {
+    problems.push(`${svgPath}: declares an encoding other than UTF-8`);
+  }
   const activeContent = SVG_ACTIVE_CONTENT_PATTERN.exec(svg);
   if (activeContent) {
     problems.push(

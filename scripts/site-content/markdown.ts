@@ -30,7 +30,7 @@ export function serializeMarkdown(root: Root): string {
   return toMarkdown(root, { extensions: [gfmToMarkdown()] });
 }
 
-function visit(node: Nodes, onNode: (node: Nodes) => void): void {
+export function visit(node: Nodes, onNode: (node: Nodes) => void): void {
   onNode(node);
   if ("children" in node) {
     for (const child of node.children) visit(child, onNode);

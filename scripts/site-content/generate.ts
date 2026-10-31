@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type { Heading, RootContent } from "mdast";
 import { GITHUB_REPOSITORY } from "../../src/core/github-release.js";
 import type { SkillGroup } from "../../src/plugins/skills/catalog.js";
+import { SiteContentError } from "./error.js";
 import { collectCliHelp, type HelpRunner } from "./help.js";
 import { checksumInstallScript } from "./install-script.js";
 import {
@@ -11,19 +12,39 @@ import {
   headingSlugs,
   type LinkTargets,
   parseMarkdown,
+  plainText,
   rewriteLinks,
+  serializeMarkdown,
   shiftHeadingsToStartAtLevelTwo,
+  visit,
   withoutLeadingTitle,
 } from "./markdown.js";
 import { type GeneratedPage, renderPage } from "./page.js";
-import { skillLibraryPages } from "./skills.js";
+import {
+  SKILL_LIBRARY_ROUTE,
+  skillGroupRoute,
+  skillLibraryPages,
+} from "./skills.js";
 
 const DOCS_DIRECTORY = "src/content/docs";
 const GENERATED_DOCS_DIRECTORIES = ["start", "reference", "skills", "project"];
 const SITE_DATA_PATH = "src/generated/site-data.json";
 const SERVED_INSTALL_SCRIPT_PATH = "public/install.sh";
+const COMMANDS_ROUTE = "/reference/commands/";
+const INSTALL_HEADING = "Install";
+const SKILL_INDEX_PLACES = 10;
+
+type RouteName =
+  | "gettingStarted"
+  | "configuration"
+  | "security"
+  | "contributing"
+  | "codeOfConduct"
+  | "governance"
+  | "changelog";
 
 interface ReadmePage {
+  routeName: RouteName;
   route: string;
   title: string;
   description: string;
@@ -33,13 +54,15 @@ interface ReadmePage {
 
 const README_PAGES: ReadmePage[] = [
   {
+    routeName: "gettingStarted",
     route: "/start/getting-started/",
     title: "Getting started",
     description: "Requirements and the ways to install agemon.",
     sidebarOrder: 1,
-    headings: ["Requirements", "Install"],
+    headings: ["Requirements", INSTALL_HEADING],
   },
   {
+    routeName: "configuration",
     route: "/reference/configuration/",
     title: "Configuration",
     description: "The agemon.toml reference and agemon's exit codes.",
@@ -49,6 +72,7 @@ const README_PAGES: ReadmePage[] = [
 ];
 
 interface FilePage {
+  routeName?: RouteName;
   source: string;
   route: string;
   title: string;
@@ -58,6 +82,7 @@ interface FilePage {
 
 const FILE_PAGES: FilePage[] = [
   {
+    routeName: "security",
     source: "SECURITY.md",
     route: "/project/security/",
     title: "Security",
@@ -65,6 +90,7 @@ const FILE_PAGES: FilePage[] = [
     sidebarOrder: 1,
   },
   {
+    routeName: "contributing",
     source: "CONTRIBUTING.md",
     route: "/project/contributing/",
     title: "Contributing",
@@ -72,25 +98,42 @@ const FILE_PAGES: FilePage[] = [
     sidebarOrder: 2,
   },
   {
+    routeName: "codeOfConduct",
+    source: "CODE_OF_CONDUCT.md",
+    route: "/project/code-of-conduct/",
+    title: "Code of conduct",
+    description: "How the agemon community treats each other.",
+    sidebarOrder: 3,
+  },
+  {
+    routeName: "governance",
+    source: "GOVERNANCE.md",
+    route: "/project/governance/",
+    title: "Governance",
+    description: "Who decides what in agemon, and how.",
+    sidebarOrder: 4,
+  },
+  {
     source: "docs/contributing/adding-a-skill.md",
     route: "/project/adding-a-skill/",
     title: "Adding a skill",
     description: "How to bundle a new skill with agemon.",
-    sidebarOrder: 3,
+    sidebarOrder: 5,
   },
   {
     source: "docs/contributing/writing-a-plugin.md",
     route: "/project/writing-a-plugin/",
     title: "Writing a capability plugin",
     description: "The plugin contract agemon's capabilities implement.",
-    sidebarOrder: 4,
+    sidebarOrder: 6,
   },
   {
+    routeName: "changelog",
     source: "CHANGELOG.md",
     route: "/project/changelog/",
     title: "Changelog",
     description: "What changed in each agemon release.",
-    sidebarOrder: 5,
+    sidebarOrder: 7,
   },
 ];
 
@@ -146,6 +189,7 @@ function readmePages(
       title: page.title,
       description: page.description,
       sidebarOrder: page.sidebarOrder,
+      provenance: { generatedFrom: "README.md" },
       body,
     };
   });
@@ -174,6 +218,7 @@ function filePages(
       title: page.title,
       description: page.description,
       sidebarOrder: page.sidebarOrder,
+      provenance: { generatedFrom: page.source },
       body,
     };
   });
@@ -190,10 +235,11 @@ function commandsPage(runHelp: HelpRunner, version: string): GeneratedPage {
     { type: "code", lang: "text", value: output },
   ];
   return {
-    path: "reference/commands.md",
+    path: pagePathFromRoute(COMMANDS_ROUTE),
     title: "Commands",
     description: "Every agemon command and option, from agemon --help.",
     sidebarOrder: 1,
+    provenance: { generatedFrom: "agemon --help" },
     body: [
       {
         type: "paragraph",
@@ -214,15 +260,79 @@ function commandsPage(runHelp: HelpRunner, version: string): GeneratedPage {
   };
 }
 
+function assertSkillIndexFits(skillGroups: readonly SkillGroup[]): void {
+  if (skillGroups.length !== SKILL_INDEX_PLACES) {
+    throw new SiteContentError(
+      `the home page's skill index has ten places; SKILL_GROUPS has ${skillGroups.length} — update website/src/components/TetractysIndex.astro and the "Ten groups" heading in website/src/content/docs/index.mdx`,
+    );
+  }
+}
+
+function headingAnchor(page: GeneratedPage, headingText: string): string {
+  for (const [heading, slug] of headingSlugs(page.body)) {
+    if (plainText(heading) === headingText) return slug;
+  }
+  throw new SiteContentError(
+    `${page.path} has no "${headingText}" heading to link to`,
+  );
+}
+
+function siteRoutes(pages: readonly GeneratedPage[]): Record<string, string> {
+  const namedPages = [...README_PAGES, ...FILE_PAGES].filter(
+    (page) => page.routeName !== undefined,
+  );
+  const routes: Record<string, string> = Object.fromEntries(
+    namedPages.map((page) => [page.routeName, page.route]),
+  );
+  const gettingStartedPath = pagePathFromRoute(routes.gettingStarted);
+  const gettingStarted = pages.find((page) => page.path === gettingStartedPath);
+  if (gettingStarted === undefined) {
+    throw new SiteContentError(`no generated page at ${gettingStartedPath}`);
+  }
+  return {
+    ...routes,
+    install: `${routes.gettingStarted}#${headingAnchor(gettingStarted, INSTALL_HEADING)}`,
+    commands: COMMANDS_ROUTE,
+    skills: SKILL_LIBRARY_ROUTE,
+  };
+}
+
+function linkUrls(nodes: readonly RootContent[]): Set<string> {
+  const urls = new Set<string>();
+  for (const node of nodes) {
+    visit(node, (child) => {
+      if (child.type === "link") urls.add(child.url);
+    });
+  }
+  return urls;
+}
+
+function assertRendersPublishable(page: GeneratedPage): void {
+  const rendered = parseMarkdown(
+    serializeMarkdown({ type: "root", children: page.body }),
+  ).children;
+  assertPublishable(rendered, page.path);
+  const createdLinks = linkUrls(page.body);
+  const unexpectedLink = [...linkUrls(rendered)].find(
+    (url) => !createdLinks.has(url),
+  );
+  if (unexpectedLink !== undefined) {
+    throw new SiteContentError(
+      `${page.path}: its text would render as a link to ${unexpectedLink}; remove the URL or address from the source text`,
+    );
+  }
+}
+
 function writeFile(path: string, contents: string | Buffer): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, contents);
 }
 
 export function generateSiteContent(options: SiteContentOptions): void {
-  const { version, description } = JSON.parse(
+  assertSkillIndexFits(options.skillGroups);
+  const { version, description, license } = JSON.parse(
     readFileSync(join(options.repositoryRoot, "package.json"), "utf8"),
-  ) as { version: string; description: string };
+  ) as { version: string; description: string; license: string };
   const routeForFile = new Map(
     FILE_PAGES.map((page) => [page.source, page.route]),
   );
@@ -245,6 +355,7 @@ export function generateSiteContent(options: SiteContentOptions): void {
     rmSync(join(docsRoot, directory), { recursive: true, force: true });
   }
   for (const page of pages) {
+    assertRendersPublishable(page);
     writeFile(join(docsRoot, page.path), renderPage(page));
   }
   writeFile(
@@ -252,7 +363,18 @@ export function generateSiteContent(options: SiteContentOptions): void {
     `${JSON.stringify(
       {
         description,
+        version,
+        license,
         repository: GITHUB_REPOSITORY,
+        repositoryRef: options.repositoryRef,
+        routes: siteRoutes(pages),
+        skillGroups: options.skillGroups.map((group) => ({
+          id: group.id,
+          label: group.label,
+          description: group.description,
+          skillCount: group.skills.length,
+          route: skillGroupRoute(group),
+        })),
         releaseTag: options.releaseTag ?? null,
         installSh,
       },
