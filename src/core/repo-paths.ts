@@ -38,9 +38,10 @@ async function resolveRealDirectory(
   repoRoot: string,
   components: string[],
   options: { create: boolean },
+  createdComponents: string[] = [],
 ): Promise<string | null> {
   let current = repoRoot;
-  for (const component of components) {
+  for (const [index, component] of components.entries()) {
     current = join(current, component);
     let stats: Awaited<ReturnType<typeof lstat>>;
     try {
@@ -53,6 +54,7 @@ async function resolveRealDirectory(
         return null;
       }
       await mkdir(current);
+      createdComponents.push(components.slice(0, index + 1).join("/"));
       continue;
     }
     if (!stats.isDirectory()) {
@@ -141,6 +143,20 @@ export async function resolveRepoDirectory(
   options: { create: boolean } = { create: false },
 ): Promise<string | null> {
   return resolveRealDirectory(repoRoot, relativeDirectory.split("/"), options);
+}
+
+export async function ensureRepoDirectory(
+  repoRoot: string,
+  relativeDirectory: string,
+): Promise<string[]> {
+  const createdDirectories: string[] = [];
+  await resolveRealDirectory(
+    repoRoot,
+    relativeDirectory.split("/"),
+    { create: true },
+    createdDirectories,
+  );
+  return createdDirectories;
 }
 
 export async function readRegularFilePrefix(

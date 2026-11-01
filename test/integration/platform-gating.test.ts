@@ -196,6 +196,7 @@ describe("macOS", () => {
         "agents",
         "cli-tool",
         "master-prompt",
+        "workspace",
       ]),
     );
   });

@@ -127,7 +127,11 @@ describe("skills plugin", () => {
     const actionsAfterInstall = context.manifest
       .getActions()
       .filter((action) => action.plugin === "skills");
-    expect(actionsAfterInstall.length).toBe(2);
+    expect(actionsAfterInstall.map((action) => action.type).sort()).toEqual([
+      "generated-skills-lock",
+      "installed-skill",
+      "installed-skill",
+    ]);
     expect(
       actionsAfterInstall.every((action) => action.preExisting === false),
     ).toBe(true);
@@ -208,6 +212,35 @@ describe("skills plugin", () => {
     expect(gitignoreLines).toContain("/skills-lock.json");
   });
 
+  it("records the directories and the .gitignore line it added, and nuke leaves no trace of them", async () => {
+    const context = await createTestContext();
+
+    await applyAllPlanned(skillsPlugin, context);
+
+    expect(
+      context.manifest
+        .getActions()
+        .filter((action) => action.plugin === "workspace")
+        .map((action) => action.resourceId),
+    ).toEqual([
+      "created-directory:.claude",
+      "created-directory:.claude/skills",
+      "gitignore-line:/skills-lock.json",
+    ]);
+
+    await uninstallPlugins({ ...context, yes: true }, [skillsPlugin], {});
+
+    for (const leftover of [
+      ".claude",
+      ".agents",
+      "skills-lock.json",
+      ".gitignore",
+      ".agemon",
+    ]) {
+      expect(existsSync(join(context.cwd, leftover))).toBe(false);
+    }
+  });
+
   it("bounds a skills add failure message to the last 10 lines of stderr", async () => {
     resetFakeSubprocessState();
     const context = await createTestContext();
@@ -276,7 +309,7 @@ describe("skills plugin", () => {
 
     const installedSkillNames = context.manifest
       .getActions()
-      .filter((action) => action.plugin === "skills")
+      .filter((action) => action.type === "installed-skill")
       .map((action) => action.target);
     expect(installedSkillNames.sort()).toEqual(
       findSkillGroup("essentials")
@@ -292,7 +325,7 @@ describe("skills plugin", () => {
 
     const installedSkillNames = context.manifest
       .getActions()
-      .filter((action) => action.plugin === "skills")
+      .filter((action) => action.type === "installed-skill")
       .map((action) => action.target);
     const expectedSkillNames = [
       ...(findSkillGroup("essentials")?.skills ?? []),

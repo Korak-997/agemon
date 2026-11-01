@@ -65,29 +65,51 @@ describe("runFakeSubprocess", () => {
     expect(result.code).toBe(1);
   });
 
-  it("copies an added skill into .claude/skills like the real CLI, and removes only that copy", async () => {
+  it("copies an added skill into .claude/skills like the real CLI, and records it in skills-lock.json", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "agemon-fake-skills-"));
     const source = await mkdtemp(join(tmpdir(), "agemon-fake-source-"));
+    const otherSource = await mkdtemp(join(tmpdir(), "agemon-fake-source-"));
     await writeFile(join(source, "SKILL.md"), "---\nname: x\n---\n");
     await writeFile(join(source, "metadata.json"), "{}");
     await mkdir(join(source, "__pycache__"));
-    await mkdir(join(cwd, ".agents/skills/x"), { recursive: true });
-    await writeFile(join(cwd, ".agents/skills/x/marker"), "user");
+    await writeFile(join(otherSource, "SKILL.md"), "---\nname: a\n---\n");
     const cli = (...args: string[]) =>
       runFakeSubprocess(process.execPath, [PINNED_SKILLS_CLI, ...args], {
         cwd,
       });
 
     cli("add", source, "--skill", "x", "--agent", "claude-code", "--yes");
+    cli("add", otherSource, "--skill", "a", "--agent", "claude-code", "--yes");
     const afterAdd = JSON.parse(cli("list", "--json").stdout);
     const copied = await readdir(join(cwd, ".claude/skills/x"));
+    const lock = await readFile(join(cwd, "skills-lock.json"), "utf8");
+
+    expect(afterAdd).toMatchObject([{ name: "a" }, { name: "x" }]);
+    expect(copied).toEqual(["SKILL.md"]);
+    expect(lock.endsWith("}\n")).toBe(true);
+    expect(JSON.parse(lock)).toMatchObject({ version: 1 });
+    expect(Object.keys(JSON.parse(lock).skills)).toEqual(["a", "x"]);
+  });
+
+  it("removes like the real CLI: the copy, .agents/skills/<name> and the lock key, keeping the lock file", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agemon-fake-skills-"));
+    const source = await mkdtemp(join(tmpdir(), "agemon-fake-source-"));
+    await writeFile(join(source, "SKILL.md"), "---\nname: x\n---\n");
+    await mkdir(join(cwd, ".agents/skills/x"), { recursive: true });
+    await writeFile(join(cwd, ".agents/skills/x/marker"), "user");
+    const cli = (...args: string[]) =>
+      runFakeSubprocess(process.execPath, [PINNED_SKILLS_CLI, ...args], {
+        cwd,
+      });
+    cli("add", source, "--skill", "x", "--agent", "claude-code", "--yes");
+
     cli("remove", "x", "--agent", "claude-code", "--yes");
 
-    expect(afterAdd).toMatchObject([{ name: "x" }]);
-    expect(copied).toEqual(["SKILL.md"]);
     expect(existsSync(join(cwd, ".claude/skills/x"))).toBe(false);
-    expect(existsSync(join(cwd, ".agents/skills/x/marker"))).toBe(true);
-    expect(existsSync(join(cwd, "skills-lock.json"))).toBe(false);
+    expect(existsSync(join(cwd, ".agents/skills/x"))).toBe(false);
+    expect(
+      JSON.parse(await readFile(join(cwd, "skills-lock.json"), "utf8")),
+    ).toEqual({ version: 1, skills: {} });
   });
 
   it("replaces a symlinked or edited copy and lists skills found under .agents/skills too", async () => {

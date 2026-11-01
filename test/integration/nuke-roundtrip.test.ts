@@ -184,15 +184,87 @@ describe("nuke roundtrip", () => {
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
-  it("creates .gitignore with /.agemon/ when the repo has none and the user accepts", async () => {
+  it("no-gitignore fixture: nuke deletes the .gitignore agemon created and restores the repo byte-identically", async () => {
     const { beforeSnapshot, afterSnapshot } =
       await runRoundtripFixture("no-gitignore");
 
     expect(beforeSnapshot.has("repo/.gitignore")).toBe(false);
-    expect(afterSnapshot.has("repo/.gitignore")).toBe(true);
-    expect(afterSnapshot.get("repo/README.md")).toBe(
-      beforeSnapshot.get("repo/README.md"),
-    );
+    expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
+  });
+
+  it("clean-repo with skills: nuke leaves no .agents, .claude or skills-lock.json", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      expect(await runCli(["--yes"])).toBe(0);
+      expect(existsSync(join(repoDirectory, ".claude/skills"))).toBe(true);
+      expect(existsSync(join(repoDirectory, "skills-lock.json"))).toBe(true);
+      expect(await readFile(join(repoDirectory, ".gitignore"), "utf8")).toBe(
+        "/.agemon/\n/skills-lock.json\n",
+      );
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+
+      for (const leftover of [
+        ".claude/skills",
+        ".claude",
+        ".agents",
+        "skills-lock.json",
+        ".agemon",
+      ]) {
+        expect(existsSync(join(repoDirectory, leftover))).toBe(false);
+      }
+      expect(await readFile(join(repoDirectory, ".gitignore"), "utf8")).toBe(
+        "/.agemon/\n",
+      );
+    });
+  });
+
+  it("nuke --only agents removes the empty .claude/agents agemon created and keeps .claude while skills remain", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      expect(
+        await runCli(["--yes", "--skill-groups", "essentials,geo-seo"]),
+      ).toBe(0);
+      expect(existsSync(join(repoDirectory, ".claude/agents"))).toBe(true);
+
+      expect(await runCli(["nuke", "--yes", "--only", "agents"])).toBe(0);
+
+      expect(existsSync(join(repoDirectory, ".claude/agents"))).toBe(false);
+      expect(existsSync(join(repoDirectory, ".claude/skills"))).toBe(true);
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+      expect(existsSync(join(repoDirectory, ".claude"))).toBe(false);
+    });
+  });
+
+  it("nuke --dry-run prints the footprint decisions and changes nothing", async () => {
+    await withFixtureRepo("no-gitignore", async (repoDirectory) => {
+      expect(await runCli(["--yes"])).toBe(0);
+      const before = await snapshotTree(repoDirectory);
+
+      const printed: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        printed.push(args.map(String).join(" "));
+      };
+      try {
+        expect(await runCli(["nuke", "--dry-run"])).toBe(0);
+      } finally {
+        console.log = originalLog;
+      }
+
+      expect(diffSnapshots(before, await snapshotTree(repoDirectory))).toEqual(
+        [],
+      );
+      const output = printed.join("\n");
+      expect(output).toContain(
+        "Would remove empty directories agemon created: .claude/skills, .claude",
+      );
+      expect(output).toContain(
+        "Would remove from .gitignore: /skills-lock.json, /.agemon/ (added by agemon)",
+      );
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+      expect(existsSync(join(repoDirectory, ".gitignore"))).toBe(false);
+    });
   });
 
   it("removes the graph and the pipx install that agemon created", async () => {

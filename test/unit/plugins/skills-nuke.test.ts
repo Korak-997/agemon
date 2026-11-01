@@ -24,7 +24,7 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 import { resolvePinnedSkillsSourceDirectory } from "../../../src/plugins/skills/pinned-source.js";
 import { fingerprintInstalledSkill } from "../../../src/plugins/skills/skill-tree.js";
-import { assertSkillsCliTargetsStayInRepo } from "../../../src/plugins/skills/skills-cli-targets.js";
+import { prepareSkillsCliTargets } from "../../../src/plugins/skills/skills-cli-targets.js";
 import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
@@ -700,25 +700,27 @@ describe("nuke and recorded install fingerprints of custom groups", () => {
 });
 
 describe("skills CLI target checks", () => {
-  it("checking targets for an add creates .claude/skills but never .agents/skills", async () => {
+  it("checking targets for an add creates .claude/skills but never .agents/skills, and returns what it created", async () => {
     const ctx = await createTestContext();
 
-    await assertSkillsCliTargetsStayInRepo(ctx.cwd, [COMMIT], {
-      create: true,
-    });
+    await expect(prepareSkillsCliTargets(ctx.cwd, [COMMIT])).resolves.toEqual([
+      ".claude",
+      ".claude/skills",
+    ]);
 
     expect(existsSync(join(ctx.cwd, ".claude/skills"))).toBe(true);
     expect(existsSync(join(ctx.cwd, ".agents"))).toBe(false);
   });
 
-  it("a symlinked .agents/skills/<name> still refuses an add", async () => {
+  it("a symlinked .agents/skills/<name> still refuses an add, before creating anything", async () => {
     const ctx = await createTestContext();
     await mkdir(join(ctx.cwd, ".agents/skills"), { recursive: true });
     await symlink(tmpdir(), join(ctx.cwd, ".agents/skills", COMMIT));
 
-    await expect(
-      assertSkillsCliTargetsStayInRepo(ctx.cwd, [COMMIT], { create: true }),
-    ).rejects.toThrow("is a symlink");
+    await expect(prepareSkillsCliTargets(ctx.cwd, [COMMIT])).rejects.toThrow(
+      "is a symlink",
+    );
+    expect(existsSync(join(ctx.cwd, ".claude"))).toBe(false);
   });
 });
 

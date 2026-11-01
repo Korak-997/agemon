@@ -2,7 +2,10 @@ import { lstat, rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { isPlainSkillName } from "../../core/config.js";
 import { RefusedPathError } from "../../core/files.js";
-import { resolveRepoDirectory } from "../../core/repo-paths.js";
+import {
+  ensureRepoDirectory,
+  resolveRepoDirectory,
+} from "../../core/repo-paths.js";
 import { printable } from "../../core/untrusted-text.js";
 
 export const CANONICAL_SKILLS_DIRECTORY = ".agents/skills";
@@ -36,19 +39,16 @@ function assertPlainSkillName(skillName: string): void {
   }
 }
 
-export async function assertSkillsCliTargetsStayInRepo(
+export async function prepareSkillsCliTargets(
   repoRoot: string,
   skillNames: string[],
-  options: { create: boolean },
-): Promise<void> {
+): Promise<string[]> {
   skillNames.forEach(assertPlainSkillName);
   const canonicalDirectory = await resolveRepoDirectory(
     repoRoot,
     CANONICAL_SKILLS_DIRECTORY,
     { create: false },
   );
-  await resolveRepoDirectory(repoRoot, CLAUDE_SKILLS_DIRECTORY, options);
-
   if (canonicalDirectory !== null) {
     for (const skillName of skillNames) {
       const stats = await lstatIfPresent(join(canonicalDirectory, skillName));
@@ -62,6 +62,7 @@ export async function assertSkillsCliTargetsStayInRepo(
   if (lockStats !== null && !lockStats.isFile()) {
     refuse(SKILLS_LOCK_FILE, "is a symlink or not a regular file");
   }
+  return ensureRepoDirectory(repoRoot, CLAUDE_SKILLS_DIRECTORY);
 }
 
 export async function removeInstalledSkillCopy(

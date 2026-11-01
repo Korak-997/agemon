@@ -15,6 +15,10 @@ import {
 } from "./rollback.js";
 import { checkAgemonStateDirectoryBeforeRun } from "./state-root.js";
 import { printable } from "./untrusted-text.js";
+import {
+  describeDirectoryRemoval,
+  isCreatedDirectoryEntry,
+} from "./workspace-footprint.js";
 
 export const RECOVER_LIMIT_NOTE =
   "Work a capability had started but not yet recorded when the apply was interrupted is not undone. Check 'agemon status' for tools the interrupted apply may have installed.";
@@ -64,7 +68,7 @@ function buildRecoverySteps(
       .filter(({ state }) => state === "changed-since")
       .map(({ snapshot }) => snapshot.targetPath),
   );
-  const { toRevertByCapability, kept } = partitionNewEntries(
+  const { toRevertByCapability, kept, workspace } = partitionNewEntries(
     ctx.manifest.getActions(),
     journal,
     pluginById,
@@ -75,7 +79,16 @@ function buildRecoverySteps(
       `revert ${capabilityId}: ${entries.map((entry) => printable(entry.target)).join(", ")}`,
     );
   }
-  const ledgerAfterRecovery = [...journal.ledgerBefore, ...kept];
+  steps.push(
+    ...describeDirectoryRemoval(
+      workspace.filter((entry) => ctx.manifest.isConfirmed(entry)),
+    ),
+  );
+  const ledgerAfterRecovery = [
+    ...journal.ledgerBefore,
+    ...kept,
+    ...workspace.filter((entry) => !isCreatedDirectoryEntry(entry)),
+  ];
   if (
     JSON.stringify(ctx.manifest.getActions()) !==
     JSON.stringify(ledgerAfterRecovery)

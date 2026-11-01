@@ -14,6 +14,7 @@ import {
 } from "./machine-ledger.js";
 import { resolveStateDirectory } from "./repo-paths.js";
 import { isSafeIdentifier, printable } from "./untrusted-text.js";
+import { isWorkspaceEntry } from "./workspace-footprint.js";
 
 const MANIFEST_RELATIVE_PATH = ".agemon/state.json";
 const LEDGER_VERSION = 3;
@@ -576,6 +577,10 @@ export class StateManifest {
 
   hasActions(): boolean {
     return this.state.actions.length > 0;
+  }
+
+  hasCapabilityActions(): boolean {
+    return this.state.actions.some((action) => !isWorkspaceEntry(action));
   }
 
   hasActionForPlugin(plugin: string): boolean {

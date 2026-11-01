@@ -176,3 +176,38 @@ describe("ensureGitignoreEntry", () => {
     );
   });
 });
+
+describe("what the .gitignore writers report", () => {
+  it("reports whether a line was added, whether the file existed and its previous contents", async () => {
+    const cwd = await createSandbox();
+    await writeFile(join(cwd, ".gitignore"), "dist", "utf8");
+
+    const agemonLine = await writeAgemonGitignoreEntry(cwd);
+    const agemonLineAgain = await writeAgemonGitignoreEntry(cwd);
+    const lockLine = await ensureGitignoreEntry(cwd, "/skills-lock.json");
+    const lockLineAgain = await ensureGitignoreEntry(cwd, "skills-lock.json");
+
+    expect(agemonLine).toEqual({
+      added: true,
+      existedBefore: true,
+      contentsBefore: "dist",
+    });
+    expect(agemonLineAgain.added).toBe(false);
+    expect(lockLine).toEqual({
+      added: true,
+      existedBefore: true,
+      contentsBefore: "dist\n/.agemon/\n",
+    });
+    expect(lockLineAgain.added).toBe(false);
+  });
+
+  it("reports a .gitignore it created", async () => {
+    const cwd = await createSandbox();
+
+    await expect(writeAgemonGitignoreEntry(cwd)).resolves.toEqual({
+      added: true,
+      existedBefore: false,
+      contentsBefore: null,
+    });
+  });
+});

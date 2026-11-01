@@ -18,7 +18,10 @@ import type { Context } from "./context.js";
 import { errorMessage } from "./error-message.js";
 import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
 import { fingerprintContent, sha256Hex } from "./fingerprint.js";
-import { writeAgemonGitignoreEntry } from "./gitignore.js";
+import {
+  AGEMON_GITIGNORE_ENTRY,
+  writeAgemonGitignoreEntry,
+} from "./gitignore.js";
 import {
   type ExitProcess,
   type InterruptionWatch,
@@ -29,6 +32,7 @@ import { PLAN_SEGMENTS, type Plan, writePlan } from "./plan-store.js";
 import { resolveInsideRepo, resolveStateDirectory } from "./repo-paths.js";
 import { rollBackApply } from "./rollback.js";
 import { printable } from "./untrusted-text.js";
+import { recordGitignoreLine } from "./workspace-footprint.js";
 
 export const FILE_TARGETING_ACTIONS: ReadonlySet<ProposedOperation["action"]> =
   new Set(["create", "replace", "merge-block", "merge-key", "adopt"]);
@@ -200,7 +204,11 @@ async function enforceWorkspaceIsolation(
     return;
   }
   if (input.workspaceIsolationApproved === true) {
-    await writeAgemonGitignoreEntry(ctx.cwd);
+    await recordGitignoreLine(
+      ctx,
+      AGEMON_GITIGNORE_ENTRY,
+      await writeAgemonGitignoreEntry(ctx.cwd),
+    );
     return;
   }
   throw new Error(

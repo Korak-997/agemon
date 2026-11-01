@@ -1,4 +1,4 @@
-import { opendir, readFile, rmdir } from "node:fs/promises";
+import { opendir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import {
   immutableBackupCandidates,
@@ -17,6 +17,7 @@ import {
 import { fingerprintContent } from "../../core/fingerprint.js";
 import { revertManagedFile } from "../../core/managed-file-revert.js";
 import {
+  ensureRepoDirectory,
   readRegularFilePrefix,
   resolveInsideRepo,
   resolveRepoDirectory,
@@ -24,6 +25,7 @@ import {
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { renderUnifiedDiff } from "../../core/text-diff.js";
 import { isSafeIdentifier, printable } from "../../core/untrusted-text.js";
+import { recordCreatedDirectories } from "../../core/workspace-footprint.js";
 import { describeOperation } from "../proposed-operation.js";
 import {
   type AgentDefinition,
@@ -334,7 +336,10 @@ async function writeAgentFile(
   contentsAfter: string,
 ): Promise<{ skipReason: string } | null> {
   const target = operation.targetPath;
-  await resolveRepoDirectory(ctx.cwd, AGENTS_DIRECTORY, { create: true });
+  await recordCreatedDirectories(
+    ctx,
+    await ensureRepoDirectory(ctx.cwd, AGENTS_DIRECTORY),
+  );
   const targetPath = await resolveInsideRepo(ctx.cwd, target);
   const contentsBefore = await readRegularFileIfExists(targetPath);
   const recorded = ledgerEntryForTarget(ctx, target);
@@ -836,19 +841,6 @@ function revertableManagedEntries(
   return revertable;
 }
 
-export async function removeEmptyAgentsDirectory(cwd: string): Promise<void> {
-  try {
-    const directory = await resolveRepoDirectory(cwd, AGENTS_DIRECTORY, {
-      create: false,
-    });
-    if (directory !== null) {
-      await rmdir(directory);
-    }
-  } catch {
-    // Best effort: a non-empty, missing, refused or busy directory stays as it is.
-  }
-}
-
 async function revertAgents(
   ctx: Context,
   entries: LedgerEntry[],
@@ -864,7 +856,6 @@ async function revertAgents(
 
   const failures: string[] = [];
   const revertedEntryIds: string[] = [];
-  let createdFileReverted = false;
   for (const { entry, resourceId } of managedEntries) {
     try {
       await revertManagedFile(ctx, entry, {
@@ -875,15 +866,11 @@ async function revertAgents(
         ),
       });
       revertedEntryIds.push(entry.id);
-      createdFileReverted ||= !entry.preExisting;
     } catch (error) {
       failures.push(
         `${printable(entry.target)}: ${printable(error instanceof Error ? error.message : String(error))}`,
       );
     }
-  }
-  if (createdFileReverted) {
-    await removeEmptyAgentsDirectory(ctx.cwd);
   }
   if (failures.length > 0) {
     throw new AgentFileRevertError(failures, revertedEntryIds);

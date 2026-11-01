@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -20,10 +21,16 @@ import {
   fingerprintContent,
   sha256Hex,
 } from "../../../src/core/fingerprint.js";
+import { ensureGitignoreEntry } from "../../../src/core/gitignore.js";
 import { ApplyInterruptedError } from "../../../src/core/interruption.js";
 import { buildPlan } from "../../../src/core/orchestrator.js";
 import type { Plan } from "../../../src/core/plan-store.js";
+import { ensureRepoDirectory } from "../../../src/core/repo-paths.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
+import {
+  recordCreatedDirectories,
+  recordGitignoreLine,
+} from "../../../src/core/workspace-footprint.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import type {
@@ -233,6 +240,91 @@ describe("applyPlan workspace isolation", () => {
     await expect(readFile(join(ctx.cwd, ".gitignore"), "utf8")).resolves.toBe(
       ".agemon\n!.agemon\n/.agemon/\n",
     );
+  });
+
+  it("records the /.agemon/ line it added, and a rollback keeps the record with the line", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation();
+    const failing: AgemonPlugin = {
+      ...createFilePlugin({ id: "cap", onInstall: async () => {} }),
+      async install() {
+        throw new Error("cap blew up");
+      },
+    };
+
+    await expect(
+      applyPlan(ctx, [failing], {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: true,
+        isolationStatus: "no-gitignore-file",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(/blew up/);
+
+    await expect(readFile(join(ctx.cwd, ".gitignore"), "utf8")).resolves.toBe(
+      "/.agemon/\n",
+    );
+    expect(
+      ctx.manifest
+        .getActions()
+        .map(({ plugin, type, resourceId, preExisting }) => ({
+          plugin,
+          type,
+          resourceId,
+          preExisting,
+        })),
+    ).toEqual([
+      {
+        plugin: "workspace",
+        type: "gitignore-line",
+        resourceId: "gitignore-line:/.agemon/",
+        preExisting: false,
+      },
+    ]);
+  });
+
+  it("rolls back the empty directories a capability created in the run, and keeps a .gitignore line it added", async () => {
+    const ctx = await createSandboxContext();
+    await mkdir(join(ctx.cwd, ".claude"));
+    const op = operation();
+    const creating: AgemonPlugin = {
+      ...createFilePlugin({ id: "cap", onInstall: async () => {} }),
+      async install(pluginCtx) {
+        await recordCreatedDirectories(
+          pluginCtx,
+          await ensureRepoDirectory(pluginCtx.cwd, ".claude/skills"),
+        );
+        await recordCreatedDirectories(
+          pluginCtx,
+          await ensureRepoDirectory(pluginCtx.cwd, ".claude/agents"),
+        );
+        await writeFile(join(pluginCtx.cwd, ".claude/agents/mine.md"), "x");
+        await recordGitignoreLine(
+          pluginCtx,
+          "/skills-lock.json",
+          await ensureGitignoreEntry(pluginCtx.cwd, "/skills-lock.json"),
+        );
+        throw new Error("cap blew up");
+      },
+    };
+
+    await expect(
+      applyPlan(ctx, [creating], {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    ).rejects.toThrow(/blew up/);
+
+    expect(existsSync(join(ctx.cwd, ".claude/skills"))).toBe(false);
+    expect(existsSync(join(ctx.cwd, ".claude/agents/mine.md"))).toBe(true);
+    expect(ctx.manifest.getActions().map((entry) => entry.resourceId)).toEqual([
+      "created-directory:.claude/agents",
+      "gitignore-line:/skills-lock.json",
+    ]);
   });
 
   it("prints a failing tool's escape sequences as ? in the rollback line", async () => {

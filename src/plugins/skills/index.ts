@@ -5,11 +5,18 @@ import { CUSTOM_SKILL_GROUP_RESOURCE_PREFIX } from "../../core/consent.js";
 import type { Context } from "../../core/context.js";
 import { RefusedPathError, readRegularFileIfExists } from "../../core/files.js";
 import { fingerprintJson } from "../../core/fingerprint.js";
-import { ensureGitignoreEntry } from "../../core/gitignore.js";
+import {
+  ensureGitignoreEntry,
+  SKILLS_LOCK_GITIGNORE_ENTRY,
+} from "../../core/gitignore.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { withAgemonStateLock } from "../../core/state-root.js";
 import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
 import { printable } from "../../core/untrusted-text.js";
+import {
+  recordCreatedDirectories,
+  recordGitignoreLine,
+} from "../../core/workspace-footprint.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
@@ -70,9 +77,9 @@ import {
 } from "./skill-revisions.js";
 import { runSkillsCli } from "./skills-cli.js";
 import {
-  assertSkillsCliTargetsStayInRepo,
   CANONICAL_SKILLS_DIRECTORY,
   CLAUDE_SKILLS_DIRECTORY,
+  prepareSkillsCliTargets,
   removeInstalledSkillCopy,
   SKILLS_LOCK_FILE,
 } from "./skills-cli-targets.js";
@@ -84,7 +91,6 @@ const ACTION_TYPE_OFFERED_SKILL_GROUP = "offered-skill-group";
 const BUILT_IN_SOURCE_DESCRIPTION = "bundled with agemon";
 const DECLINED_GROUP_PREVIEW = "declined — agemon will not offer it again";
 const SKILL_MANIFEST_PATH = "SKILL.md";
-const SKILLS_LOCK_GITIGNORE_ENTRY = "/skills-lock.json";
 const ORPHANED_SKILLS_RESOURCE_ID = "skill-groups:orphaned";
 const UPDATE_PREVIEW_NOTE = " — update (bundled content changed)";
 
@@ -814,10 +820,12 @@ async function updateSkills(
   }
   const entriesToUpdate = plannedUpdates.map(({ entry }) => entry);
   await fetchPinnedSources(ctx, entriesToUpdate);
-  await assertSkillsCliTargetsStayInRepo(
-    ctx.cwd,
-    entriesToUpdate.map((entry) => entry.skillName),
-    { create: true },
+  await recordCreatedDirectories(
+    ctx,
+    await prepareSkillsCliTargets(
+      ctx.cwd,
+      entriesToUpdate.map((entry) => entry.skillName),
+    ),
   );
   for (const plannedUpdate of plannedUpdates) {
     const { entry } = plannedUpdate;
@@ -863,10 +871,12 @@ async function addSkills(
   await assertFetchedSkillNames(
     entriesToAdd.filter((entry) => customSkillNames(ctx).has(entry.skillName)),
   );
-  await assertSkillsCliTargetsStayInRepo(
-    ctx.cwd,
-    entriesToAdd.map((entry) => entry.skillName),
-    { create: true },
+  await recordCreatedDirectories(
+    ctx,
+    await prepareSkillsCliTargets(
+      ctx.cwd,
+      entriesToAdd.map((entry) => entry.skillName),
+    ),
   );
   for (const entry of entriesToAdd) {
     const addResult = await runSkillsCli(
@@ -974,7 +984,11 @@ async function installGroups(
       target: SKILLS_LOCK_FILE,
       preExisting: false,
     });
-    await ensureGitignoreEntry(ctx.cwd, SKILLS_LOCK_GITIGNORE_ENTRY);
+    await recordGitignoreLine(
+      ctx,
+      SKILLS_LOCK_GITIGNORE_ENTRY,
+      await ensureGitignoreEntry(ctx.cwd, SKILLS_LOCK_GITIGNORE_ENTRY),
+    );
   }
 }
 

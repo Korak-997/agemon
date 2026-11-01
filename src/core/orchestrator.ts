@@ -29,6 +29,12 @@ import { checkAgemonStateDirectoryBeforeRun } from "./state-root.js";
 import { MAX_RAW_OUTPUT_LINE_CHARACTERS } from "./subprocess-runner.js";
 import { skipUnapprovableGitConfigOperations } from "./untrusted-git-config.js";
 import { printable } from "./untrusted-text.js";
+import {
+  describeFootprintRemoval,
+  isWorkspaceEntry,
+  removeRecordedEmptyDirectories,
+  removeWorkspaceFootprint,
+} from "./workspace-footprint.js";
 
 type ConflictDecisionMap = Record<string, "keep" | "replace" | "skip">;
 
@@ -646,7 +652,23 @@ function reasonToKeep(
 }
 
 function pluginsWithLedgerEntries(ctx: Context): Set<string> {
-  return new Set(ctx.manifest.getActions().map((action) => action.plugin));
+  return new Set(
+    ctx.manifest
+      .getActions()
+      .filter((action) => !isWorkspaceEntry(action))
+      .map((action) => action.plugin),
+  );
+}
+
+function removesLastCapability(
+  remainingIds: ReadonlySet<string>,
+  installedBefore: ReadonlySet<string>,
+  hasSelectionFilter: boolean,
+): boolean {
+  return (
+    remainingIds.size === 0 &&
+    (!hasSelectionFilter || remainingIds.size < installedBefore.size)
+  );
 }
 
 class PreviewPromptError extends Error {}
@@ -739,14 +761,15 @@ async function describeReversal(
     lines.push(`${plugin.id}:`, ...planned.map((line) => `  ${line}`));
     remainingIds.delete(plugin.id);
   }
-  const removesEntries = remainingIds.size < installedBefore.size;
-  if (
-    remainingIds.size === 0 &&
-    (!hasSelectionFilter || removesEntries) &&
-    (await fileExists(resolveConfigPath(ctx.cwd)))
-  ) {
+  const lastCapabilityGoes = removesLastCapability(
+    remainingIds,
+    installedBefore,
+    hasSelectionFilter,
+  );
+  if (lastCapabilityGoes && (await fileExists(resolveConfigPath(ctx.cwd)))) {
     lines.push("agemon.toml (deleted)");
   }
+  lines.push(...describeFootprintRemoval(ctx, lastCapabilityGoes));
   return lines;
 }
 
@@ -787,7 +810,8 @@ export async function uninstallPlugins(
 
   const hasSelectionFilter =
     options.only !== undefined || (options.skipIds ?? []).length > 0;
-  const installedIds = pluginsWithLedgerEntries(ctx);
+  const installedBefore = pluginsWithLedgerEntries(ctx);
+  const installedIds = new Set(installedBefore);
   if (!ctx.dryRun && !ctx.yes) {
     const reversal = await describeReversal(
       ctx,
@@ -835,16 +859,24 @@ export async function uninstallPlugins(
   }
 
   if (ctx.dryRun) {
+    const lastCapabilityGoes =
+      failures.length === 0 &&
+      removesLastCapability(installedIds, installedBefore, hasSelectionFilter);
+    for (const line of describeFootprintRemoval(ctx, lastCapabilityGoes)) {
+      ctx.ui.info(`Would ${line}`);
+    }
     return "previewed";
   }
 
   const removedEntries = ctx.manifest.getActions().length < entriesBefore;
+  await removeRecordedEmptyDirectories(ctx);
   if (
     failures.length === 0 &&
-    !ctx.manifest.hasActions() &&
+    !ctx.manifest.hasCapabilityActions() &&
     (!hasSelectionFilter || removedEntries)
   ) {
     await removeDesiredStateConfig(ctx);
+    await removeWorkspaceFootprint(ctx);
   }
   await ctx.manifest.pruneIfEmpty();
 

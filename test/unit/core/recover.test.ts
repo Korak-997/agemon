@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -20,12 +21,18 @@ import {
 } from "../../../src/core/apply-journal.js";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
+import { ensureGitignoreEntry } from "../../../src/core/gitignore.js";
 import { buildPlan } from "../../../src/core/orchestrator.js";
 import {
   RECOVER_LIMIT_NOTE,
   recoverInterruptedApply,
 } from "../../../src/core/recover.js";
+import { ensureRepoDirectory } from "../../../src/core/repo-paths.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
+import {
+  recordCreatedDirectories,
+  recordGitignoreLine,
+} from "../../../src/core/workspace-footprint.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import type {
@@ -33,6 +40,7 @@ import type {
   ProposedOperation,
 } from "../../../src/plugins/types.js";
 import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const PLAN_ID = "0123456789abcdef";
@@ -239,6 +247,58 @@ describe("agemon recover", () => {
     expect(output.at(-1)).toBe(
       `Recovered the interrupted apply of plan ${PLAN_ID}.`,
     );
+  });
+
+  it("removes the empty .claude/skills a killed apply created, and keeps the gitignore-line entry", async () => {
+    const { ctx, output } = await createHarness();
+    await simulateKilledApply(ctx, { capabilityOrder: ["cli-tool"] });
+    ctx.manifest.setRecordingPlanId(PLAN_ID);
+    await recordCreatedDirectories(
+      ctx,
+      await ensureRepoDirectory(ctx.cwd, ".claude/skills"),
+    );
+    await recordGitignoreLine(
+      ctx,
+      "/skills-lock.json",
+      await ensureGitignoreEntry(ctx.cwd, "/skills-lock.json"),
+    );
+    await recordInstalledTool(ctx, "agnix");
+
+    await recoverInterruptedApply(ctx, [revertingPlugin("cli-tool")], {
+      dryRun: false,
+    });
+
+    expect(existsSync(join(ctx.cwd, ".claude"))).toBe(false);
+    expect(ctx.manifest.getActions().map((entry) => entry.resourceId)).toEqual([
+      "gitignore-line:/skills-lock.json",
+    ]);
+    expect(output.join("\n")).toContain(
+      "  - remove empty directories agemon created: .claude/skills, .claude",
+    );
+    await expect(readJournals(ctx.cwd)).resolves.toEqual([]);
+  });
+
+  it("never sweeps a directory named only by an unconfirmed entry of the run", async () => {
+    const { ctx } = await createHarness();
+    await simulateKilledApply(ctx, { capabilityOrder: ["cli-tool"] });
+    await mkdir(join(ctx.cwd, ".claude"));
+    await appendLedgerClaims(ctx, [
+      {
+        plugin: "workspace",
+        type: "created-directory",
+        target: ".claude",
+        resourceId: "created-directory:.claude",
+        preExisting: false,
+        planId: PLAN_ID,
+      },
+    ]);
+    await recordInstalledTool(ctx, "agnix");
+
+    await recoverInterruptedApply(ctx, [revertingPlugin("cli-tool")], {
+      dryRun: false,
+    });
+
+    expect(existsSync(join(ctx.cwd, ".claude"))).toBe(true);
   });
 
   it("says there is nothing to recover when no journal exists", async () => {

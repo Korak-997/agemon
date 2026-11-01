@@ -10,7 +10,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { resolveHomeDirectory } from "../platform/home.js";
 import {
   AGNIX_VERSION,
@@ -25,12 +25,14 @@ import { SKILLS_CLI_PATH_IN_TOOLS_DIR } from "../plugins/skills/skills-cli.js";
 import {
   CANONICAL_SKILLS_DIRECTORY,
   CLAUDE_SKILLS_DIRECTORY,
+  SKILLS_LOCK_FILE,
 } from "../plugins/skills/skills-cli-targets.js";
 import { isPlainSkillName } from "./config.js";
 import {
   FAKE_PINNED_SKILL_MANIFEST_FILE,
   fakePinnedSkillManifest,
 } from "./fake-pinned-skills.js";
+import { sha256Hex } from "./fingerprint.js";
 import { resolveStateRoot } from "./state-root.js";
 import type { SubprocessResult } from "./subprocess-runner.js";
 import type {
@@ -40,6 +42,7 @@ import type {
 
 const FAKE_CRG_ON_PATH = "/fake/bin/code-review-graph";
 const PINNED_SKILLS_CLI_SUFFIX = `/${SKILLS_CLI_PATH_IN_TOOLS_DIR}`;
+const FAKE_LOCK_VERSION = 1;
 
 function formatCommand(command: string, args: string[]): string {
   return [command, ...args].join(" ");
@@ -220,6 +223,44 @@ function copyLikeSkillsCli(source: string, destination: string): void {
   });
 }
 
+function readFakeLockSkills(cwd: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(join(cwd, SKILLS_LOCK_FILE), "utf8"),
+    );
+    return parsed.version === FAKE_LOCK_VERSION && parsed.skills
+      ? parsed.skills
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeFakeLockLikeSkillsCli(
+  cwd: string,
+  skills: Record<string, unknown>,
+): void {
+  const sortedSkills = Object.fromEntries(
+    Object.keys(skills)
+      .sort()
+      .map((name) => [name, skills[name]]),
+  );
+  writeFileSync(
+    join(cwd, SKILLS_LOCK_FILE),
+    `${JSON.stringify({ version: FAKE_LOCK_VERSION, skills: sortedSkills }, null, 2)}\n`,
+  );
+}
+
+function fakeLockEntry(packageSource: string, cwd: string) {
+  const isLocal = existsSync(packageSource);
+  const source = isLocal ? relative(cwd, packageSource) : packageSource;
+  return {
+    source,
+    sourceType: isLocal ? "local" : "github",
+    computedHash: sha256Hex(source),
+  };
+}
+
 function refusedSkillName(skillName: string): SubprocessResult {
   return {
     code: 1,
@@ -255,6 +296,10 @@ function buildFakeSkillsAdd(args: string[], cwd: string): SubprocessResult {
       "utf8",
     );
   }
+  writeFakeLockLikeSkillsCli(cwd, {
+    ...readFakeLockSkills(cwd),
+    [skillName]: fakeLockEntry(packageSource, cwd),
+  });
 
   return {
     code: 0,
@@ -279,6 +324,15 @@ function buildFakeSkillsRemove(args: string[], cwd: string): SubprocessResult {
   }
   for (const skillName of skillNames) {
     removeInstalledCopy(join(cwd, CLAUDE_SKILLS_DIRECTORY, skillName));
+    rmSync(join(cwd, CANONICAL_SKILLS_DIRECTORY, skillName), {
+      recursive: true,
+      force: true,
+    });
+    const lockSkills = readFakeLockSkills(cwd);
+    if (Object.hasOwn(lockSkills, skillName)) {
+      delete lockSkills[skillName];
+      writeFakeLockLikeSkillsCli(cwd, lockSkills);
+    }
   }
 
   return {

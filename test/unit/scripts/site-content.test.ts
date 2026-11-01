@@ -57,6 +57,7 @@ interface FixtureEntry {
   preExisting?: boolean;
   ownershipMode?: string | null;
   agemonVersion?: string | null;
+  resourceId?: string;
 }
 
 function ledgerEntry(entry: FixtureEntry, index: number) {
@@ -68,7 +69,7 @@ function ledgerEntry(entry: FixtureEntry, index: number) {
     preExisting: entry.preExisting ?? false,
     createdAt: "2026-10-31T12:00:00.000Z",
     planId: "0123456789abcdef",
-    resourceId: null,
+    resourceId: entry.resourceId ?? null,
     ownershipMode: entry.ownershipMode ?? null,
     agemonVersion:
       entry.agemonVersion === undefined ? "4.7.2" : entry.agemonVersion,
@@ -999,6 +1000,47 @@ describe("recorded ledger for the home page", () => {
       ],
       addedPaths: [".claude/", "AGENTS.md"],
     });
+  });
+
+  it("accepts a ledger with workspace footprint entries and shows them as rows, not as added paths", () => {
+    writeWebsiteInput(
+      RECORDED_LEDGER_PATH,
+      recordedLedger([
+        {
+          plugin: "workspace",
+          type: "gitignore-line",
+          target: ".gitignore",
+          resourceId: "gitignore-line:/.agemon/",
+        },
+        {
+          plugin: "workspace",
+          type: "created-directory",
+          target: ".claude/skills",
+          resourceId: "created-directory:.claude/skills",
+        },
+        ...RECORDED_ENTRIES,
+      ]),
+    );
+    generate();
+    const { rows, addedPaths } = siteData().recordedLedger as {
+      rows: unknown[];
+      addedPaths: string[];
+    };
+    expect(rows.slice(0, 2)).toEqual([
+      {
+        plugin: "workspace",
+        type: "gitignore-line",
+        firstTarget: ".gitignore",
+        count: 1,
+      },
+      {
+        plugin: "workspace",
+        type: "created-directory",
+        firstTarget: ".claude/skills",
+        count: 1,
+      },
+    ]);
+    expect(addedPaths).toEqual([".claude/", "AGENTS.md"]);
   });
 
   it("fails with the re-record hint on a ledger the real loader refuses, migrates or cannot show", () => {

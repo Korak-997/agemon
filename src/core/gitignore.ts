@@ -8,7 +8,8 @@ import {
 } from "./subprocess-runner.js";
 
 const GITIGNORE_FILENAME = ".gitignore";
-const AGEMON_ENTRY = "/.agemon/";
+export const AGEMON_GITIGNORE_ENTRY = "/.agemon/";
+export const SKILLS_LOCK_GITIGNORE_ENTRY = "/skills-lock.json";
 const GIT_CHECK_IGNORE_IGNORED = 0;
 const GIT_CHECK_IGNORE_NOT_IGNORED = 1;
 
@@ -22,7 +23,7 @@ function normalizeIgnoreLine(line: string): string {
   return line.trim().replace(/^\//, "").replace(/\/$/, "");
 }
 
-function gitignoreListsEntry(contents: string, entry: string): boolean {
+export function gitignoreListsEntry(contents: string, entry: string): boolean {
   const normalizedEntry = normalizeIgnoreLine(entry);
   return contents
     .split(/\r?\n/)
@@ -30,7 +31,7 @@ function gitignoreListsEntry(contents: string, entry: string): boolean {
 }
 
 export function gitignoreListsAgemonState(contents: string): boolean {
-  return gitignoreListsEntry(contents, AGEMON_ENTRY);
+  return gitignoreListsEntry(contents, AGEMON_GITIGNORE_ENTRY);
 }
 
 export async function gitIgnoresAgemonState(
@@ -78,16 +79,34 @@ async function appendGitignoreEntry(
   );
 }
 
-export async function ensureGitignoreEntry(
+export interface GitignoreWrite {
+  added: boolean;
+  existedBefore: boolean;
+  contentsBefore: string | null;
+}
+
+async function appendUnlessCovered(
   cwd: string,
   entry: string,
-): Promise<void> {
+  isCovered: (contents: string) => boolean,
+): Promise<GitignoreWrite> {
   const gitignorePath = join(cwd, GITIGNORE_FILENAME);
   const contents = await readRegularFileIfExists(gitignorePath);
-  if (contents !== null && gitignoreListsEntry(contents, entry)) {
-    return;
+  const before = { existedBefore: contents !== null, contentsBefore: contents };
+  if (contents !== null && isCovered(contents)) {
+    return { added: false, ...before };
   }
   await appendGitignoreEntry(gitignorePath, contents, entry);
+  return { added: true, ...before };
+}
+
+export function ensureGitignoreEntry(
+  cwd: string,
+  entry: string,
+): Promise<GitignoreWrite> {
+  return appendUnlessCovered(cwd, entry, (contents) =>
+    gitignoreListsEntry(contents, entry),
+  );
 }
 
 function lastRuleIsEntry(contents: string, entry: string): boolean {
@@ -102,11 +121,10 @@ function lastRuleIsEntry(contents: string, entry: string): boolean {
   );
 }
 
-export async function writeAgemonGitignoreEntry(cwd: string): Promise<void> {
-  const gitignorePath = join(cwd, GITIGNORE_FILENAME);
-  const contents = await readRegularFileIfExists(gitignorePath);
-  if (contents !== null && lastRuleIsEntry(contents, AGEMON_ENTRY)) {
-    return;
-  }
-  await appendGitignoreEntry(gitignorePath, contents, AGEMON_ENTRY);
+export function writeAgemonGitignoreEntry(
+  cwd: string,
+): Promise<GitignoreWrite> {
+  return appendUnlessCovered(cwd, AGEMON_GITIGNORE_ENTRY, (contents) =>
+    lastRuleIsEntry(contents, AGEMON_GITIGNORE_ENTRY),
+  );
 }

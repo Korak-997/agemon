@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RefusedPathError } from "../../../src/core/files.js";
 import {
+  ensureRepoDirectory,
   resolveInsideRepo,
   resolveRepositoryRoot,
   resolveStateDirectory,
@@ -303,5 +305,38 @@ describe("resolveStateDirectory", () => {
     await expect(
       resolveStateDirectory(repoRoot, ["backups"], { create: false }),
     ).resolves.toBeNull();
+  });
+});
+
+describe("ensureRepoDirectory", () => {
+  it("creates the missing components and returns only those, shallowest first", async () => {
+    const repoRoot = await createSandbox();
+    await mkdir(join(repoRoot, ".claude"));
+
+    await expect(
+      ensureRepoDirectory(repoRoot, ".claude/skills"),
+    ).resolves.toEqual([".claude/skills"]);
+    await expect(
+      ensureRepoDirectory(repoRoot, ".claude/skills"),
+    ).resolves.toEqual([]);
+  });
+
+  it("returns every component when none existed", async () => {
+    const repoRoot = await createSandbox();
+
+    await expect(
+      ensureRepoDirectory(repoRoot, ".claude/skills"),
+    ).resolves.toEqual([".claude", ".claude/skills"]);
+  });
+
+  it("refuses a symlinked component and creates nothing through it", async () => {
+    const repoRoot = await createSandbox();
+    const outside = await createSandbox();
+    await symlink(outside, join(repoRoot, ".claude"));
+
+    await expect(
+      ensureRepoDirectory(repoRoot, ".claude/skills"),
+    ).rejects.toThrow(RefusedPathError);
+    expect(existsSync(join(outside, "skills"))).toBe(false);
   });
 });

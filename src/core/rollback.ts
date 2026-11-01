@@ -15,6 +15,10 @@ import { readPlan } from "./plan-store.js";
 import { resolveInsideRepo } from "./repo-paths.js";
 import type { LedgerEntry } from "./state-manifest.js";
 import { printable } from "./untrusted-text.js";
+import {
+  removeEmptyDirectories,
+  WORKSPACE_PLUGIN_ID,
+} from "./workspace-footprint.js";
 
 export type SnapshotState = "unchanged" | "restore" | "changed-since";
 
@@ -34,6 +38,7 @@ export interface RollbackOutcome {
 interface NewEntries {
   toRevertByCapability: Map<string, LedgerEntry[]>;
   kept: LedgerEntry[];
+  workspace: LedgerEntry[];
 }
 
 async function classifySnapshot(
@@ -174,17 +179,20 @@ export function partitionNewEntries(
   unrestoredTargets: ReadonlySet<string>,
 ): NewEntries {
   const entryIdsBefore = new Set(journal.ledgerBefore.map((entry) => entry.id));
-  const newEntries: NewEntries = {
-    toRevertByCapability: new Map(),
-    kept: [],
-  };
-  for (const capabilityId of [...journal.capabilityOrder].reverse()) {
-    const entriesOfCapability = ledger.filter(
+  const newEntriesOf = (plugin: string) =>
+    ledger.filter(
       (entry) =>
-        entry.plugin === capabilityId &&
+        entry.plugin === plugin &&
         entry.planId === journal.planId &&
         !entryIdsBefore.has(entry.id),
     );
+  const newEntries: NewEntries = {
+    toRevertByCapability: new Map(),
+    kept: [],
+    workspace: newEntriesOf(WORKSPACE_PLUGIN_ID),
+  };
+  for (const capabilityId of [...journal.capabilityOrder].reverse()) {
+    const entriesOfCapability = newEntriesOf(capabilityId);
     const toRevert = entriesOfCapability.filter(
       (entry) => !unrestoredTargets.has(entry.target),
     );
@@ -220,7 +228,7 @@ export async function rollBackApply(
     outcome,
   );
 
-  const { toRevertByCapability, kept } = partitionNewEntries(
+  const { toRevertByCapability, kept, workspace } = partitionNewEntries(
     ctx.manifest.getActions(),
     journal,
     pluginById,
@@ -237,6 +245,13 @@ export async function rollBackApply(
       kept.push(...entries);
     }
   }
+  const removedDirectoryEntryIds = await removeEmptyDirectories(
+    ctx,
+    workspace.filter((entry) => ctx.manifest.isConfirmed(entry)),
+  );
+  kept.push(
+    ...workspace.filter((entry) => !removedDirectoryEntryIds.has(entry.id)),
+  );
 
   try {
     await ctx.manifest.restoreActions([...journal.ledgerBefore, ...kept]);

@@ -21,13 +21,13 @@ import {
 import { buildConsentGates } from "../../../src/core/consent.js";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
+import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { resolveVendoredSkillPath } from "../../../src/core/package-assets.js";
 import type { Plan } from "../../../src/core/plan-store.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import {
   agentsPlugin,
-  removeEmptyAgentsDirectory,
   renderAgentFile,
 } from "../../../src/plugins/agents/index.js";
 import {
@@ -363,8 +363,39 @@ describe("agents plugin — file ownership", () => {
 
     await agentsPlugin.uninstall(context);
 
-    expect(await exists(join(context.cwd, ".claude/agents"))).toBe(false);
-    expect(await exists(join(context.cwd, ".claude"))).toBe(true);
+    expect(await readdir(join(context.cwd, ".claude/agents"))).toEqual([]);
+  });
+
+  it("leaves directories to the footprint sweep, which removes the .claude/agents and .claude it created", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await applyAllPlanned(agentsPlugin, context);
+    expect(
+      context.manifest
+        .getActions()
+        .filter((entry) => entry.plugin === "workspace")
+        .map((entry) => entry.resourceId),
+    ).toEqual([
+      "created-directory:.claude",
+      "created-directory:.claude/agents",
+    ]);
+
+    const skillsStandIn: AgemonPlugin = {
+      id: "skills",
+      async detect() {
+        return { present: true, preExisting: false };
+      },
+      async install() {},
+      async verify() {
+        return { ok: true };
+      },
+      async uninstall() {},
+    };
+    await uninstallPlugins(context, [skillsStandIn, agentsPlugin], {
+      only: ["agents"],
+    });
+
+    expect(await exists(join(context.cwd, ".claude"))).toBe(false);
   });
 
   it("flags a user-edited agent as a conflict and never overwrites it", async () => {
@@ -648,17 +679,6 @@ describe("agents plugin — symlinks and untrusted ledgers", () => {
     },
   );
 
-  it("never removes a directory through a symlinked .claude", async () => {
-    const context = await createTestContext();
-    const outside = await createTempDirectory("agemon-agents-outside-");
-    await mkdir(join(outside, "agents"));
-    await symlink(outside, join(context.cwd, ".claude"));
-
-    await removeEmptyAgentsDirectory(context.cwd);
-
-    expect(await exists(join(outside, "agents"))).toBe(true);
-  });
-
   it("ignores forged ledger entries on nuke and touches nothing they name", async () => {
     const context = await createTestContext();
     await writeFile(join(context.cwd, "AGENTS.md"), "my rules\n", "utf8");
@@ -737,17 +757,19 @@ describe("agents plugin — symlinks and untrusted ledgers", () => {
 });
 
 describe("agents plugin — rollback", () => {
-  it("removes created agents and the empty directory when a later capability fails", async () => {
+  it("removes created agents and the empty directories when a later capability fails", async () => {
     const context = await createTestContext();
     await recordGeoSeoGroup(context);
 
     await applyWithBreaker(context, await planFor(context));
 
-    expect(await exists(join(context.cwd, ".claude/agents"))).toBe(false);
+    expect(await exists(join(context.cwd, ".claude"))).toBe(false);
     expect(
       context.manifest
         .getActions()
-        .filter((entry) => entry.plugin === "agents"),
+        .filter(
+          (entry) => entry.plugin === "agents" || entry.plugin === "workspace",
+        ),
     ).toEqual([]);
     expect(context.infoLines.join("\n")).not.toContain("manual cleanup");
   });

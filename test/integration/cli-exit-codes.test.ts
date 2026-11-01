@@ -320,7 +320,7 @@ describe("nuke", () => {
         await readFile(join(repoDirectory, ".agemon/state.json"), "utf8"),
       ) as { actions: { plugin: string }[] };
       expect(new Set(ledger.actions.map((entry) => entry.plugin))).toEqual(
-        new Set(["master-prompt"]),
+        new Set(["master-prompt", "workspace"]),
       );
     });
   });

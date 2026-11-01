@@ -129,6 +129,13 @@ async function writeCopy(
   return directory;
 }
 
+async function writeLockOfEarlierInstall(ctx: Context): Promise<void> {
+  await writeFile(
+    join(ctx.cwd, "skills-lock.json"),
+    `${JSON.stringify({ version: 1, skills: { [COMMIT_SKILL]: {} } }, null, 2)}\n`,
+  );
+}
+
 async function shipFingerprintOf(directory: string): Promise<void> {
   shippedHistory.history[COMMIT_SKILL] = [
     await fingerprintInstalledSkill(directory),
@@ -640,6 +647,7 @@ describe("bundled skill updates in plan and apply", () => {
     await shipFingerprintOf(
       await writeCopy(ctx, COMMIT_COPY, OLD_COMMIT_SKILL_MANIFEST),
     );
+    await writeLockOfEarlierInstall(ctx);
     const ledgerBefore = ctx.manifest.getActions();
     const operation = commitOperation(await planSkills(ctx));
 
@@ -936,6 +944,7 @@ describe("bundled skill updates in plan and apply", () => {
     const logLines: string[] = [];
     ctx.log = { ...console, log: (line: string) => logLines.push(line) };
     await outdatedCommitSkill(ctx);
+    await writeLockOfEarlierInstall(ctx);
     const update = commitOperation(await planSkills(ctx));
     if (update === undefined) {
       throw new Error("expected an update operation");
