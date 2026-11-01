@@ -27,7 +27,7 @@ Want to help? Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What It Does
 
-Current v0.1 behavior is plugin-driven and runs in this order:
+agemon is plugin-driven and runs its plugins in this order:
 
 1. `crg`: installs and verifies `code-review-graph`.
 2. `daemon`: registers `code-review-graph watch` autostart via `systemd --user` (Linux) or
@@ -206,6 +206,40 @@ directories only (`/usr/bin:/bin:/usr/sbin:/sbin`, so git is Apple's `/usr/bin/g
 entry registered on the other OS is never touched: `nuke` fails and names it, so run
 `agemon nuke` on that machine.
 
+### Daemon hardening and failures
+
+On Linux, agemon first registers the unit with the `strict` profile: the system and your
+home directory are read-only for code-review-graph, except the repository (its `.git/`
+stays read-only) and `~/.code-review-graph`, and agemon's own state directory, which holds
+its ledger key, is hidden. If the strict unit does not start, agemon falls back to
+`compat`, which runs with your normal user rights. A repository that is or contains your
+home directory goes straight to `compat`, and `AGEMON_DAEMON_HARDENING=compat` forces it.
+The run prints the profile in use.
+
+`strict` needs an unprivileged user namespace. On Ubuntu with
+`kernel.apparmor_restrict_unprivileged_userns=1`, systemd can start the unit without the
+sandbox. agemon checks for this once the unit runs and then prints
+`daemon hardening: strict requested, not enforced on this host` (`status` and `inspect`
+show the same). The daemon keeps running, without the sandbox.
+
+A daemon that keeps crashing is stopped: systemd gives up after five starts within ten
+minutes and the unit ends `failed`. `agemon status` reports it as failed, names
+`journalctl --user -u <unit>` to see why, and exits 2; the next `agemon` run registers it
+again. launchd has no such limit, so on macOS a crashing agent is restarted at most once a
+minute.
+
+agemon refuses to build the code graph or register the daemon when `.code-review-graph`
+(or a root `.code-review-graph.db*` file) is tracked by git, is not a real directory, or
+contains a symlink or special file, because code-review-graph would write through it to
+wherever the link points. Remove it from the repository
+(`git rm -r --cached .code-review-graph`) and run agemon again. On systemd the unit also
+checks these paths each time it starts, so a link that arrives with a `git pull` stops the
+daemon instead of being written through. launchd has no such start-time check; on macOS
+only agemon's own checks at each run apply.
+
+Daemon units registered before 6.0.0 get the start-time checks, the restart limit and the
+current hardening only after `agemon nuke --only daemon` and a fresh `agemon` run.
+
 ## Requirements
 
 - To install, apply or nuke: Ubuntu, Debian, a derivative whose `/etc/os-release`
@@ -286,7 +320,7 @@ agemon
 
 ### Installer options
 
-- `AGEMON_VERSION`: install a specific release tag instead of `latest` (e.g. `AGEMON_VERSION=4.8.0 sh install.sh`).
+- `AGEMON_VERSION`: install a specific release tag instead of `latest` (e.g. `AGEMON_VERSION=6.0.0 sh install.sh`).
   Releases up to 4.7.2 have no `SHA256SUMS` and can no longer be installed this way.
 - `AGEMON_INSTALL_DIR`: override the install directory instead of the root/user default.
   It must be an absolute path to a new or empty directory, or to one a previous agemon
@@ -314,7 +348,7 @@ agemon
 
 ```bash
 agemon upgrade            # install the latest release
-agemon upgrade 4.8.0      # install that release (asks before a downgrade)
+agemon upgrade 6.0.0      # install that release (asks before a downgrade)
 agemon upgrade --rollback # switch back to the install the last upgrade replaced
 ```
 
@@ -332,7 +366,7 @@ way:
   file. `--print` prints these steps instead of running them. Upgrade with
   `agemon upgrade`, not `npm update -g`: npm records the install as coming from a local
   file. There is no `--rollback`; install the previous version by name.
-- **npx:** npx runs the version you ask for (`npx agemon@4.8.0`).
+- **npx:** npx runs the version you ask for (`npx agemon@6.0.0`).
 - **A source checkout, Volta, `pnpm dlx`, `bun x` or a project-local install:** agemon
   says it can't tell how it was installed; update it the way you installed it.
 
@@ -553,7 +587,7 @@ It needs a decision. `--yes` never picks one for you, so record it under
 | `0` | Success, nothing to do, preview only (`--dry-run`, or a first run without consent), or you declined. |
 | `1` | Error, or the apply failed and was rolled back. |
 | `2` | Drift found, consent was missing (operations or conflicts pending in a non-interactive run), or the apply finished but verification found problems. |
-| `130` / `143` | Interrupted by SIGINT / SIGTERM (see [Interrupted applies](#interrupted-applies)). |
+| `130` / `143` / `129` | Interrupted by SIGINT / SIGTERM / SIGHUP (see [Interrupted applies](#interrupted-applies)). |
 
 `agemon status` exits 2 when it finds a problem in a repository where agemon has state (a
 ledger or an interrupted apply). In a repository agemon never touched, it reports what it

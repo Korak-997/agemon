@@ -23,8 +23,10 @@ commit them together with `recordings.sha256`.
   image plus one exact git version from the Debian snapshot that image was built from. That
   build is the only step that needs the network.
 - The recording container runs as your user, with no network, no capabilities, a read-only
-  root file system and memory and process limits. The repository's `bin/`, `dist/`, `assets/`
-  and `package.json`, your Node installation and the tapes are mounted read-only. The only
+  root file system and memory and process limits. The repository's `bin/`, `dist/`, `assets/`,
+  `src/` and `package.json`, your Node installation and the tapes are mounted read-only.
+  `src/` marks the mount as a source checkout, without which agemon refuses the simulated
+  backends. The only
   writable mounts are the run directory and the output directory, both under
   `${XDG_CACHE_HOME:-~/.cache}/agemon-recordings/`, outside the repository; that directory is
   deleted afterwards.

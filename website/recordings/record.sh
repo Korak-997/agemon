@@ -100,6 +100,7 @@ for name in "$@"; do
     -v "$repository_root/bin:/agemon/bin:ro" \
     -v "$repository_root/dist:/agemon/dist:ro" \
     -v "$repository_root/assets:/agemon/assets:ro" \
+    -v "$repository_root/src:/agemon/src:ro" \
     -v "$repository_root/package.json:/agemon/package.json:ro" \
     -v "$work_root/passwd:/etc/passwd:ro" \
     -v "$work_root/group:/etc/group:ro" \

@@ -802,7 +802,8 @@ Key behavior:
 installed, from the realpath of the nearest `package.json` named `agemon` above the
 running module (`resolvePackageRoot()`; the CLI also reads its version from there):
 
-1. `dev` — `AGEMON_DEV=1`, or the package root has `.git` or `src/` (a source checkout).
+1. `dev` — the package root has `.git` or `src/` (a source checkout). `AGEMON_DEV=1` does
+   not change the install method.
 2. `install-script` — the package root holds a regular `.agemon-install` file, which
    `install.sh` writes (its content is the installed version).
 3. `npx` — the package root is under npm's exec cache (a `_npx` path segment).
@@ -818,7 +819,9 @@ running module (`resolvePackageRoot()`; the CLI also reads its version from ther
 `src/core/update-check.ts`, invoked at the top of both `install` and `nuke` action
 handlers in `src/cli/index.ts`:
 
-- Skipped entirely when `--dry-run`, `AGEMON_DEV=1`, or `AGEMON_NO_UPDATE_CHECK=1`.
+- Skipped entirely when `--dry-run`, in dev mode (see
+  [Fake Backend Environment Flags](#fake-backend-environment-flags)), or with
+  `AGEMON_NO_UPDATE_CHECK=1`.
 - Queries `GET /repos/Korak-997/agemon/releases/latest` (GitHub API), cached in
   `$XDG_CACHE_HOME/agemon/update-check.json` (only an absolute `XDG_CACHE_HOME`; otherwise `~/.cache/...`) for 24h to avoid a
   network round-trip on every invocation and avoid rate-limiting.
@@ -907,9 +910,14 @@ of the pinned Essentials commit writes stand-in skills, and while both
 `AGEMON_FAKE_SUBPROCESS=1` and `AGEMON_DEV=1` are set, agemon treats their fingerprints as
 the pinned version.
 
-`src/core/dev-mode.ts` enforces that fake backends cannot be used outside
-`AGEMON_DEV=1`. The CLI and `install.sh` ignore `AGEMON_OS_RELEASE_PATH` unless
-`AGEMON_DEV=1` is set. The fake subprocess backends live in `src/core/fake-subprocess.ts`, which
+Dev mode (`isDevMode` in `src/core/dev-mode.ts`) needs `AGEMON_DEV=1` **and** a source
+checkout (the package root has `.git` or `src/`). A published package ignores
+`AGEMON_DEV=1`, so the environment alone cannot switch on fakes, skip the update check or
+claim a source checkout. `assertFakeBackendsAreDevOnly` refuses to start when
+`AGEMON_FAKE_SUBPROCESS=1` or `AGEMON_FAKE_SERVICES=1` is set outside dev mode, and
+`npm run smoke` checks that the packed bundle refuses them. The CLI ignores
+`AGEMON_OS_RELEASE_PATH` outside dev mode; `install.sh`, which has no package root to
+check, honours it only with `AGEMON_DEV=1`. The fake subprocess backends live in `src/core/fake-subprocess.ts`, which
 the runner loads with a dynamic `import()` only when `AGEMON_FAKE_SUBPROCESS=1`.
 
 ## Operational Commands
