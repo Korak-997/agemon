@@ -894,8 +894,7 @@ npm run check-pins
 
 ## Known Gaps
 
-Current known gaps tracked in `improvements.md` include:
-
-- integration fixture coverage is incomplete
-- error handling edge cases in environment/platform bootstrap
-- cross-platform assumptions still present in path parsing
+Known gaps and planned improvements are tracked as GitHub issues: the
+[v6.1 milestone](https://github.com/Korak-997/agemon/milestone/1) holds user-visible bugs and
+improvements, and the [Backlog milestone](https://github.com/Korak-997/agemon/milestone/2)
+holds maintenance work. Security findings are reported privately (see `SECURITY.md`).

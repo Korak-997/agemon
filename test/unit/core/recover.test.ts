@@ -301,6 +301,27 @@ describe("agemon recover", () => {
     expect(existsSync(join(ctx.cwd, ".claude"))).toBe(true);
   });
 
+  it("previews no ledger change for an unconfirmed directory entry the rollback keeps", async () => {
+    const { ctx, output } = await createHarness();
+    await simulateKilledApply(ctx, { capabilityOrder: ["cli-tool"] });
+    await appendLedgerClaims(ctx, [
+      {
+        plugin: "workspace",
+        type: "created-directory",
+        target: ".claude",
+        resourceId: "created-directory:.claude",
+        preExisting: false,
+        planId: PLAN_ID,
+      },
+    ]);
+
+    await recoverInterruptedApply(ctx, [revertingPlugin("cli-tool")], {
+      dryRun: true,
+    });
+
+    expect(output.join("\n")).toContain("Nothing to recover:");
+  });
+
   it("says there is nothing to recover when no journal exists", async () => {
     const { ctx, output } = await createHarness();
 

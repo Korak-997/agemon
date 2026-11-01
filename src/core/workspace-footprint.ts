@@ -221,7 +221,6 @@ function withSeparatorAgemonAddedUndone(
 ): string {
   const withoutFinalTerminator = contents.replace(LINE_TERMINATOR, "");
   return entry.fingerprintBefore !== null &&
-    fingerprintContent(contents) !== entry.fingerprintBefore &&
     fingerprintContent(withoutFinalTerminator) === entry.fingerprintBefore
     ? withoutFinalTerminator
     : contents;

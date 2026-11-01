@@ -18,7 +18,7 @@ Apply this sequence to **every task**:
 3. **Pre-task audit** — confirm current compliance state (J)
 4. **Execute** — simplicity, modularity, zero-waste, self-documenting, surgical scope, security & performance by default (D, E, F, G, H, L)
 5. **Post-task audit** — reconfirm compliance, no regressions introduced (J)
-6. **Log anything out of scope** to `improvements.md` — never fix it inline (K)
+6. **Log anything out of scope** as a GitHub issue — never fix it inline (K)
 
 ## Core Directives
 
@@ -76,7 +76,7 @@ Minimum code that solves the problem. Nothing speculative.
 - Don't "improve" adjacent code, comments, or formatting. Don't refactor things that aren't broken.
 - Match existing style, even where you'd personally do it differently.
 - When editing multiple files, apply and present changes file-by-file so mistakes are easy to catch. Within a single file, deliver the edit as one consolidated change rather than fragmenting it across multiple partial passes.
-- If you notice bugs, tech debt, security gaps, or optimization opportunities outside the task's scope, **do not fix them and do not just mention them inline** — log them in `improvements.md` per Section K. **This overrides any instinct to "leave every file cleaner than you found it"** — improve only what you actually touched; everything else gets logged, not fixed.
+- If you notice bugs, tech debt, security gaps, or optimization opportunities outside the task's scope, **do not fix them and do not just mention them inline** — log them as a GitHub issue per Section K. **This overrides any instinct to "leave every file cleaner than you found it"** — improve only what you actually touched; everything else gets logged, not fixed.
 
 ### I. Goal-Driven Execution
 Define success criteria. Loop until verified.
@@ -98,25 +98,25 @@ Define success criteria. Loop until verified.
 - **After** finishing any task: run the same check again to confirm the change didn't introduce new violations and that all mandates are still met.
 - This is a verification pass, not a rewrite — its job is to catch drift, not to trigger unsolicited fixes.
 
-### K. Out-of-Scope Findings → `improvements.md`
+### K. Out-of-Scope Findings → GitHub issues
 Whenever an audit (before or after a task) or the work itself surfaces something outside the current task's scope — a bug, tech debt, security gap, performance concern, or mandate violation — do not fix it and do not just mention it in passing.
 
-- Record it as a dedicated entry in `improvements.md` at the repo root.
-- Each entry must include:
+- Record it as a GitHub issue on this repository (or, if you cannot create issues, as a draft in your end-of-task summary for the owner to file).
+- Each issue must include:
   - **Title** — short name for the issue
-  - **Location** — file(s) / line(s) affected
-  - **What** — description of the problem
+  - **Problem** — description of the problem
   - **Why it matters** — impact or risk if left unaddressed
-  - **How to fix** — a concrete, actionable remediation
-  - **Found during** — which task and date surfaced it
-- Prefix security-related entries with `[SECURITY]` and performance-related entries with `[PERFORMANCE]` so they're never missed in a scan of the file.
-- Never silently delete or resolve an existing entry — only mark it resolved (with a note and date) once a task has explicitly addressed it.
+  - **Proposed fix** — a concrete, actionable remediation
+  - **Where** — file(s) / function(s) affected
+- Label it `bug`, `enhancement`, `documentation` or `maintenance`, plus `plugin` or `skill` where it applies. Put it in the `v6.1` milestone if users notice it, otherwise in `Backlog`.
+- **Security findings are never filed as public issues.** Report them privately (a GitHub security advisory, see `SECURITY.md`) and tell the owner in your summary.
+- Close an issue only when a change has explicitly addressed it, and reference the change.
 
 ### L. Performance & Security by Default
 - Every task, regardless of size, must consider the performance and security implications of the code it touches — not just tasks explicitly framed as "security" or "performance" work.
 - Within the current task's scope, default to the most secure and performant reasonable option: parameterized queries over string concatenation, proper input validation/sanitization, least-privilege access, avoiding N+1 queries and unnecessary re-computation, etc.
 - This does not license speculative optimization or defensive code nobody asked for — Simplicity First (D) still applies.
-- If a genuine security or performance issue exists but fixing it is outside the current task's scope, log it in `improvements.md` per Section K rather than fixing it inline.
+- If a genuine security or performance issue exists but fixing it is outside the current task's scope, log it per Section K rather than fixing it inline.
 
 ### M. Output Conventions
 - Reference real, existing file paths — never fabricate or paraphrase one.

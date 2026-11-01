@@ -820,12 +820,9 @@ async function updateSkills(
   }
   const entriesToUpdate = plannedUpdates.map(({ entry }) => entry);
   await fetchPinnedSources(ctx, entriesToUpdate);
-  await recordCreatedDirectories(
-    ctx,
-    await prepareSkillsCliTargets(
-      ctx.cwd,
-      entriesToUpdate.map((entry) => entry.skillName),
-    ),
+  await prepareSkillsCliTargets(
+    ctx.cwd,
+    entriesToUpdate.map((entry) => entry.skillName),
   );
   for (const plannedUpdate of plannedUpdates) {
     const { entry } = plannedUpdate;

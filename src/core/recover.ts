@@ -87,7 +87,10 @@ function buildRecoverySteps(
   const ledgerAfterRecovery = [
     ...journal.ledgerBefore,
     ...kept,
-    ...workspace.filter((entry) => !isCreatedDirectoryEntry(entry)),
+    ...workspace.filter(
+      (entry) =>
+        !isCreatedDirectoryEntry(entry) || !ctx.manifest.isConfirmed(entry),
+    ),
   ];
   if (
     JSON.stringify(ctx.manifest.getActions()) !==

@@ -252,6 +252,17 @@ describe("nuke and agemon's .gitignore lines", () => {
     expect(await gitignoreOf(ctx)).toBe(".agemon\n!.agemon\ncoverage/\n");
   });
 
+  it("keeps equivalent lines the user added after agemon's line", async () => {
+    const ctx = await createTestContext();
+    await addAgemonLine(ctx);
+    await appendToGitignore(ctx, "/.agemon\n.agemon\n.agemon/\n");
+    await recordCapabilityEntry(ctx, "alpha");
+
+    await uninstallPlugins(ctx, [ALPHA], {});
+
+    expect(await gitignoreOf(ctx)).toBe("/.agemon\n.agemon\n.agemon/\n");
+  });
+
   it("a .gitignore with /.agemon/ and a later !.agemon round-trips to the original bytes", async () => {
     const ctx = await createTestContext();
     await writeFile(join(ctx.cwd, ".gitignore"), "/.agemon/\n!.agemon\n");
@@ -278,6 +289,32 @@ describe("nuke and agemon's .gitignore lines", () => {
     await uninstallPlugins(ctx, [ALPHA], {});
 
     expect(await gitignoreOf(ctx)).toBe("/.agemon/\n!.agemon\n!.agemon\n");
+  });
+
+  it("undoes each recorded separator newest first", async () => {
+    const ctx = await createTestContext();
+    await writeFile(join(ctx.cwd, ".gitignore"), "a");
+    await addAgemonLine(ctx);
+    await appendToGitignore(ctx, "!.agemon");
+    await addAgemonLine(ctx);
+    expect(await gitignoreOf(ctx)).toBe("a\n/.agemon/\n!.agemon\n/.agemon/\n");
+    await recordCapabilityEntry(ctx, "alpha");
+
+    await uninstallPlugins(ctx, [ALPHA], {});
+
+    expect(await gitignoreOf(ctx)).toBe("a\n!.agemon");
+  });
+
+  it("keeps later user lines that differ from agemon's only by whitespace or a lone CR", async () => {
+    const ctx = await createTestContext();
+    await writeFile(join(ctx.cwd, ".gitignore"), "dist\n");
+    await addAgemonLine(ctx);
+    await appendToGitignore(ctx, "/.agemon/ \n/.agemon/\r");
+    await recordCapabilityEntry(ctx, "alpha");
+
+    await uninstallPlugins(ctx, [ALPHA], {});
+
+    expect(await gitignoreOf(ctx)).toBe("dist\n/.agemon/ \n/.agemon/\r");
   });
 
   it("keeps a symlinked .gitignore and says so", async () => {
@@ -311,6 +348,7 @@ describe("nuke and agemon's .gitignore lines", () => {
     expect(ctx.infoLines).toContain(
       "Keeping /skills-lock.json in .gitignore: skills-lock.json still exists",
     );
+    expect(ctx.infoLines.some((line) => line.startsWith("Left "))).toBe(false);
   });
 
   it("removes the /.agemon/ line only after .agemon/ is gone", async () => {
@@ -333,10 +371,39 @@ describe("nuke and agemon's .gitignore lines", () => {
     await recordCapabilityEntry(ctx, "alpha");
     await recordCapabilityEntry(ctx, "beta");
 
+    await uninstallPlugins({ ...ctx, yes: false }, [ALPHA, BETA], {
+      only: ["alpha"],
+    });
+    await uninstallPlugins({ ...ctx, dryRun: true }, [ALPHA, BETA], {
+      only: ["alpha"],
+    });
     await uninstallPlugins(ctx, [ALPHA, BETA], { only: ["alpha"] });
 
     expect(await gitignoreOf(ctx)).toBe("/.agemon/\n");
     expect(workspaceEntries(ctx)).toHaveLength(1);
+    expect(ctx.infoLines.join("\n")).not.toContain("remove from .gitignore");
+  });
+
+  it("does not report a claim for a line a confirmed entry also names, and removes that line", async () => {
+    const ctx = await createTestContext();
+    await addAgemonLine(ctx);
+    await appendLedgerClaims(ctx, [
+      {
+        plugin: WORKSPACE_PLUGIN_ID,
+        type: "gitignore-line",
+        target: ".gitignore",
+        resourceId: "gitignore-line:/.agemon/",
+        preExisting: false,
+      },
+    ]);
+    await recordCapabilityEntry(ctx, "alpha");
+
+    await uninstallPlugins(ctx, [ALPHA], {});
+
+    expect(await gitignoreOf(ctx)).toBeNull();
+    expect(ctx.infoLines.some((line) => line.startsWith("Keeping "))).toBe(
+      false,
+    );
   });
 
   it("reports and drops a claim workspace entry, keeping its line", async () => {
