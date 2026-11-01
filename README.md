@@ -12,7 +12,7 @@ and can cleanly reverse those actions with `nuke`.
 
 Documentation, the skill library and the installer: <https://agemon.korak-kurani.com>.
 
-![agemon planning skills and a CLI tool in the sandbox, then a roundtrip that leaves the repository byte-identical](docs/demo/agemon.gif)
+![agemon installs the essentials bundle with --yes, agemon nuke removes everything it added, and git status --ignored shows the repository exactly as it was](docs/demo/agemon.gif)
 
 ## Why agemon
 
@@ -116,13 +116,26 @@ five audit agents `geo-audit-ai-visibility`, `geo-audit-platform`, `geo-audit-te
   agemon created and restores the files it replaced.
 - An agent's group must be installed for the agent to be written; if you decline the group,
   its agents are skipped.
+- `agemon status` shows one row per agent: managed, adopted (identical but not written by
+  agemon on this machine), changed (your edit, kept), absent, or not a regular file. It
+  needs attention (exit 2) when agemon has a newer version of an agent you didn't change,
+  or when another file in `.claude/agents/` declares the same `name:` as one of agemon's
+  agents — Claude Code identifies agents by that name and may load the other file instead.
 - Claude Code picks up a new `.claude/agents/` directory in sessions started after it exists.
 
-**Updating an older `geo-seo` install:** agemon does not re-copy a skill that is already
-installed, so a `geo-audit` installed by an earlier release still runs its subagents from
-the briefs in `geo-audit/references/` (it keeps working). To switch it to the installed
-agents, delete `.claude/skills/geo-audit` and run `agemon` again: it reinstalls the missing
-skill from the current release.
+**Bundled skill updates.** agemon compares each bundled skill in `.claude/skills/` with
+every version it has shipped. A skill still identical to an older version is updated to
+the current one on the next run, behind the same consent step as installing a group (the
+preview marks it "update (bundled content changed)"); `agemon status` shows "update
+available" until then. A skill that differs from every shipped version — for example one
+you edited — is never replaced: `status` shows it as changed, with the reason, and says how
+to get agemon's version (delete `.claude/skills/<name>` and run `agemon`). An update that
+fails halfway removes the half-written copy, so the next run reinstalls it; a rollback keeps
+an update it already made and says so. This is also how an older `geo-seo` install picks up
+the `geo-audit` that launches the installed subagents.
+
+Skills recorded for a custom group that `agemon.toml` no longer defines are listed in one
+"skills of removed groups" row.
 
 #### Project-defined skill groups
 
@@ -412,6 +425,12 @@ uninstalling a global npm package or disabling user linger. It then asks once. N
   it tracked shared tools is kept unless you pass `--remove-shared code-review-graph,agnix`
   (or one of them); the kept line prints the manual uninstall command. See
   [Two Ledgers](docs/architecture-and-operations.md#two-ledgers).
+- skills: `nuke` removes `.claude/skills/<name>` itself, without the skills CLI and
+  without network access, and only when its content is a version agemon installed; an
+  edited copy is kept and named. A custom group's skill counts as installed by agemon
+  only if it matched its source at install time, which agemon recorded then; a copy with
+  no such record is kept and named. It never deletes `.agents/skills/<name>`, which other
+  tools may use, and removes only agemon's skills from `skills-lock.json`.
 
 Restore the files an interrupted apply changed (see
 [Interrupted applies](#interrupted-applies)):
@@ -497,7 +516,8 @@ a later release adds a capability that existing repositories should get (so far 
 `agents`, and only when `skills` is listed), agemon includes it in the run and then adds
 it to `capabilities` once, rewriting `agemon.toml`. All values are kept, but comments and
 layout are not; if anything like that would be lost, the original is saved under
-`.agemon/backups/` and the message names the file. The rewrite happens only in an
+`.agemon/backups/` and the message names the file. Each such rewrite keeps its own saved
+original; a later one never overwrites an earlier one. The rewrite happens only in an
 interactive or `--yes` run that did not roll back, and never with `--dry-run`, `--only` or
 `agemon plan`. To opt out, remove the capability from `capabilities` afterwards; because it
 is now in `known_capabilities`, agemon does not add it again. Older agemon releases reject a
@@ -532,6 +552,33 @@ sees and exits 0. An invalid `agemon.toml` is always reported, and `status` then
 If `git ls-files` cannot run (git missing, or "dubious ownership" in a CI container),
 `status`, `inspect` and install print `could not check whether .agemon/ is tracked by git`.
 This is a warning only, and it does not change the exit code.
+
+Whether `/.agemon/` is git-ignored is decided by git itself
+(`git check-ignore --no-index .agemon/`), so a later `!.agemon` rule in `.gitignore` counts as
+not ignored. Inside a repository where git cannot answer, agemon treats `.agemon/` as not
+ignored: an interactive run asks before adding `/.agemon/` to `.gitignore`, a
+non-interactive run without `--yes` stops, and the git error is printed as
+`could not ask git whether .agemon/ is ignored: …` (in `inspect --json` it is part of
+`isolation.trackingCheckError`).
+
+Before installing code-review-graph or its daemon, agemon reads the repository's own git
+configuration (`.git/config`, `config.worktree`, `.gitmodules`, and the same files of
+populated submodules) and checks every key against a short allowlist of settings that
+cannot name a program. If any key falls outside it, the install goes to a separate
+**trust gate** that lists every such key and value (secrets redacted):
+
+- interactively, you approve or decline that gate like any other;
+- `--yes` alone does **not** approve it: the operations are skipped with the keys listed,
+  and the run exits 2;
+- `--yes --trust-repo-git-config` approves it for that run only (the keys are still
+  printed). The flag is never read from `agemon.toml` or any file in the repository, so a
+  repository cannot opt itself in; read the printed keys before you pass it.
+
+More than 20 such keys, keys that cannot be shown safely, and a git configuration agemon
+cannot read are always skipped, with no override. On an existing install, `status` shows
+the keys as needing attention and exits 2, and a daemon unit written before these
+safeguards is reported until you run `agemon nuke --only daemon`, then
+`agemon --only daemon`.
 
 ### Agent Detection (`agemon inspect`)
 
@@ -570,7 +617,13 @@ its usual health/drift output.
 
 ## Reversibility Guarantees
 
-- `nuke` removes only agemon-managed artifacts tracked in `.agemon/state.json`.
+- `nuke` removes only agemon-managed artifacts tracked in `.agemon/state.json`, and among
+	those, it removes skills, subagents, shared tools, daemon units and the code graph only
+	when this machine wrote the entry (each entry carries a receipt keyed by
+	`${XDG_STATE_HOME:-~/.local/state}/agemon/ledger-key`). Entries from an agemon before
+	receipts, from another machine or from a committed ledger are kept and reported, with
+	what to remove by hand; `status` counts them. See
+	[Ledger receipts](docs/architecture-and-operations.md#ledger-receipts).
 - Pre-existing tools/files are detected and preserved.
 - Master-prompt file edits are backed up in `.agemon/backups/` and restored on uninstall,
 	but only when the backup provably matches the file agemon found (checksum check).

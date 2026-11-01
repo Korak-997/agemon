@@ -1,18 +1,14 @@
-import { redactSecretsInText } from "../inspect/redact.js";
 import type { StepSpinner } from "../ui/spinner.js";
-import type {
-  RunSubprocessOptions,
-  SubprocessResult,
+import {
+  capShownLine,
+  MAX_RAW_OUTPUT_LINE_CHARACTERS,
+  type RunSubprocessOptions,
+  type SubprocessResult,
+  safeOutputTail,
+  sanitizeOutput,
 } from "./subprocess-runner.js";
-import { printable } from "./untrusted-text.js";
 
 const TRACED_LINES_PER_STREAM = 20;
-const TRACED_LINE_MAX_CHARACTERS = 300;
-const CONTROL_SEQUENCE_INTRODUCER = `(?:${String.fromCharCode(27)}\\[|${String.fromCharCode(0x9b)})`;
-const TERMINAL_ESCAPE_SEQUENCE = new RegExp(
-  `${CONTROL_SEQUENCE_INTRODUCER}[0-9;?]*[ -/]*[@-~]`,
-  "g",
-);
 
 export type RunSubprocess = (
   command: string,
@@ -20,29 +16,22 @@ export type RunSubprocess = (
   options?: RunSubprocessOptions,
 ) => Promise<SubprocessResult>;
 
-function safeText(text: string): string {
-  return printable(
-    redactSecretsInText(text.replace(TERMINAL_ESCAPE_SEQUENCE, "")),
-  );
-}
-
-function capLine(line: string): string {
-  return line.length > TRACED_LINE_MAX_CHARACTERS
-    ? `${line.slice(0, TRACED_LINE_MAX_CHARACTERS)}…`
-    : line;
-}
-
 function tailLines(stream: string, prefix: string): string[] {
-  const lines = safeText(stream).split("\n");
-  if (lines.at(-1) === "") {
-    lines.pop();
-  }
-  const earlierCount = lines.length - TRACED_LINES_PER_STREAM;
-  const shown = lines.slice(Math.max(earlierCount, 0));
+  const { earlierLineCount, lines } = safeOutputTail(
+    stream,
+    TRACED_LINES_PER_STREAM,
+  );
   return [
-    ...(earlierCount > 0 ? [`│ … ${earlierCount} earlier lines`] : []),
-    ...shown.map((line) => `│ ${prefix}${capLine(line)}`),
+    ...(earlierLineCount > 0 ? [`│ … ${earlierLineCount} earlier lines`] : []),
+    ...lines.map((line) => `│ ${prefix}${line}`),
   ];
+}
+
+function describeCommandLine(command: string, args: string[]): string {
+  const commandLine = [command, ...args]
+    .join(" ")
+    .slice(0, MAX_RAW_OUTPUT_LINE_CHARACTERS);
+  return capShownLine(sanitizeOutput(commandLine));
 }
 
 export function traceSubprocessCalls(
@@ -52,7 +41,7 @@ export function traceSubprocessCalls(
   return async (command, args, options) => {
     const result = await run(command, args, options);
     const lines = [
-      `$ ${capLine(safeText([command, ...args].join(" ")))} (exit ${result.code})`,
+      `$ ${describeCommandLine(command, args)} (exit ${result.code})`,
       ...tailLines(result.stdout, ""),
       ...tailLines(result.stderr, "! "),
     ];

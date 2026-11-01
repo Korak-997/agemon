@@ -1,4 +1,5 @@
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -29,11 +30,18 @@ import {
   removeEmptyAgentsDirectory,
   renderAgentFile,
 } from "../../../src/plugins/agents/index.js";
-import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
+import {
+  findSkillGroup,
+  RETIRED_AGENT_NAMES,
+  SKILL_GROUPS,
+} from "../../../src/plugins/skills/catalog.js";
 import type {
   AgemonPlugin,
   ProposedOperation,
 } from "../../../src/plugins/types.js";
+import { applyAllPlanned } from "../apply-all-planned.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -44,6 +52,7 @@ const GEO_AGENT_NAMES = [
   "geo-audit-content",
   "geo-audit-schema",
 ];
+const AGENT_NAMES_EVER_SHIPPED: readonly string[] = [...GEO_AGENT_NAMES];
 const BRIEF_FILE_BY_AGENT: Record<string, string> = {
   "geo-audit-ai-visibility": "ai-visibility.md",
   "geo-audit-platform": "platform-analysis.md",
@@ -71,6 +80,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -101,6 +113,7 @@ async function createTestContext(): Promise<TestContext> {
   return {
     infoLines,
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -176,6 +189,18 @@ function technicalAgent() {
     throw new Error("geo-audit-technical is missing from the catalog");
   }
   return agent;
+}
+
+function technicalAgentClaim() {
+  return {
+    plugin: "agents",
+    type: "managed-agent-file",
+    target: TECHNICAL_TARGET,
+    preExisting: true,
+    resourceId: "agent-file:geo-audit-technical",
+    ownershipMode: "created" as const,
+    fingerprintAfter: fingerprintContent("my own technical agent\n"),
+  };
 }
 
 function asPlan(operations: ProposedOperation[]): Plan {
@@ -312,7 +337,7 @@ describe("agents plugin — file ownership", () => {
     const context = await createTestContext();
     await recordGeoSeoGroup(context);
 
-    await agentsPlugin.install(context);
+    await applyAllPlanned(agentsPlugin, context);
 
     for (const name of GEO_AGENT_NAMES) {
       expect(await readText(context, `.claude/agents/${name}.md`)).toContain(
@@ -345,7 +370,7 @@ describe("agents plugin — file ownership", () => {
   it("flags a user-edited agent as a conflict and never overwrites it", async () => {
     const context = await createTestContext();
     await recordGeoSeoGroup(context);
-    await agentsPlugin.install(context);
+    await applyAllPlanned(agentsPlugin, context);
     await writeText(context, TECHNICAL_TARGET, "my own technical agent\n");
 
     const [operation] = await planFor(context);
@@ -364,7 +389,7 @@ describe("agents plugin — file ownership", () => {
   it("replaces a user-edited agent only on a replace decision, and nuke restores the edit", async () => {
     const context = await createTestContext();
     await recordGeoSeoGroup(context);
-    await agentsPlugin.install(context);
+    await applyAllPlanned(agentsPlugin, context);
     await writeText(context, TECHNICAL_TARGET, "my own technical agent\n");
     const [conflict] = await planFor(context);
 
@@ -422,7 +447,7 @@ describe("agents plugin — file ownership", () => {
   it("upgrades an untouched agent written by an older agemon", async () => {
     const context = await createTestContext();
     await recordGeoSeoGroup(context);
-    await agentsPlugin.install(context);
+    await applyAllPlanned(agentsPlugin, context);
     await writeText(context, TECHNICAL_TARGET, "older agemon template\n");
     await context.manifest.updateResourceEntry(
       "agent-file:geo-audit-technical",
@@ -439,6 +464,75 @@ describe("agents plugin — file ownership", () => {
     expect(await planFor(context)).toEqual([]);
   });
 
+  it("an unconfirmed entry matching the user's own agent plans a conflict, not a replace", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await writeText(context, TECHNICAL_TARGET, "my own technical agent\n");
+    await appendLedgerClaims(context, [technicalAgentClaim()]);
+
+    const operation = (await planFor(context)).find(
+      (candidate) => candidate.targetPath === TECHNICAL_TARGET,
+    );
+
+    expect(operation?.action).toBe("conflict");
+  });
+
+  it("replacing an agent over an unconfirmed entry backs up the user's file and leaves one entry", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await writeText(context, TECHNICAL_TARGET, "my own technical agent\n");
+    await appendLedgerClaims(context, [technicalAgentClaim()]);
+    const conflict = (await planFor(context)).find(
+      (candidate) => candidate.targetPath === TECHNICAL_TARGET,
+    );
+
+    await agentsPlugin.apply?.(context, [
+      { ...(conflict as ProposedOperation), action: "replace" },
+    ]);
+
+    const entries = context.manifest
+      .getActions()
+      .filter((entry) => entry.target === TECHNICAL_TARGET);
+    expect(entries).toEqual([
+      expect.objectContaining({
+        preExisting: true,
+        fingerprintBefore: fingerprintContent("my own technical agent\n"),
+        backup: expect.objectContaining({ path: expect.any(String) }),
+      }),
+    ]);
+    await agentsPlugin.uninstall(context);
+    expect(await readText(context, TECHNICAL_TARGET)).toBe(
+      "my own technical agent\n",
+    );
+  });
+
+  it("verify does not ask to recreate a missing agent named only by an unconfirmed entry", async () => {
+    const context = await createTestContext();
+    await appendLedgerClaims(context, [technicalAgentClaim()]);
+
+    expect(await agentsPlugin.verify(context)).toEqual({
+      ok: true,
+      detail: "0 subagent file(s)",
+    });
+  });
+
+  it("nuke ignores an unconfirmed agent entry and keeps the file it names", async () => {
+    const context = await createTestContext();
+    await writeText(context, TECHNICAL_TARGET, "my own technical agent\n");
+    await appendLedgerClaims(context, [
+      { ...technicalAgentClaim(), preExisting: false },
+    ]);
+
+    await agentsPlugin.uninstall(context);
+
+    expect(await readText(context, TECHNICAL_TARGET)).toBe(
+      "my own technical agent\n",
+    );
+    expect(context.infoLines).toContain(
+      `ignoring ledger entry for ${TECHNICAL_TARGET}: agemon did not write it on this machine`,
+    );
+  });
+
   it("skips an agent whose skill group was not installed", async () => {
     const context = await createTestContext();
     const groupOperation = {
@@ -448,13 +542,58 @@ describe("agents plugin — file ownership", () => {
     } as ProposedOperation;
     const operations = await planFor(context, [groupOperation]);
 
-    await agentsPlugin.apply?.(context, operations);
+    const report = await agentsPlugin.apply?.(context, operations);
 
     expect(await exists(join(context.cwd, ".claude"))).toBe(false);
     expect(context.manifest.getActions()).toEqual([]);
-    expect(context.infoLines).toContain(
-      "skipped agent geo-audit-technical: its skill group geo-seo is not installed; approve the skill group install to get it",
+    expect(report?.skipped).toContainEqual({
+      operationId: operations.find(
+        (operation) => operation.targetPath === TECHNICAL_TARGET,
+      )?.id,
+      reason:
+        "its skill group geo-seo is not installed; approve the skill group install to get it",
+    });
+    expect(report?.skipped).toHaveLength(operations.length);
+  });
+
+  it("a refused replace is reported as skipped, not applied, and gets no validation mark", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await writeText(context, TECHNICAL_TARGET, "original v0\n");
+    const [firstConflict] = (await planFor(context)).filter(
+      (operation) => operation.targetPath === TECHNICAL_TARGET,
     );
+    await agentsPlugin.apply?.(context, [
+      { ...firstConflict, action: "replace" },
+    ]);
+    await writeText(context, TECHNICAL_TARGET, "user edit v1\n");
+    const [secondConflict] = (await planFor(context)).filter(
+      (operation) => operation.targetPath === TECHNICAL_TARGET,
+    );
+    const refusedReplace = { ...secondConflict, action: "replace" as const };
+
+    const result = await applyPlan(context, [agentsPlugin], {
+      plan: asPlan([refusedReplace]),
+      approved: [refusedReplace],
+      workspaceIsolationApproved: null,
+      isolationStatus: "ignored",
+      allowUnignoredState: false,
+    });
+
+    expect(result.applied).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        operation: refusedReplace,
+        reason: expect.stringMatching(
+          /^agemon already keeps an earlier original of it at \.agemon\/backups\/.+; keep your version, or delete \.claude\/agents\/geo-audit-technical\.md and re-run agemon$/u,
+        ),
+      },
+    ]);
+    expect(
+      context.manifest
+        .getActions()
+        .find((entry) => entry.target === TECHNICAL_TARGET)?.validation,
+    ).toBeNull();
   });
 
   it("refuses operations whose target, resource or action is not an agent file", async () => {
@@ -574,7 +713,7 @@ describe("agents plugin — symlinks and untrusted ledgers", () => {
   it("reports a recorded agent that went missing as attention, not failure", async () => {
     const context = await createTestContext();
     await recordGeoSeoGroup(context);
-    await agentsPlugin.install(context);
+    await applyAllPlanned(agentsPlugin, context);
     await rm(join(context.cwd, TECHNICAL_TARGET));
 
     expect(await agentsPlugin.verify(context)).toMatchObject({
@@ -586,7 +725,7 @@ describe("agents plugin — symlinks and untrusted ledgers", () => {
   it("reports a recorded agent that turned into a symlink as attention, not failure", async () => {
     const context = await createTestContext();
     await recordGeoSeoGroup(context);
-    await agentsPlugin.install(context);
+    await applyAllPlanned(agentsPlugin, context);
     await rm(join(context.cwd, TECHNICAL_TARGET));
     await symlink("/etc/hosts", join(context.cwd, TECHNICAL_TARGET));
 
@@ -616,7 +755,7 @@ describe("agents plugin — rollback", () => {
   it("puts back the exact original after a rolled-back replace, with no copy beside it", async () => {
     const context = await createTestContext();
     await recordGeoSeoGroup(context);
-    await agentsPlugin.install(context);
+    await applyAllPlanned(agentsPlugin, context);
     await writeText(context, TECHNICAL_TARGET, "my own technical agent\n");
     const [conflict] = await planFor(context);
 
@@ -647,7 +786,7 @@ describe("agents plugin — rollback", () => {
       (operation) => operation.targetPath === TECHNICAL_TARGET,
     );
 
-    await agentsPlugin.apply?.(context, [
+    const report = await agentsPlugin.apply?.(context, [
       { ...secondConflict, action: "replace" },
     ]);
 
@@ -666,9 +805,422 @@ describe("agents plugin — rollback", () => {
         .getActions()
         .find((entry) => entry.target === TECHNICAL_TARGET),
     ).toEqual(entryBefore);
-    expect(context.infoLines.at(-1)).toMatch(
-      /^skipped \.claude\/agents\/geo-audit-technical\.md: agemon already keeps an earlier original of it at \.agemon\/backups\//,
+    expect(report?.skipped).toEqual([
+      {
+        operationId: secondConflict.id,
+        reason: expect.stringMatching(
+          /^agemon already keeps an earlier original of it at \.agemon\/backups\//u,
+        ),
+      },
+    ]);
+  });
+});
+
+async function stateRows(context: Context) {
+  return (await agentsPlugin.describeState?.(context)) ?? [];
+}
+
+function rowFor(
+  rows: Awaited<ReturnType<typeof stateRows>>,
+  name: string,
+): (typeof rows)[number] | undefined {
+  return rows.find((row) => row.resourceId === `agent-file:${name}`);
+}
+
+describe("agents plugin — status rows", () => {
+  it("describeState reports one agent-file row per desired agent", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await applyAllPlanned(agentsPlugin, context);
+
+    const rows = await stateRows(context);
+
+    expect(rows.map((row) => row.label)).toEqual(GEO_AGENT_NAMES);
+    expect(rowFor(rows, "geo-audit-technical")).toEqual({
+      capabilityId: "agents",
+      resourceId: "agent-file:geo-audit-technical",
+      label: "geo-audit-technical",
+      state: "present-managed",
+      detail: TECHNICAL_TARGET,
+    });
+  });
+
+  it("reports nothing when no group with agents is recorded", async () => {
+    const context = await createTestContext();
+
+    expect(await stateRows(context)).toEqual([]);
+  });
+
+  it("an edited agent file is present-modified and not attention", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await applyAllPlanned(agentsPlugin, context);
+    await writeText(context, TECHNICAL_TARGET, "my own edit\n");
+
+    expect(rowFor(await stateRows(context), "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        state: "present-modified",
+        detail:
+          "changed since agemon wrote it; agemon keeps your version (conflict)",
+      }),
     );
+    expect((await agentsPlugin.verify(context)).attention).toBeUndefined();
+  });
+
+  it("an untouched older template is present-managed with an update-available attention", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await applyAllPlanned(agentsPlugin, context);
+    await writeText(context, TECHNICAL_TARGET, "older agemon template\n");
+    await context.manifest.updateResourceEntry(
+      "agent-file:geo-audit-technical",
+      { fingerprintAfter: fingerprintContent("older agemon template\n") },
+    );
+
+    expect(rowFor(await stateRows(context), "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        state: "present-managed",
+        detail: "agemon has a newer version; run agemon to update it",
+      }),
+    );
+    expect((await agentsPlugin.verify(context)).attention).toBe(
+      "agemon has a newer version of geo-audit-technical; run agemon to update it",
+    );
+  });
+
+  it("an agent named only by an unconfirmed entry is never present-managed", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await writeText(
+      context,
+      TECHNICAL_TARGET,
+      await renderAgentFile(technicalAgent()),
+    );
+    await appendLedgerClaims(context, [
+      {
+        ...technicalAgentClaim(),
+        fingerprintAfter: fingerprintContent(
+          await renderAgentFile(technicalAgent()),
+        ),
+      },
+    ]);
+
+    expect(rowFor(await stateRows(context), "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        state: "present-adopted",
+        detail:
+          "identical to agemon's version (ledger entry not written by agemon on this machine)",
+      }),
+    );
+  });
+
+  it("an identical unrecorded agent is present-adopted", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await writeText(
+      context,
+      TECHNICAL_TARGET,
+      await renderAgentFile(technicalAgent()),
+    );
+
+    expect(rowFor(await stateRows(context), "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        state: "present-adopted",
+        detail: "identical to agemon's version",
+      }),
+    );
+  });
+
+  it("an unrecorded differing agent is present-modified with the conflict wording", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await writeText(context, TECHNICAL_TARGET, "my own technical agent\n");
+
+    expect(rowFor(await stateRows(context), "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        state: "present-modified",
+        detail: "differs from agemon's version; agemon keeps yours (conflict)",
+      }),
+    );
+  });
+
+  it("a differing agent named only by an unconfirmed entry carries the claim suffix", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await writeText(context, TECHNICAL_TARGET, "my own technical agent\n");
+    await appendLedgerClaims(context, [technicalAgentClaim()]);
+
+    expect(rowFor(await stateRows(context), "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        state: "present-modified",
+        detail:
+          "differs from agemon's version; agemon keeps yours (conflict) (ledger entry not written by agemon on this machine)",
+      }),
+    );
+  });
+
+  it("an untouched adopted agent with a newer template is present-adopted with the update detail", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await writeText(context, TECHNICAL_TARGET, "older agemon template\n");
+    await context.manifest.recordAction({
+      plugin: "agents",
+      type: "adopted-agent-file",
+      target: TECHNICAL_TARGET,
+      preExisting: true,
+      resourceId: "agent-file:geo-audit-technical",
+      ownershipMode: "recorded-key",
+      fingerprintBefore: fingerprintContent("older agemon template\n"),
+      fingerprintAfter: fingerprintContent("older agemon template\n"),
+    });
+
+    expect(rowFor(await stateRows(context), "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        state: "present-adopted",
+        detail: "agemon has a newer version; run agemon to update it",
+      }),
+    );
+  });
+
+  it("a missing desired agent is absent; a symlinked one is unknown", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await mkdir(join(context.cwd, ".claude/agents"), { recursive: true });
+    await symlink(
+      join(context.cwd, "elsewhere.md"),
+      join(context.cwd, ".claude/agents/geo-audit-schema.md"),
+    );
+
+    const rows = await stateRows(context);
+
+    expect(rowFor(rows, "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        state: "absent",
+        detail: "run agemon to create it",
+      }),
+    );
+    expect(rowFor(rows, "geo-audit-schema")).toEqual(
+      expect.objectContaining({
+        state: "unknown",
+        detail: "not a regular file; agemon leaves it alone",
+      }),
+    );
+  });
+});
+
+describe("agents plugin — same-name shadowing", () => {
+  async function installedContext(): Promise<TestContext> {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await applyAllPlanned(agentsPlugin, context);
+    return context;
+  }
+
+  it("verify reports another file declaring the same name as attention", async () => {
+    const context = await installedContext();
+    await writeText(
+      context,
+      ".claude/agents/zz.md",
+      "---\nname: geo-audit-technical\ntools: Bash\n---\nevil\n",
+    );
+
+    expect((await agentsPlugin.verify(context)).attention).toBe(
+      ".claude/agents/zz.md also declares name: geo-audit-technical; Claude Code may load it instead of agemon's agent. Rename or remove it.",
+    );
+    expect(rowFor(await stateRows(context), "geo-audit-technical")).toEqual(
+      expect.objectContaining({
+        detail: `${TECHNICAL_TARGET}; shadowed by .claude/agents/zz.md`,
+      }),
+    );
+  });
+
+  it("quoted, commented, CRLF, BOM, fullwidth and uppercase name values are matched", async () => {
+    const context = await installedContext();
+    await writeText(
+      context,
+      ".claude/agents/a.md",
+      "---\nname: 'geo-audit-schema' # mine\n---\n",
+    );
+    await writeText(
+      context,
+      ".claude/agents/b.md",
+      '﻿---\r\nname: "GEO-AUDIT-CONTENT"\r\n---\r\n',
+    );
+    await writeText(
+      context,
+      ".claude/agents/c.md",
+      "---\nname: ｇｅｏ-audit-platform\n---\n",
+    );
+
+    const attention = (await agentsPlugin.verify(context)).attention ?? "";
+
+    expect(attention).toContain(
+      ".claude/agents/a.md also declares name: geo-audit-schema",
+    );
+    expect(attention).toContain(
+      ".claude/agents/b.md also declares name: geo-audit-content",
+    );
+    expect(attention).toContain(
+      ".claude/agents/c.md also declares name: geo-audit-platform",
+    );
+  });
+
+  it("a name outside the first frontmatter block or a different name is not reported", async () => {
+    const context = await installedContext();
+    await writeText(
+      context,
+      ".claude/agents/body.md",
+      "# notes\n\nname: geo-audit-technical\n",
+    );
+    await writeText(
+      context,
+      ".claude/agents/other.md",
+      "---\nname: my-agent\n---\n\n---\nname: geo-audit-technical\n---\n",
+    );
+    await writeText(
+      context,
+      ".claude/agents/nested.md",
+      "---\nmetadata:\n  name: geo-audit-technical\n---\n",
+    );
+
+    expect((await agentsPlugin.verify(context)).attention).toBeUndefined();
+  });
+
+  it("a symlinked or unreadable file in .claude/agents is skipped without failing verify", async () => {
+    const context = await installedContext();
+    await writeText(
+      context,
+      "outside.md",
+      "---\nname: geo-audit-technical\n---\n",
+    );
+    await symlink(
+      join(context.cwd, "outside.md"),
+      join(context.cwd, ".claude/agents/link.md"),
+    );
+    await mkdir(join(context.cwd, ".claude/agents/dir.md"));
+
+    expect(await agentsPlugin.verify(context)).toMatchObject({ ok: true });
+    expect((await agentsPlugin.verify(context)).attention).toBeUndefined();
+  });
+
+  it("a name: line of 1 MiB of whitespace is handled within the 4 KiB prefix", async () => {
+    const context = await installedContext();
+    await writeText(
+      context,
+      ".claude/agents/huge.md",
+      `---\nname:${" ".repeat(1024 * 1024)}geo-audit-technical\n---\n`,
+    );
+
+    const started = performance.now();
+    const verification = await agentsPlugin.verify(context);
+
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(verification.attention).toBeUndefined();
+  });
+
+  it("a file name with control, bidi or backslash characters is shown escaped", async () => {
+    const context = await installedContext();
+    const bell = String.fromCharCode(0x07);
+    const rightToLeftOverride = String.fromCharCode(0x202e);
+    await writeText(
+      context,
+      `.claude/agents/bad${bell}na${rightToLeftOverride}me\\x.md`,
+      "---\nname: geo-audit-technical\n---\n",
+    );
+
+    expect((await agentsPlugin.verify(context)).attention).toContain(
+      ".claude/agents/bad\\u0007na\\u202eme\\\\x.md also declares name: geo-audit-technical",
+    );
+  });
+
+  it("a symlinked .claude/agents directory is reported, not followed", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await mkdir(join(context.cwd, "real-agents"));
+    await writeText(
+      context,
+      "real-agents/zz.md",
+      "---\nname: geo-audit-technical\n---\n",
+    );
+    await mkdir(join(context.cwd, ".claude"));
+    await symlink(
+      join(context.cwd, "real-agents"),
+      join(context.cwd, ".claude/agents"),
+    );
+
+    expect((await agentsPlugin.verify(context)).attention).toContain(
+      ".claude/agents is not a real directory; agemon can't check it",
+    );
+  });
+
+  it("an agent whose group is not installed is not checked", async () => {
+    const context = await createTestContext();
+    await writeText(
+      context,
+      ".claude/agents/zz.md",
+      "---\nname: geo-audit-technical\n---\n",
+    );
+
+    expect((await agentsPlugin.verify(context)).attention).toBeUndefined();
+  });
+
+  it("the scan stops after 256 entries and says so in an info line, not as attention", async () => {
+    const context = await installedContext();
+    for (let index = 0; index < 300; index += 1) {
+      await writeText(
+        context,
+        `.claude/agents/filler-${index}.md`,
+        "---\nname: x\n---\n",
+      );
+    }
+
+    expect((await agentsPlugin.verify(context)).attention).toBeUndefined();
+    expect(context.infoLines).toContain(
+      "agents: checked the first 256 files in .claude/agents; a same-name agent beyond them is not checked",
+    );
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "a regular file agemon cannot read is skipped without failing verify",
+    async () => {
+      const context = await installedContext();
+      await writeText(
+        context,
+        ".claude/agents/locked.md",
+        "---\nname: geo-audit-technical\n---\n",
+      );
+      await chmod(join(context.cwd, ".claude/agents/locked.md"), 0o000);
+
+      const verification = await agentsPlugin.verify(context);
+
+      expect(verification).toMatchObject({ ok: true });
+      expect(verification.attention).toBeUndefined();
+    },
+  );
+
+  it("space before the colon, a tab comment, a padded fence and a quoted key are matched", async () => {
+    const context = await installedContext();
+    await writeText(
+      context,
+      ".claude/agents/a.md",
+      "---  \nname : geo-audit-schema\n---\n",
+    );
+    await writeText(
+      context,
+      ".claude/agents/b.md",
+      "---\nname: geo-audit-content\t# note\n---\n",
+    );
+    await writeText(
+      context,
+      ".claude/agents/c.md",
+      '---\n"name": geo-audit-platform\n---\n',
+    );
+
+    const attention = (await agentsPlugin.verify(context)).attention ?? "";
+
+    expect(attention).toContain("a.md also declares name: geo-audit-schema");
+    expect(attention).toContain("b.md also declares name: geo-audit-content");
+    expect(attention).toContain("c.md also declares name: geo-audit-platform");
   });
 });
 
@@ -770,6 +1322,19 @@ describe("GEO agent catalog", () => {
 
   it("declares the five audit agents", () => {
     expect(agents.map((agent) => agent.name)).toEqual(GEO_AGENT_NAMES);
+  });
+
+  it("every agent name agemon ever shipped is current or retired, and every current name is in that list", () => {
+    const currentNames = SKILL_GROUPS.flatMap((group) =>
+      (group.agents ?? []).map((agent) => agent.name),
+    );
+
+    for (const name of AGENT_NAMES_EVER_SHIPPED) {
+      expect([...currentNames, ...RETIRED_AGENT_NAMES]).toContain(name);
+    }
+    for (const name of currentNames) {
+      expect(AGENT_NAMES_EVER_SHIPPED).toContain(name);
+    }
   });
 
   it.each(GEO_AGENT_NAMES)(

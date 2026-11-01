@@ -1,5 +1,9 @@
 import { spawn } from "node:child_process";
 import { isAbsolute } from "node:path";
+import {
+  MAX_REDACTED_LINE_CHARACTERS,
+  redactSecretsInText,
+} from "../inspect/redact.js";
 import { printable } from "./untrusted-text.js";
 
 export interface SubprocessResult {
@@ -13,13 +17,73 @@ export interface RunSubprocessOptions {
   killSignal?: NodeJS.Signals;
   cwd?: string;
   env?: Record<string, string>;
+  unsetEnv?: readonly string[];
+}
+
+export const MAX_RAW_OUTPUT_LINE_CHARACTERS = MAX_REDACTED_LINE_CHARACTERS;
+const MAX_SHOWN_OUTPUT_LINE_CHARACTERS = 300;
+const FAILURE_OUTPUT_LINES = 10;
+const CONTROL_SEQUENCE_INTRODUCER = `(?:${String.fromCharCode(27)}\\[|${String.fromCharCode(0x9b)})`;
+const TERMINAL_ESCAPE_SEQUENCE = new RegExp(
+  `${CONTROL_SEQUENCE_INTRODUCER}[0-9;?]*[ -/]*[@-~]`,
+  "g",
+);
+const SPAWN_ERROR_PREFIX = "process spawn error: ";
+
+export interface OutputTail {
+  earlierLineCount: number;
+  lines: string[];
+}
+
+export function sanitizeOutput(text: string): string {
+  return printable(
+    redactSecretsInText(text.replace(TERMINAL_ESCAPE_SEQUENCE, "")),
+  );
+}
+
+export function capShownLine(line: string): string {
+  return line.length > MAX_SHOWN_OUTPUT_LINE_CHARACTERS
+    ? `${line.slice(0, MAX_SHOWN_OUTPUT_LINE_CHARACTERS)}…`
+    : line;
+}
+
+export function safeOutputTail(stream: string, maxLines: number): OutputTail {
+  const rawLines = stream.split("\n");
+  if (rawLines.at(-1) === "") {
+    rawLines.pop();
+  }
+  const earlierLineCount = Math.max(rawLines.length - maxLines, 0);
+  if (rawLines.length === 0) {
+    return { earlierLineCount, lines: [] };
+  }
+  const keptRawText = rawLines
+    .slice(earlierLineCount)
+    .map((line) => line.slice(0, MAX_RAW_OUTPUT_LINE_CHARACTERS))
+    .join("\n");
+  return {
+    earlierLineCount,
+    lines: sanitizeOutput(keptRawText).split("\n").map(capShownLine),
+  };
 }
 
 export function describeSubprocessFailure(
   result: SubprocessResult,
   command: string,
 ): string {
-  return printable(result.stderr.trim()) || `${command} exited ${result.code}`;
+  const tail = safeOutputTail(result.stderr.trim(), FAILURE_OUTPUT_LINES);
+  if (tail.lines.every((line) => line.trim() === "")) {
+    return `${command} exited ${result.code}`;
+  }
+  return [
+    ...(tail.earlierLineCount > 0
+      ? [`… ${tail.earlierLineCount} earlier lines`]
+      : []),
+    ...tail.lines,
+  ].join("\n");
+}
+
+export function isSpawnFailure(result: SubprocessResult): boolean {
+  return result.code === 1 && result.stderr.startsWith(SPAWN_ERROR_PREFIX);
 }
 
 const NPM_LAUNCH_MARKERS = [
@@ -80,7 +144,7 @@ export function agemonSubprocessEnvironment(
 
 export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 300_000;
 export const MAX_CAPTURED_CHARACTERS_PER_STREAM = 10 * 1024 * 1024;
-const TRUNCATION_MARKER = "\n…[truncated]";
+export const TRUNCATION_MARKER = "\n…[truncated]";
 const HARD_KILL_GRACE_MS = 2_000;
 const STREAM_DRAIN_GRACE_MS = 2_000;
 const TIMEOUT_EXIT_CODE = 124;
@@ -132,7 +196,14 @@ export async function runSubprocess(
     const { runFakeSubprocess } = await import("./fake-subprocess.js");
     return runFakeSubprocess(command, args, options);
   }
+  return runRealSubprocess(command, args, options);
+}
 
+export async function runRealSubprocess(
+  command: string,
+  args: string[],
+  options: RunSubprocessOptions = {},
+): Promise<SubprocessResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS;
 
   return await new Promise<SubprocessResult>((resolve) => {
@@ -197,9 +268,16 @@ export async function runSubprocess(
       }, STREAM_DRAIN_GRACE_MS);
     };
 
+    const environment: Record<string, string> = {
+      ...agemonSubprocessEnvironment(),
+      ...options.env,
+    };
+    for (const name of options.unsetEnv ?? []) {
+      delete environment[name];
+    }
     const childProcess = spawn(command, args, {
       cwd: options.cwd ?? process.cwd(),
-      env: { ...agemonSubprocessEnvironment(), ...options.env },
+      env: environment,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -231,8 +309,8 @@ export async function runSubprocess(
 
     childProcess.on("error", (error: Error) => {
       const errorMessage = stderr.text
-        ? `${stderr.text}\nprocess spawn error: ${error.message}`
-        : `process spawn error: ${error.message}`;
+        ? `${stderr.text}\n${SPAWN_ERROR_PREFIX}${error.message}`
+        : `${SPAWN_ERROR_PREFIX}${error.message}`;
       finalize({ code: 1, stdout: stdout.text, stderr: errorMessage });
     });
 

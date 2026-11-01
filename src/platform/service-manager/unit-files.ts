@@ -9,6 +9,37 @@ export function isAgemonDaemonUnitFile(fileName: string): boolean {
   );
 }
 
+const ENVIRONMENT_DIRECTIVE = "Environment=";
+const QUOTED_UNIT_ESCAPE = /\\(["\\])/g;
+const ENVIRONMENT_WORD = /"((?:[^"\\]|\\.)*)"|(\S+)/g;
+
+export function environmentOfUnit(
+  unitContents: string,
+): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const line of unitContents.split("\n").map((entry) => entry.trim())) {
+    if (!line.startsWith(ENVIRONMENT_DIRECTIVE)) {
+      continue;
+    }
+    for (const word of line
+      .slice(ENVIRONMENT_DIRECTIVE.length)
+      .matchAll(ENVIRONMENT_WORD)) {
+      const assignment = (
+        word[1] === undefined
+          ? word[2]
+          : word[1].replace(QUOTED_UNIT_ESCAPE, "$1")
+      ).replaceAll("%%", "%");
+      const separator = assignment.indexOf("=");
+      if (separator > 0) {
+        environment[assignment.slice(0, separator)] = assignment.slice(
+          separator + 1,
+        );
+      }
+    }
+  }
+  return environment;
+}
+
 export function workingDirectoryOfUnit(unitContents: string): string | null {
   const values = unitContents
     .split("\n")

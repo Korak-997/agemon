@@ -23,6 +23,7 @@ const RESOURCE_STATE_TONE: Record<ResourceState, Parameters<typeof badge>[1]> =
 const CAPABILITY_STATE_LABEL: Record<CapabilityState, string> = {
   "present-managed": "present · managed",
   "present-adopted": "present · adopted",
+  "present-modified": "present · changed",
   absent: "absent",
   declined: "absent · declined",
   unknown: "unknown",
@@ -34,6 +35,7 @@ const CAPABILITY_STATE_TONE: Record<
 > = {
   "present-managed": "ok",
   "present-adopted": "warn",
+  "present-modified": "warn",
   absent: "neutral",
   declined: "neutral",
   unknown: "warn",
@@ -43,7 +45,7 @@ function resourceRow(resource: ClassifiedResource): string[] {
   return [
     printable(resource.path),
     badge(resource.state, RESOURCE_STATE_TONE[resource.state]),
-    resource.detail ?? "",
+    printable(resource.detail ?? ""),
   ];
 }
 
@@ -127,7 +129,7 @@ export function renderInspectReport(report: InspectReport): string {
             CAPABILITY_STATE_LABEL[row.state],
             CAPABILITY_STATE_TONE[row.state],
           ),
-          row.detail ?? "",
+          printable(row.detail ?? ""),
         ]),
       ]),
     );

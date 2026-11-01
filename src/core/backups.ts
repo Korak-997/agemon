@@ -93,6 +93,39 @@ export async function writeImmutableBackup(
   return writeBackup(cwd, backupPath, contents);
 }
 
+export class BackupPathOccupiedError extends Error {
+  constructor(readonly backupPath: string) {
+    super(`${backupPath} already holds a different file`);
+  }
+}
+
+export async function writeBackupOnce(
+  cwd: string,
+  resourceId: string,
+  contents: string,
+): Promise<WrittenBackup> {
+  const backupPath = resolveImmutableBackupPath(cwd, resourceId);
+  let existingBackup: string | null;
+  try {
+    existingBackup = await readBackupFile(cwd, backupPath);
+  } catch (error) {
+    if (
+      error instanceof NotARegularFileError ||
+      error instanceof FileTooLargeError
+    ) {
+      throw new BackupPathOccupiedError(backupPath);
+    }
+    throw error;
+  }
+  if (existingBackup === null) {
+    return writeBackup(cwd, backupPath, contents);
+  }
+  if (existingBackup !== contents) {
+    throw new BackupPathOccupiedError(backupPath);
+  }
+  return { path: backupPath, checksum: sha256Hex(contents) };
+}
+
 export async function replaceStaleBackup(
   cwd: string,
   resourceId: string,

@@ -39,6 +39,7 @@ type ReleaseDecision =
   | { kind: "not-registered" }
   | { kind: "still-used"; others: string[] }
   | { kind: "not-the-installer" }
+  | { kind: "installer-entry-unconfirmed" }
   | { kind: "needs-remove-shared"; claimedBy: string }
   | { kind: "remove"; claimedBy: string | null };
 
@@ -285,6 +286,17 @@ export async function claimSharedResourceBeforeCreating(
   );
 }
 
+function recordedInstaller(record: SharedResourceRecord): string | null {
+  switch (record.origin) {
+    case "installed":
+      return record.installedBy;
+    case "migrated":
+      return record.claimedBy;
+    case "pre-existing":
+      return null;
+  }
+}
+
 function decideRelease(
   record: SharedResourceRecord | null,
   repository: string,
@@ -299,7 +311,9 @@ function decideRelease(
     return { kind: "still-used", others };
   }
   if (!releasingRepoInstalledIt) {
-    return { kind: "not-the-installer" };
+    return recordedInstaller(record) === repository
+      ? { kind: "installer-entry-unconfirmed" }
+      : { kind: "not-the-installer" };
   }
   if (record.origin === "installed" && record.installedBy === repository) {
     return { kind: "remove", claimedBy: null };
@@ -342,18 +356,39 @@ const REMOVAL_PAST_TENSE: Record<
   disable: "disabled",
 };
 
+async function isPresentOrUnknown(
+  probe: SharedResourceProbe,
+): Promise<boolean> {
+  try {
+    return await probe.isPresent();
+  } catch {
+    return true;
+  }
+}
+
+async function unregisteredResourceMayNeedRemoval(
+  decision: Exclude<ReleaseDecision, { kind: "remove" }>,
+  options: SharedResourceProbe & { releasingRepoInstalledIt: boolean },
+): Promise<boolean> {
+  return (
+    decision.kind === "not-registered" &&
+    options.releasingRepoInstalledIt &&
+    (await isPresentOrUnknown(options))
+  );
+}
+
 function describeKeptResource(
   ctx: Context,
   resource: SharedResourceDeclaration,
   decision: Exclude<ReleaseDecision, { kind: "remove" }>,
   record: SharedResourceRecord | null,
-  releasingRepoInstalledIt: boolean,
+  unregisteredResourceMayNeedRemoval: boolean,
 ): string {
   const keeping = `${ctx.dryRun ? "Would keep" : "Keeping"} ${resource.toolName}`;
   const manualRemoval = `run '${resource.manualRemoveCommand}' yourself if nothing else needs it`;
   switch (decision.kind) {
     case "not-registered":
-      return releasingRepoInstalledIt
+      return unregisteredResourceMayNeedRemoval
         ? `${keeping}: this repository is not registered as using it — ${manualRemoval}`
         : `${keeping}: this repository is not registered as using it`;
     case "still-used":
@@ -362,7 +397,9 @@ function describeKeptResource(
       return record?.origin === "pre-existing" &&
         resource.removalVerb === "disable"
         ? `${keeping}: it was enabled before agemon tracked it — ${manualRemoval}`
-        : `${keeping}: this repository did not install it — ${manualRemoval}`;
+        : `${keeping}: agemon has no record on this machine that it installed it from this repository — ${manualRemoval}`;
+    case "installer-entry-unconfirmed":
+      return `${keeping}: the shared-tools ledger names this repository as its installer, but this repository's ledger entry for that install is not confirmed (written before ledger receipts, or not on this machine) — ${manualRemoval}`;
     case "needs-remove-shared": {
       const reason = `${keeping}: agemon installed it before it tracked shared tools (the ledger of ${printable(decision.claimedBy)} says so), so another repository may still use it.`;
       return ctx.dryRun
@@ -423,7 +460,7 @@ export async function releaseSharedResource(
             resource,
             decision,
             record,
-            options.releasingRepoInstalledIt,
+            await unregisteredResourceMayNeedRemoval(decision, options),
           ),
     );
     return;
@@ -445,7 +482,7 @@ export async function releaseSharedResource(
             resource,
             decision,
             record,
-            options.releasingRepoInstalledIt,
+            await unregisteredResourceMayNeedRemoval(decision, options),
           ),
         );
       } else if (await options.isPresent()) {
@@ -508,12 +545,7 @@ export async function describeSharedTools(
       rows.push({
         tool: resource.toolName,
         origin: record.origin,
-        recordedBy:
-          record.origin === "installed"
-            ? record.installedBy
-            : record.origin === "migrated"
-              ? record.claimedBy
-              : null,
+        recordedBy: recordedInstaller(record),
         holders: record.holders.map((holder) => ({
           path: holder,
           thisRepository: holder === repository,

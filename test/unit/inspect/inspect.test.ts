@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -18,6 +19,7 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -46,6 +48,9 @@ function createNoOpServiceManager(): ServiceManager {
     async readUnitWorkingDirectory() {
       return null;
     },
+    async readUnitEnvironment() {
+      return null;
+    },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
     async isLingerEnabled() {
       return false;
@@ -70,6 +75,7 @@ async function createInspectContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [
       { name: "python3", present: true },
@@ -165,6 +171,47 @@ describe("inspectRepository", () => {
     expect((await inspectRepository(unignoredContext)).isolation.status).toBe(
       "not-ignored",
     );
+  });
+
+  it("asks git in a repository, so a negated .agemon is not-ignored", async () => {
+    const context = await createInspectContext();
+    execFileSync("git", ["init", "-q", context.cwd]);
+    await writeFile(
+      join(context.cwd, ".gitignore"),
+      "/.agemon/\n!/.agemon/\n",
+      "utf8",
+    );
+
+    expect((await inspectRepository(context)).isolation.status).toBe(
+      "not-ignored",
+    );
+  });
+
+  it("reports not-ignored with git's failure when git cannot answer in a repository", async () => {
+    const context = await createInspectContext();
+    await mkdir(join(context.cwd, ".git"));
+    await writeFile(join(context.cwd, ".gitignore"), "/.agemon/\n", "utf8");
+
+    const { isolation } = await inspectRepository(context);
+
+    expect(isolation.status).toBe("not-ignored");
+    expect(isolation.trackingCheckError).toMatch(
+      /could not ask git whether \.agemon\/ is ignored: /,
+    );
+  });
+
+  it("lets the .gitignore file decide outside a repository", async () => {
+    const context = await createInspectContext();
+    await writeFile(
+      join(context.cwd, ".gitignore"),
+      ".agemon\n!.agemon\n",
+      "utf8",
+    );
+
+    const { isolation } = await inspectRepository(context);
+
+    expect(isolation.status).toBe("ignored");
+    expect(isolation.trackingCheckError).toBeNull();
   });
 
   it("redacts credential-shaped values in structured config", async () => {

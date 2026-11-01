@@ -1,8 +1,17 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fakePinnedSkillManifest } from "../../../src/core/fake-pinned-skills.js";
 import {
   createFakeVerifiedBinaryInstaller,
   fakeCodeReviewGraphOnPath,
@@ -33,47 +42,111 @@ beforeEach(() => {
 });
 
 describe("runFakeSubprocess", () => {
-  it("answers skills calls only through the pinned CLI path", () => {
-    const pinned = runFakeSubprocess(process.execPath, [
-      PINNED_SKILLS_CLI,
-      "list",
-      "--json",
-    ]);
+  it("answers skills calls only through the pinned CLI path", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agemon-fake-skills-"));
+    const pinned = runFakeSubprocess(
+      process.execPath,
+      [PINNED_SKILLS_CLI, "list", "--json"],
+      { cwd },
+    );
     const unpinned = runFakeSubprocess("npx", ["skills", "list", "--json"]);
 
     expect(isJsonList(pinned.stdout)).toBe(true);
     expect(isJsonList(unpinned.stdout)).toBe(false);
   });
 
-  it("tracks skills added and removed through the pinned CLI", () => {
-    runFakeSubprocess(process.execPath, [
-      PINNED_SKILLS_CLI,
-      "add",
-      "/src/skills/writing-guidelines",
-      "--skill",
-      "writing-guidelines",
-    ]);
-    const afterAdd = runFakeSubprocess(process.execPath, [
-      PINNED_SKILLS_CLI,
-      "list",
-      "--json",
-    ]);
-    runFakeSubprocess(process.execPath, [
-      PINNED_SKILLS_CLI,
-      "remove",
-      "writing-guidelines",
-      "--yes",
-    ]);
-    const afterRemove = runFakeSubprocess(process.execPath, [
+  it("refuses skills calls without the repository as cwd", () => {
+    const result = runFakeSubprocess(process.execPath, [
       PINNED_SKILLS_CLI,
       "list",
       "--json",
     ]);
 
-    expect(JSON.parse(afterAdd.stdout)).toMatchObject([
-      { name: "writing-guidelines" },
-    ]);
-    expect(JSON.parse(afterRemove.stdout)).toEqual([]);
+    expect(result.code).toBe(1);
+  });
+
+  it("copies an added skill into .claude/skills like the real CLI, and removes only that copy", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agemon-fake-skills-"));
+    const source = await mkdtemp(join(tmpdir(), "agemon-fake-source-"));
+    await writeFile(join(source, "SKILL.md"), "---\nname: x\n---\n");
+    await writeFile(join(source, "metadata.json"), "{}");
+    await mkdir(join(source, "__pycache__"));
+    await mkdir(join(cwd, ".agents/skills/x"), { recursive: true });
+    await writeFile(join(cwd, ".agents/skills/x/marker"), "user");
+    const cli = (...args: string[]) =>
+      runFakeSubprocess(process.execPath, [PINNED_SKILLS_CLI, ...args], {
+        cwd,
+      });
+
+    cli("add", source, "--skill", "x", "--agent", "claude-code", "--yes");
+    const afterAdd = JSON.parse(cli("list", "--json").stdout);
+    const copied = await readdir(join(cwd, ".claude/skills/x"));
+    cli("remove", "x", "--agent", "claude-code", "--yes");
+
+    expect(afterAdd).toMatchObject([{ name: "x" }]);
+    expect(copied).toEqual(["SKILL.md"]);
+    expect(existsSync(join(cwd, ".claude/skills/x"))).toBe(false);
+    expect(existsSync(join(cwd, ".agents/skills/x/marker"))).toBe(true);
+    expect(existsSync(join(cwd, "skills-lock.json"))).toBe(false);
+  });
+
+  it("replaces a symlinked or edited copy and lists skills found under .agents/skills too", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agemon-fake-skills-"));
+    const source = await mkdtemp(join(tmpdir(), "agemon-fake-source-"));
+    const outside = await mkdtemp(join(tmpdir(), "agemon-fake-outside-"));
+    await writeFile(join(source, "SKILL.md"), "---\nname: x\n---\n");
+    await writeFile(join(outside, "keep"), "outside");
+    await mkdir(join(cwd, ".claude/skills"), { recursive: true });
+    await symlink(outside, join(cwd, ".claude/skills/x"));
+    await mkdir(join(cwd, ".agents/skills/y"), { recursive: true });
+    await writeFile(join(cwd, ".agents/skills/y/SKILL.md"), "y");
+
+    const listed = runFakeSubprocess(
+      process.execPath,
+      [PINNED_SKILLS_CLI, "add", source, "--skill", "x"],
+      { cwd },
+    );
+    const names = JSON.parse(
+      runFakeSubprocess(process.execPath, [PINNED_SKILLS_CLI, "list"], {
+        cwd,
+      }).stdout,
+    ).map((skill: { name: string }) => skill.name);
+
+    expect(listed.code).toBe(0);
+    expect(names).toEqual(["x", "y"]);
+    expect(existsSync(join(outside, "keep"))).toBe(true);
+    expect(await readdir(join(cwd, ".claude/skills/x"))).toEqual(["SKILL.md"]);
+  });
+
+  it("refuses skill names that are not plain names on add and remove", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agemon-fake-skills-"));
+    const cli = (...args: string[]) =>
+      runFakeSubprocess(process.execPath, [PINNED_SKILLS_CLI, ...args], {
+        cwd,
+      });
+
+    expect(cli("add", "/nowhere", "--skill", "../escape").code).toBe(1);
+    expect(cli("remove", "../escape", "--yes").code).toBe(1);
+    expect(existsSync(join(cwd, ".claude/escape"))).toBe(false);
+  });
+
+  it("writes stand-ins for the pinned skills on checkout", async () => {
+    const sourceDirectory = join(
+      await mkdtemp(join(tmpdir(), "agemon-fake-pinned-")),
+      ESSENTIALS_SKILLS_COMMIT,
+    );
+    await mkdir(sourceDirectory);
+
+    runFakeSubprocess("git", ["checkout", "-q", "FETCH_HEAD"], {
+      cwd: sourceDirectory,
+    });
+
+    expect(
+      await readFile(
+        join(sourceDirectory, "skills/writing-guidelines/SKILL.md"),
+        "utf8",
+      ),
+    ).toBe(fakePinnedSkillManifest("writing-guidelines"));
   });
 
   it("installs code-review-graph only at the pinned version, under the fake pipx home", async () => {

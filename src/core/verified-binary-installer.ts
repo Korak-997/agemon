@@ -12,6 +12,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { findBinaryPath } from "../platform/detect.js";
+import { readBoundedBody } from "./bounded-response.js";
 import { errorMessage } from "./error-message.js";
 import { readRegularFileIfExists, sha256OfRegularFile } from "./files.js";
 import { sha256Hex } from "./fingerprint.js";
@@ -184,17 +185,11 @@ async function readBoundedArchive(
   if (!response.ok || !response.body) {
     throw new Error(`HTTP ${response.status}`);
   }
-
-  const chunks: Uint8Array[] = [];
-  let receivedBytes = 0;
-  for await (const chunk of response.body) {
-    receivedBytes += chunk.byteLength;
-    if (receivedBytes > maxBytes) {
-      throw new Error(`the archive exceeded the ${maxBytes}-byte limit`);
-    }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
+  return readBoundedBody(
+    response.body,
+    maxBytes,
+    () => new Error(`the archive exceeded the ${maxBytes}-byte limit`),
+  );
 }
 
 async function downloadArchive(

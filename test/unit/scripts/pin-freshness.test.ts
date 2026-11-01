@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   compareVersions,
+  declaredInstallDependencies,
   githubCommitSummaries,
   newestSettledCommitAfterPin,
   newestSettledVersion,
   npmReleases,
+  pinnedReleaseProblem,
   pypiReleases,
 } from "../../../scripts/check-pins/freshness.js";
 
@@ -22,26 +24,26 @@ describe("newestSettledVersion", () => {
           {
             version: "0.9.0",
             publishedAt: "2026-09-01T00:00:00Z",
-            yanked: false,
+            withdrawn: false,
           },
-          { version: "0.10.0", publishedAt: EIGHT_DAYS_AGO, yanked: false },
-          { version: "0.11.0", publishedAt: SIX_DAYS_AGO, yanked: false },
+          { version: "0.10.0", publishedAt: EIGHT_DAYS_AGO, withdrawn: false },
+          { version: "0.11.0", publishedAt: SIX_DAYS_AGO, withdrawn: false },
         ],
         NOW,
       ),
     ).toBe("0.10.0");
   });
 
-  it("skips yanked releases", () => {
+  it("skips withdrawn releases", () => {
     expect(
       newestSettledVersion(
         [
           {
             version: "2.3.8",
             publishedAt: "2026-09-01T00:00:00Z",
-            yanked: false,
+            withdrawn: false,
           },
-          { version: "2.3.9", publishedAt: EIGHT_DAYS_AGO, yanked: true },
+          { version: "2.3.9", publishedAt: EIGHT_DAYS_AGO, withdrawn: true },
         ],
         NOW,
       ),
@@ -51,7 +53,7 @@ describe("newestSettledVersion", () => {
   it("returns undefined when nothing has settled", () => {
     expect(
       newestSettledVersion(
-        [{ version: "1.0.0", publishedAt: SIX_DAYS_AGO, yanked: false }],
+        [{ version: "1.0.0", publishedAt: SIX_DAYS_AGO, withdrawn: false }],
         NOW,
       ),
     ).toBeUndefined();
@@ -72,8 +74,24 @@ describe("npmReleases", () => {
         versions: { "0.58.0": {}, "0.59.0-rc.1": {} },
       }),
     ).toEqual([
-      { version: "0.58.0", publishedAt: EIGHT_DAYS_AGO, yanked: false },
+      { version: "0.58.0", publishedAt: EIGHT_DAYS_AGO, withdrawn: false },
     ]);
+  });
+
+  it("marks a deprecated version as withdrawn, so it is never the newest settled", () => {
+    const releases = npmReleases({
+      time: { "0.58.0": EIGHT_DAYS_AGO, "0.59.0": EIGHT_DAYS_AGO },
+      versions: {
+        "0.58.0": {},
+        "0.59.0": { deprecated: "broken build, use 0.58.0" },
+      },
+    });
+
+    expect(releases).toEqual([
+      { version: "0.58.0", publishedAt: EIGHT_DAYS_AGO, withdrawn: false },
+      { version: "0.59.0", publishedAt: EIGHT_DAYS_AGO, withdrawn: true },
+    ]);
+    expect(newestSettledVersion(releases, NOW)).toBe("0.58.0");
   });
 
   it("rejects a packument without a time map", () => {
@@ -97,8 +115,8 @@ describe("pypiReleases", () => {
         },
       }),
     ).toEqual([
-      { version: "2.3.9", publishedAt: EIGHT_DAYS_AGO, yanked: false },
-      { version: "2.4.0", publishedAt: SIX_DAYS_AGO, yanked: true },
+      { version: "2.3.9", publishedAt: EIGHT_DAYS_AGO, withdrawn: false },
+      { version: "2.4.0", publishedAt: SIX_DAYS_AGO, withdrawn: true },
     ]);
   });
 
@@ -169,5 +187,56 @@ describe("compareVersions", () => {
     expect(compareVersions("0.10.0", "0.9.0")).toBeGreaterThan(0);
     expect(compareVersions("2.3.8", "2.3.9")).toBeLessThan(0);
     expect(compareVersions("1.7.2", "1.7.2")).toBe(0);
+  });
+});
+
+describe("pinnedReleaseProblem", () => {
+  const releases = [
+    { version: "2.3.9", publishedAt: EIGHT_DAYS_AGO, withdrawn: false },
+    { version: "2.4.0", publishedAt: EIGHT_DAYS_AGO, withdrawn: true },
+  ];
+
+  it("reports a pin missing from the release list", () => {
+    expect(pinnedReleaseProblem(releases, "2.3.8")).toBe("not published");
+  });
+
+  it("reports a yanked or deprecated pin", () => {
+    expect(pinnedReleaseProblem(releases, "2.4.0")).toBe("withdrawn upstream");
+  });
+
+  it("is quiet for a published pin", () => {
+    expect(pinnedReleaseProblem(releases, "2.3.9")).toBeUndefined();
+  });
+});
+
+describe("declaredInstallDependencies", () => {
+  it("lists dependencies, optional and peer dependencies", () => {
+    expect(
+      declaredInstallDependencies(
+        {
+          versions: {
+            "1.0.0": {
+              dependencies: { a: "1" },
+              optionalDependencies: { b: "1" },
+              peerDependencies: { c: "1" },
+              devDependencies: { d: "1" },
+            },
+          },
+        },
+        "1.0.0",
+      ),
+    ).toEqual(["a", "b", "c"]);
+  });
+
+  it("is empty for a manifest without them", () => {
+    expect(
+      declaredInstallDependencies({ versions: { "0.58.0": {} } }, "0.58.0"),
+    ).toEqual([]);
+  });
+
+  it("rejects a packument without the pinned manifest", () => {
+    expect(() =>
+      declaredInstallDependencies({ versions: {} }, "0.58.0"),
+    ).toThrow("unexpected response");
   });
 });

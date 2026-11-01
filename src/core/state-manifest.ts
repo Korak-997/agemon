@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -6,11 +6,19 @@ import {
   writeFileAtomic,
   writeNewFileWithFallback,
 } from "./files.js";
+import { ensureLedgerKey, readLedgerKey } from "./ledger-key.js";
+import {
+  identitiesAcceptingEntry,
+  type ReceiptIdentities,
+  repositoryReceiptIdentities,
+} from "./machine-ledger.js";
 import { resolveStateDirectory } from "./repo-paths.js";
 import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 const MANIFEST_RELATIVE_PATH = ".agemon/state.json";
 const LEDGER_VERSION = 3;
+const RECEIPT_DOMAIN = "agemon-ledger-entry/1";
+const RECEIPT_PATTERN = /^[0-9a-f]{64}$/u;
 
 export type OwnershipMode = "created" | "recorded-key" | "delimited-block";
 
@@ -40,6 +48,7 @@ export interface LedgerEntry {
   desiredRevision: string | null;
   validation: LedgerValidation | null;
   backup: LedgerBackupRef | null;
+  receipt: string | null;
 }
 
 export type ManifestAction = LedgerEntry;
@@ -290,7 +299,51 @@ function normalizeLedgerEntry(value: LedgerEntry): LedgerEntry {
     backup: value.backup
       ? { path: value.backup.path, checksum: value.backup.checksum }
       : null,
+    receipt:
+      typeof value.receipt === "string" && RECEIPT_PATTERN.test(value.receipt)
+        ? value.receipt
+        : null,
   };
+}
+
+function computeReceipt(
+  key: Buffer,
+  repositoryIdentity: string,
+  entry: LedgerEntry,
+): Buffer {
+  const { receipt: _unsigned, ...signedFields } = normalizeLedgerEntry(entry);
+  return createHmac("sha256", key)
+    .update(JSON.stringify([RECEIPT_DOMAIN, repositoryIdentity, signedFields]))
+    .digest();
+}
+
+function receiptMatches(
+  key: Buffer,
+  repositoryIdentity: string,
+  entry: LedgerEntry,
+): boolean {
+  return (
+    entry.receipt !== null &&
+    RECEIPT_PATTERN.test(entry.receipt) &&
+    timingSafeEqual(
+      Buffer.from(entry.receipt, "hex"),
+      computeReceipt(key, repositoryIdentity, entry),
+    )
+  );
+}
+
+function describesSameResource(
+  candidate: LedgerEntry,
+  recorded: LedgerEntry,
+): boolean {
+  if (candidate.plugin !== recorded.plugin) {
+    return false;
+  }
+  return recorded.resourceId === null
+    ? candidate.resourceId === null &&
+        candidate.type === recorded.type &&
+        candidate.target === recorded.target
+    : candidate.resourceId === recorded.resourceId;
 }
 
 export function parseLedgerEntries(value: unknown): LedgerEntry[] | null {
@@ -323,6 +376,7 @@ function migrateLegacyActionToLedgerEntry(
     desiredRevision: null,
     validation: null,
     backup: null,
+    receipt: null,
   };
 }
 
@@ -417,12 +471,56 @@ export function parseStateManifestContents(
 export class StateManifest {
   private recordingAgemonVersion: string | null = null;
   private recordingPlanId: string | null = null;
+  private receiptKey: Buffer | null = null;
+  private receiptIdentities: ReceiptIdentities | null = null;
 
   private constructor(
     private readonly repoRoot: string,
     private readonly manifestPath: string,
     private state: StateManifestData,
   ) {}
+
+  private async loadReceiptContext(): Promise<void> {
+    this.receiptKey = await readLedgerKey();
+    this.receiptIdentities = await repositoryReceiptIdentities(this.repoRoot);
+  }
+
+  private async signingContext(): Promise<{ key: Buffer; identity: string }> {
+    await resolveStateDirectory(this.repoRoot, [], { create: true });
+    this.receiptIdentities ??= await repositoryReceiptIdentities(this.repoRoot);
+    this.receiptKey ??= await ensureLedgerKey();
+    this.resignPathFormEntries(this.receiptKey, this.receiptIdentities);
+    return { key: this.receiptKey, identity: this.receiptIdentities.signing };
+  }
+
+  private resignPathFormEntries(
+    key: Buffer,
+    { signing, byPath }: ReceiptIdentities,
+  ): void {
+    if (signing === byPath) {
+      return;
+    }
+    for (const entry of this.state.actions) {
+      if (this.isConfirmed(entry) && !receiptMatches(key, signing, entry)) {
+        entry.receipt = computeReceipt(key, signing, entry).toString("hex");
+      }
+    }
+  }
+
+  isConfirmed(entry: LedgerEntry): boolean {
+    const key = this.receiptKey;
+    if (key === null || this.receiptIdentities === null) {
+      return false;
+    }
+    return identitiesAcceptingEntry(
+      this.receiptIdentities,
+      entry.createdAt,
+    ).some((identity) => receiptMatches(key, identity, entry));
+  }
+
+  getConfirmedActions(): LedgerEntry[] {
+    return this.state.actions.filter((action) => this.isConfirmed(action));
+  }
 
   setRecordingAgemonVersion(version: string | null): void {
     this.recordingAgemonVersion = version;
@@ -457,6 +555,9 @@ export class StateManifest {
     const { state, migratedFromVersion } =
       parseStateManifestContents(rawContents);
     const manifest = new StateManifest(cwd, manifestPath, state);
+    if (state.actions.length > 0) {
+      await manifest.loadReceiptContext();
+    }
 
     if (migratedFromVersion !== null) {
       await manifest.persistPreMigrationBackup(
@@ -498,8 +599,15 @@ export class StateManifest {
       desiredRevision: input.desiredRevision ?? null,
       validation: input.validation ?? null,
       backup: input.backup ?? null,
+      receipt: null,
     };
     assertSafeLedgerText([action]);
+    const { key, identity } = await this.signingContext();
+    action.receipt = computeReceipt(key, identity, action).toString("hex");
+    this.state.actions = this.state.actions.filter(
+      (existing) =>
+        this.isConfirmed(existing) || !describesSameResource(existing, action),
+    );
     this.state.actions.push(action);
     await this.persist();
     return action;
@@ -509,12 +617,16 @@ export class StateManifest {
     resourceId: string,
     patch: LedgerEntryPatch,
   ): Promise<LedgerEntry | undefined> {
-    const entry = this.state.actions.find(
+    const entriesForResource = this.state.actions.filter(
       (action) => action.resourceId === resourceId,
     );
+    const entry =
+      entriesForResource.find((action) => this.isConfirmed(action)) ??
+      entriesForResource[0];
     if (!entry) {
       return undefined;
     }
+    const wasConfirmed = this.isConfirmed(entry);
     assertSafeLedgerText([
       {
         ...entry,
@@ -534,6 +646,11 @@ export class StateManifest {
     }
     if (patch.validation !== undefined) {
       entry.validation = patch.validation;
+    }
+    entry.receipt = null;
+    if (wasConfirmed) {
+      const { key, identity } = await this.signingContext();
+      entry.receipt = computeReceipt(key, identity, entry).toString("hex");
     }
     await this.persist();
     return entry;

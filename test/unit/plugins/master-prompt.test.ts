@@ -27,6 +27,8 @@ import type {
   AgemonPlugin,
   ProposedOperation,
 } from "../../../src/plugins/types.js";
+import { applyAllPlanned } from "../apply-all-planned.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const runningAsRoot = process.getuid?.() === 0;
@@ -54,6 +56,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -93,6 +98,7 @@ async function createTestContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -140,7 +146,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
     );
     expect(agentsOperation?.action).toBe("merge-block");
 
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     const merged = await readFile(join(context.cwd, "AGENTS.md"), "utf8");
     expect(merged).toContain(originalAgents.trimEnd());
@@ -166,7 +172,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
     expect(plan).toHaveLength(5);
     expect(plan.every((operation) => operation.action === "create")).toBe(true);
 
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     expect(await readFile(join(context.cwd, "AGENTS.md"), "utf8")).toContain(
       "<!-- agemon:start:agent-rules -->",
@@ -201,7 +207,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
     );
     expect(claudeOperation?.action).toBe("adopt");
 
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     expect(await readFile(join(context.cwd, "CLAUDE.md"), "utf8")).toBe(
       handWrittenPointer,
@@ -230,7 +236,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
     );
     expect(claudeOperation?.action).toBe("conflict");
 
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     expect(await readFile(join(context.cwd, "CLAUDE.md"), "utf8")).toBe(
       independentRules,
@@ -244,7 +250,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
 
   it("refreshes the ledger fingerprint after repairing a drifted managed block", async () => {
     const context = await createTestContext();
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     const agentsPath = join(context.cwd, "AGENTS.md");
     const entryFor = () =>
@@ -259,7 +265,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
       "utf8",
     );
 
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     const repaired = await readFile(agentsPath, "utf8");
     expect(repaired).not.toContain("mangled body");
@@ -277,7 +283,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
     const originalAgents = "# Original hand-written rules\n\nKeep me.\n";
     await writeFile(join(context.cwd, "AGENTS.md"), originalAgents, "utf8");
 
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     const backupPath = resolveImmutableBackupPath(
       context.cwd,
@@ -290,7 +296,7 @@ describe("master-prompt plugin — dedup-safe reconciliation", () => {
       "user tweaked the managed file\n",
       "utf8",
     );
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     expect(await readFile(backupPath, "utf8")).toBe(originalAgents);
   });
@@ -414,7 +420,7 @@ describe("master-prompt revert — never loses user content", () => {
   it("keeps an AGENTS.md with broken markers and saves the original next to it", async () => {
     const context = await createTestContext();
     await writeFile(join(context.cwd, "AGENTS.md"), "# House rules\n", "utf8");
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
     const brokenMarkers = (await readText(context, "AGENTS.md")).replace(
       "<!-- agemon:end:agent-rules -->",
       "",
@@ -452,7 +458,7 @@ describe("master-prompt revert — never loses user content", () => {
 
   it("never deletes a created pointer the user has since edited", async () => {
     const context = await createTestContext();
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
     await writeFile(
       join(context.cwd, "GEMINI.md"),
       "my gemini notes\n",
@@ -472,7 +478,7 @@ describe("master-prompt revert — never loses user content", () => {
 
   it("keeps the user's text in a created AGENTS.md and removes only the block", async () => {
     const context = await createTestContext();
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
     const withUserText = `${await readText(context, "AGENTS.md")}\n## Mine\n\nkeep me\n`;
     await writeFile(join(context.cwd, "AGENTS.md"), withUserText, "utf8");
 
@@ -589,7 +595,7 @@ describe("master-prompt revert — never loses user content", () => {
 
   it("reverts every other entry when one fails, then names the failure", async () => {
     const context = await createTestContext();
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
     await rm(join(context.cwd, "CLAUDE.md"));
     await mkdir(join(context.cwd, "CLAUDE.md"));
 
@@ -607,7 +613,7 @@ describe("master-prompt revert — never loses user content", () => {
 
   it("keeps only the failed entry after a partial uninstall, so a retry is clean", async () => {
     const context = await createTestContext();
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
     await rm(join(context.cwd, "CLAUDE.md"));
     await mkdir(join(context.cwd, "CLAUDE.md"));
 
@@ -682,7 +688,7 @@ describe("master-prompt revert — never loses user content", () => {
   it("excises the block from an untouched AGENTS.md whose backup no longer matches", async () => {
     const context = await createTestContext();
     await writeFile(join(context.cwd, "AGENTS.md"), "# House rules\n", "utf8");
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
     await writeFile(
       resolveImmutableBackupPath(context.cwd, "rule-file:AGENTS.md"),
       "tampered backup\n",
@@ -860,7 +866,7 @@ describe("master-prompt — untrusted ledger, backups and oversized files", () =
 
   it("reports a symlinked managed AGENTS.md as a verification problem", async () => {
     const context = await createTestContext();
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
     await rename(
       join(context.cwd, "AGENTS.md"),
       join(context.cwd, "AGENTS.real.md"),

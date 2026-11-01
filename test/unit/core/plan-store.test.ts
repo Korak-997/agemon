@@ -16,7 +16,10 @@ import {
   resolvePlanPath,
   writePlan,
 } from "../../../src/core/plan-store.js";
-import type { ProposedOperation } from "../../../src/plugins/types.js";
+import type {
+  ProposedOperation,
+  UntrustedGitConfig,
+} from "../../../src/plugins/types.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -321,6 +324,141 @@ describe("readPlan validation", () => {
     });
 
     await expect(readPlan(cwd, VALID_PLAN_ID)).resolves.toEqual(plan);
+  });
+
+  it.each([
+    {
+      kind: "pairs",
+      pairs: [".git/config: diff.x.command=/tmp/differ"],
+      fingerprint: "c".repeat(64),
+    },
+    { kind: "tooMany", count: 21, fingerprint: "c".repeat(64) },
+    { kind: "unshowable", fingerprint: "c".repeat(64) },
+    { kind: "unreadable", category: "truncated" },
+  ] satisfies UntrustedGitConfig[] as UntrustedGitConfig[])(
+    "keeps an operation's untrusted git config ($kind)",
+    async (untrustedGitConfig) => {
+      const cwd = await createSandbox();
+      const plan = validPlan({
+        operations: [sampleOperation({ untrustedGitConfig })],
+      });
+      await plantPlanFile(cwd, VALID_PLAN_ID, plan);
+
+      await expect(readPlan(cwd, VALID_PLAN_ID)).resolves.toEqual(plan);
+    },
+  );
+
+  it.each([
+    ["an unknown kind", { kind: "trusted" }],
+    ["a short fingerprint", { kind: "unshowable", fingerprint: "abc" }],
+    [
+      "more than 20 pairs",
+      {
+        kind: "pairs",
+        pairs: Array.from({ length: 21 }, (_, i) => `k${i}=v`),
+        fingerprint: "c".repeat(64),
+      },
+    ],
+    [
+      "a pair with a control character",
+      { kind: "pairs", pairs: ["k=\u001b[31m"], fingerprint: "c".repeat(64) },
+    ],
+    ["an unknown category", { kind: "unreadable", category: "boom" }],
+    [
+      "a count within the review limit",
+      { kind: "tooMany", count: 3, fingerprint: "c".repeat(64) },
+    ],
+    ["no pairs", { kind: "pairs", pairs: [], fingerprint: "c".repeat(64) }],
+    [
+      "a pair over the stored budget",
+      { kind: "pairs", pairs: ["k".repeat(464)], fingerprint: "c".repeat(64) },
+    ],
+  ])("refuses a malformed untrusted git config: %s", async (_case, value) => {
+    const cwd = await createSandbox();
+    const plan = validPlan();
+    await plantPlanFile(cwd, VALID_PLAN_ID, {
+      ...plan,
+      operations: [{ ...plan.operations[0], untrustedGitConfig: value }],
+    });
+
+    await expect(readPlan(cwd, VALID_PLAN_ID)).rejects.toThrow(
+      /is invalid: 'operations\[0\]\.untrustedGitConfig/,
+    );
+  });
+
+  it("keeps an operation's skill update set", async () => {
+    const cwd = await createSandbox();
+    const plan = validPlan({
+      operations: [
+        sampleOperation({
+          updates: [
+            {
+              name: "agemon-commit",
+              installedFingerprint: "a".repeat(64),
+              currentFingerprint: "b".repeat(64),
+            },
+          ],
+        }),
+      ],
+    });
+    await plantPlanFile(cwd, VALID_PLAN_ID, plan);
+
+    await expect(readPlan(cwd, VALID_PLAN_ID)).resolves.toEqual(plan);
+  });
+
+  it.each([
+    ["not an array", { name: "x" }],
+    [
+      "a name that is not a plain skill name",
+      [
+        {
+          name: "../x",
+          installedFingerprint: "a".repeat(64),
+          currentFingerprint: "b".repeat(64),
+        },
+      ],
+    ],
+    [
+      "a short fingerprint",
+      [
+        {
+          name: "x",
+          installedFingerprint: "abc",
+          currentFingerprint: "b".repeat(64),
+        },
+      ],
+    ],
+    [
+      "a missing current fingerprint",
+      [{ name: "x", installedFingerprint: "a".repeat(64) }],
+    ],
+    ["an empty list", []],
+    [
+      "the same skill twice",
+      [
+        {
+          name: "x",
+          installedFingerprint: "a".repeat(64),
+          currentFingerprint: "b".repeat(64),
+        },
+        {
+          name: "x",
+          installedFingerprint: "c".repeat(64),
+          currentFingerprint: "b".repeat(64),
+        },
+      ],
+    ],
+  ])("refuses a malformed skill update set: %s", async (_case, updates) => {
+    const cwd = await createSandbox();
+    const plan = validPlan();
+    await plantPlanFile(cwd, VALID_PLAN_ID, {
+      ...plan,
+      operations: [{ ...plan.operations[0], updates }],
+    });
+
+    await expect(readPlan(cwd, VALID_PLAN_ID)).rejects.toThrow(
+      /is invalid: 'operations\[0\]\.updates/,
+    );
   });
 
   it("refuses a symlinked plan file", async () => {

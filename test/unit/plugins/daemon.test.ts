@@ -23,6 +23,10 @@ import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { recoverInterruptedApply } from "../../../src/core/recover.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { SubprocessResult } from "../../../src/core/subprocess-runner.js";
+import type {
+  GitConfigGuard,
+  GitConfigGuardResult,
+} from "../../../src/core/untrusted-git-config.js";
 import type { ServiceManagerKind } from "../../../src/platform/detect.js";
 import type {
   AutostartAttempt,
@@ -31,12 +35,18 @@ import type {
 } from "../../../src/platform/service-manager/index.js";
 import {
   escapePlistString,
+  readPlistEnvironment,
   readPlistString,
 } from "../../../src/platform/service-manager/launch-agent-files.js";
-import { workingDirectoryOfUnit } from "../../../src/platform/service-manager/unit-files.js";
+import {
+  environmentOfUnit,
+  workingDirectoryOfUnit,
+} from "../../../src/platform/service-manager/unit-files.js";
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const runExecutable = promisify(execFile);
@@ -106,6 +116,15 @@ function createFakeServiceManager(
       state.unregistered.push(input);
       state.activeUnitNames.delete(input.unitName);
       state.unitContentsByName.delete(input.unitName);
+    },
+    async readUnitEnvironment(unitName) {
+      const unitContents = state.unitContentsByName.get(unitName);
+      if (unitContents === undefined) {
+        return null;
+      }
+      return kind === "launchd"
+        ? readPlistEnvironment(unitContents)
+        : environmentOfUnit(unitContents);
     },
     async readUnitWorkingDirectory(unitName) {
       if (state.unreadableUnitNames?.has(unitName)) {
@@ -206,6 +225,7 @@ async function createTestContext(options: {
   const infos: string[] = [];
   const ctx: Context = {
     cwd: options.cwd,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -360,6 +380,165 @@ describe("daemon plugin unit naming", () => {
   });
 });
 
+describe("daemon plugin and untrusted repository git config", () => {
+  const UNTRUSTED: GitConfigGuardResult = {
+    kind: "pairs",
+    pairs: [".git/config: diff.x.command=/tmp/differ"],
+    fingerprint: "f".repeat(64),
+  };
+
+  function guardReturning(
+    planned: GitConfigGuardResult,
+    recheck: GitConfigGuardResult = planned,
+  ): GitConfigGuard {
+    return { planned: async () => planned, recheck: async () => recheck };
+  }
+
+  async function daemonContext() {
+    await stubCrgEnvironment();
+    const state = createServiceState();
+    const { ctx } = await createTestContext({
+      cwd: await createSandboxDirectory("loyl"),
+      serviceManager: createFakeServiceManager(state),
+    });
+    return { ctx, state };
+  }
+
+  it("marks the register-service operation", async () => {
+    const { ctx } = await daemonContext();
+    ctx.gitConfigGuard = guardReturning(UNTRUSTED);
+
+    const operations = (await daemonPlugin.plan?.(ctx)) ?? [];
+
+    expect(
+      operations
+        .filter((operation) => operation.action === "register-service")
+        .map((operation) => operation.untrustedGitConfig),
+    ).toEqual([UNTRUSTED]);
+  });
+
+  it("refuses to write the unit when the config changed after a clean plan", async () => {
+    const { ctx, state } = await daemonContext();
+    ctx.gitConfigGuard = guardReturning({ kind: "clean" }, UNTRUSTED);
+    const operations = (await daemonPlugin.plan?.(ctx)) ?? [];
+
+    await expect(daemonPlugin.apply?.(ctx, operations)).rejects.toThrow(
+      "this repository's git config changed since the plan",
+    );
+    expect(state.unitContentsByName.size).toBe(0);
+  });
+
+  it("verifies a running daemon with attention that points to crg", async () => {
+    const { ctx } = await daemonContext();
+    await daemonPlugin.install(ctx);
+    ctx.gitConfigGuard = guardReturning(UNTRUSTED);
+
+    const verification = await daemonPlugin.verify(ctx);
+
+    expect(verification.ok).toBe(true);
+    expect(verification.attention).toBe(
+      "the daemon runs git here with repository settings agemon does not trust by default (listed for crg); stop it with 'agemon nuke --only daemon' if you do not trust them",
+    );
+  });
+
+  it("registers the unit when the approved set is unchanged at apply", async () => {
+    const { ctx, state } = await daemonContext();
+    ctx.gitConfigGuard = guardReturning(UNTRUSTED);
+    const operations = (await daemonPlugin.plan?.(ctx)) ?? [];
+
+    await daemonPlugin.apply?.(ctx, operations);
+
+    expect(state.unitContentsByName.size).toBe(1);
+  });
+
+  it("refuses when the approved set changed between plan and apply", async () => {
+    const { ctx, state } = await daemonContext();
+    ctx.gitConfigGuard = guardReturning(UNTRUSTED, {
+      ...UNTRUSTED,
+      fingerprint: "0".repeat(64),
+    });
+    const operations = (await daemonPlugin.plan?.(ctx)) ?? [];
+
+    await expect(daemonPlugin.apply?.(ctx, operations)).rejects.toThrow(
+      "this repository's git config changed since the plan",
+    );
+    expect(state.unitContentsByName.size).toBe(0);
+  });
+
+  it("gives no stale-unit attention when the service manager cannot read the unit's environment", async () => {
+    const { ctx } = await daemonContext();
+    await daemonPlugin.install(ctx);
+    ctx.serviceManager = {
+      ...ctx.serviceManager,
+      readUnitEnvironment: async () => null,
+    };
+
+    expect((await daemonPlugin.verify(ctx)).attention).toBeUndefined();
+  });
+
+  it("prints no unreadable-config line from the daemon's own plan", async () => {
+    const { ctx } = await daemonContext();
+    const infos: string[] = [];
+    ctx.ui = { ...ctx.ui, info: (line) => infos.push(line) };
+    ctx.gitConfigGuard = guardReturning({
+      kind: "unreadable",
+      category: "git-failed",
+      detail: "fatal: bad config",
+    });
+
+    await daemonPlugin.plan?.(ctx);
+
+    expect(
+      infos.some((line) =>
+        line.startsWith("could not read this repository's git config"),
+      ),
+    ).toBe(false);
+  });
+
+  it("verifies a freshly written unit without stale-unit attention", async () => {
+    const { ctx } = await daemonContext();
+    await daemonPlugin.install(ctx);
+
+    expect((await daemonPlugin.verify(ctx)).attention).toBeUndefined();
+  });
+
+  it("gives attention, still ok, for a systemd unit written before the git safeguards, joined with the trust attention", async () => {
+    const { ctx, state } = await daemonContext();
+    await daemonPlugin.install(ctx);
+    const [[unitName, unit]] = [...state.unitContentsByName];
+    state.unitContentsByName.set(
+      unitName,
+      unit
+        .split("\n")
+        .filter((line) => !line.includes("GIT_NO_LAZY_FETCH"))
+        .join("\n"),
+    );
+    ctx.gitConfigGuard = guardReturning(UNTRUSTED);
+
+    const verification = await daemonPlugin.verify(ctx);
+
+    expect(verification.ok).toBe(true);
+    expect(verification.attention).toBe(
+      "the daemon unit predates agemon's git safeguards: until it is re-registered it runs this repository's hooks and fsmonitor program and can fetch lazily; run 'agemon nuke --only daemon', then 'agemon --only daemon'; the daemon runs git here with repository settings agemon does not trust by default (listed for crg); stop it with 'agemon nuke --only daemon' if you do not trust them",
+    );
+  });
+
+  it("fails verification when the config cannot be read", async () => {
+    const { ctx } = await daemonContext();
+    await daemonPlugin.install(ctx);
+    ctx.gitConfigGuard = guardReturning({
+      kind: "unreadable",
+      category: "git-failed",
+      detail: "fatal: bad config",
+    });
+
+    expect(await daemonPlugin.verify(ctx)).toEqual({
+      ok: false,
+      detail: "could not read this repository's git config: fatal: bad config",
+    });
+  });
+});
+
 describe("daemon plugin unit contents", () => {
   it("ExecStart uses the located crg binary without spawning which", async () => {
     const environment = await stubCrgEnvironment();
@@ -461,21 +640,51 @@ describe("daemon plugin unit contents", () => {
     );
   });
 
-  it("unit carries the git-safety Environment lines", async () => {
+  it("strict unit hides agemon's machine state, including the ledger key, from crg", async () => {
+    const { unit, environment } = await installAndReadUnit();
+    const agemonState = join(environment.home, "..", "state", "agemon");
+
+    expect(unitLines(unit, "InaccessiblePaths")).toEqual([
+      `InaccessiblePaths="-${agemonState}"`,
+    ]);
+  });
+
+  it("strict unit does not hide agemon's state directory when the repository lies inside it", async () => {
+    await stubCrgEnvironment();
+    const repo = await createSandboxDirectory("agemon");
+    vi.stubEnv("XDG_STATE_HOME", join(repo, ".."));
+    const state = createServiceState();
+    const { ctx } = await createTestContext({
+      cwd: repo,
+      serviceManager: createFakeServiceManager(state),
+    });
+
+    await daemonPlugin.install(ctx);
+
+    const unit = [...state.unitContentsByName.values()][0];
+    expect(unitLines(unit, "InaccessiblePaths")).toEqual([]);
+    expect(unitLines(unit, "ReadWritePaths")).toHaveLength(1);
+  });
+
+  it("unit carries the git-safety Environment lines and sets, never unsets, GIT_ALLOW_PROTOCOL", async () => {
     vi.stubEnv("GIT_CONFIG_COUNT", "3");
     const { unit } = await installAndReadUnit();
 
     expect(unitLines(unit, "Environment")).toEqual(
       expect.arrayContaining([
-        'Environment="GIT_CONFIG_COUNT=2"',
+        'Environment="GIT_CONFIG_COUNT=3"',
         'Environment="GIT_CONFIG_KEY_0=core.fsmonitor"',
         'Environment="GIT_CONFIG_VALUE_0=false"',
         'Environment="GIT_CONFIG_KEY_1=core.hooksPath"',
         'Environment="GIT_CONFIG_VALUE_1=/dev/null"',
+        'Environment="GIT_CONFIG_KEY_2=diff.ignoreSubmodules"',
+        'Environment="GIT_CONFIG_VALUE_2=all"',
+        'Environment="GIT_NO_LAZY_FETCH=1"',
+        'Environment="GIT_ALLOW_PROTOCOL="',
       ]),
     );
     expect(unitLines(unit, "UnsetEnvironment")).toEqual([
-      "UnsetEnvironment=CRG_DATA_DIR GIT_CONFIG_PARAMETERS",
+      "UnsetEnvironment=CRG_DATA_DIR GIT_CONFIG_PARAMETERS GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE GIT_GRAFT_FILE GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX GIT_SHALLOW_FILE GIT_COMMON_DIR",
     ]);
   });
 
@@ -998,6 +1207,92 @@ describe("daemon plugin ledger-driven revert", () => {
   });
 });
 
+function unresolvedUnitAdvice(unitName: string, workingDirectory: string) {
+  return `Keeping user service ${unitName}: its WorkingDirectory ${workingDirectory} does not exist now, so agemon can't tell which repository it serves. If nothing needs it, remove it yourself: systemctl --user disable --now '${unitName}'; rm '/fake/systemd/user/${unitName}'; systemctl --user daemon-reload`;
+}
+
+function registeredServiceClaim(unitName: string) {
+  return {
+    plugin: "daemon",
+    type: "registered-service",
+    target: `/home/u/.config/systemd/user/${unitName}`,
+    preExisting: false,
+    resourceId: `service-unit:${unitName}`,
+  };
+}
+
+describe("daemon plugin units it cannot place", () => {
+  it("a recorded hashed unit whose WorkingDirectory does not exist is kept and reported on nuke", async () => {
+    const { ctx, repo, state, infos } = await createMigrationContext();
+    const unitName = unitNameFor(repo, "loyl");
+    const gone = join(repo, "..", "gone");
+    seedUnit(state, unitName, gone);
+    await appendLedgerClaims(ctx, [registeredServiceClaim(unitName)]);
+
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.unregistered).toEqual([]);
+    expect(infos).toContain(unresolvedUnitAdvice(unitName, gone));
+  });
+
+  it("a forged entry naming a unit on an unmounted volume keeps that unit", async () => {
+    const { ctx, state, infos } = await createMigrationContext();
+    const unmounted = "/media/agemon-test-unmounted/other";
+    const unitName = unitNameFor(unmounted, "other");
+    seedUnit(state, unitName, unmounted);
+    await appendLedgerClaims(ctx, [registeredServiceClaim(unitName)]);
+
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.unregistered).toEqual([]);
+    expect(infos).toContain(unresolvedUnitAdvice(unitName, unmounted));
+  });
+
+  it("apply keeps a stale unit whose WorkingDirectory no longer exists and names how to remove it", async () => {
+    const { ctx, repo, state, infos } = await createMigrationContext();
+    const movedFrom = join(repo, "..", "moved-from");
+    const staleUnit = unitNameFor(movedFrom, "loyl");
+    seedUnit(state, staleUnit, movedFrom);
+    await appendLedgerClaims(ctx, [registeredServiceClaim(staleUnit)]);
+
+    await daemonPlugin.install(ctx);
+
+    expect(state.unregistered).toEqual([]);
+    expect(state.activeUnitNames.has(staleUnit)).toBe(true);
+    expect(infos).toContain(unresolvedUnitAdvice(staleUnit, movedFrom));
+    expect(registeredUnitNames(ctx)).toEqual([
+      `service-unit:${unitNameFor(repo, "loyl")}`,
+    ]);
+  });
+
+  it("an unconfirmed entry whose unit file is missing is never unregistered", async () => {
+    const { ctx, repo, state } = await createMigrationContext();
+    await appendLedgerClaims(ctx, [
+      registeredServiceClaim(unitNameFor(repo, "loyl")),
+    ]);
+
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.unregistered).toEqual([]);
+  });
+
+  it("an old-scheme unit named for another repository is kept even when it runs inside this one", async () => {
+    const { ctx, repo, state, infos } = await createMigrationContext();
+    const otherOldUnit = "agemon-crg-daemon-other.service";
+    const inside = join(repo, "sub");
+    await mkdir(inside);
+    seedUnit(state, otherOldUnit, inside);
+    await appendLedgerClaims(ctx, [registeredServiceClaim(otherOldUnit)]);
+
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.unregistered).toEqual([]);
+    expect(infos).toContain(
+      `Keeping user service ${otherOldUnit}: it now runs for ${inside}`,
+    );
+  });
+});
+
 describe("daemon plugin migration from old unit names", () => {
   it("install migrates an old-scheme unit and is idempotent on re-run", async () => {
     const { ctx, repo, state } = await createMigrationContext();
@@ -1423,6 +1718,27 @@ function seedLaunchAgent(
 }
 
 describe("daemon plugin under launchd", () => {
+  it("gives stale-unit attention for a launch agent written before the git safeguards", async () => {
+    const { ctx, repo, state } = await createLaunchdContext();
+    await daemonPlugin.install(ctx);
+    expect((await daemonPlugin.verify(ctx)).attention).toBeUndefined();
+    const plistName = launchAgentNameFor(repo, "loyl");
+    state.unitContentsByName.set(
+      plistName,
+      (state.unitContentsByName.get(plistName) ?? "").replace(
+        /<key>GIT_NO_LAZY_FETCH<\/key>\s*<string>1<\/string>/,
+        "",
+      ),
+    );
+
+    const verification = await daemonPlugin.verify(ctx);
+
+    expect(verification.ok).toBe(true);
+    expect(verification.attention).toMatch(
+      /^the daemon unit predates agemon's git safeguards/,
+    );
+  });
+
   it("registers a launch agent named after the repo and renders the plist", async () => {
     const { ctx, repo, state, infos, environment } =
       await createLaunchdContext();
@@ -1467,7 +1783,7 @@ describe("daemon plugin under launchd", () => {
           <key>CRG_HOME</key>
           <string><home>/.code-review-graph</string>
           <key>GIT_CONFIG_COUNT</key>
-          <string>2</string>
+          <string>3</string>
           <key>GIT_CONFIG_KEY_0</key>
           <string>core.fsmonitor</string>
           <key>GIT_CONFIG_VALUE_0</key>
@@ -1476,6 +1792,14 @@ describe("daemon plugin under launchd", () => {
           <string>core.hooksPath</string>
           <key>GIT_CONFIG_VALUE_1</key>
           <string>/dev/null</string>
+          <key>GIT_CONFIG_KEY_2</key>
+          <string>diff.ignoreSubmodules</string>
+          <key>GIT_CONFIG_VALUE_2</key>
+          <string>all</string>
+          <key>GIT_NO_LAZY_FETCH</key>
+          <string>1</string>
+          <key>GIT_ALLOW_PROTOCOL</key>
+          <string></string>
           <key>CRG_DATA_DIR</key>
           <string></string>
           <key>GIT_CONFIG_PARAMETERS</key>
@@ -1543,6 +1867,21 @@ describe("daemon plugin under launchd", () => {
     await daemonPlugin.uninstall(ctx);
 
     expect(state.unregistered).toEqual([]);
+  });
+
+  it("keeps a plist whose WorkingDirectory does not exist and says how to boot it out", async () => {
+    const { ctx, repo, state, infos } = await createLaunchdContext();
+    const gone = join(repo, "..", "gone");
+    const plistName = launchAgentNameFor(gone, "gone");
+    seedLaunchAgent(state, plistName, gone);
+    await appendLedgerClaims(ctx, [registeredServiceClaim(plistName)]);
+
+    await daemonPlugin.uninstall(ctx);
+
+    expect(state.unregistered).toEqual([]);
+    expect(infos).toContain(
+      `Keeping user service ${plistName}: its WorkingDirectory ${gone} does not exist now, so agemon can't tell which repository it serves. If nothing needs it, remove it yourself: launchctl bootout "gui/$(id -u)/${plistName.slice(0, -".plist".length)}"; rm '/fake/systemd/user/${plistName}'`,
+    );
   });
 
   it("a systemd entry is never booted out on launchd, and nuke fails naming it", async () => {

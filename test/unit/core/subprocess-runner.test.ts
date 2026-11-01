@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agemonSubprocessEnvironment,
   DEFAULT_SUBPROCESS_TIMEOUT_MS,
+  describeSubprocessFailure,
+  isSpawnFailure,
   MAX_CAPTURED_CHARACTERS_PER_STREAM,
   runSubprocess,
 } from "../../../src/core/subprocess-runner.js";
@@ -210,5 +212,75 @@ describe("agemonSubprocessEnvironment", () => {
     ]);
 
     expect(result.stdout.trim()).toBe("unset");
+  });
+});
+
+describe("describeSubprocessFailure", () => {
+  function failureWith(stderr: string, code = 1) {
+    return describeSubprocessFailure({ code, stdout: "", stderr }, "tool");
+  }
+
+  it("keeps the last 10 lines and says how many were cut", () => {
+    const lines = Array.from({ length: 5_000 }, (_, index) => `line ${index}`);
+
+    const message = failureWith(lines.join("\n"));
+
+    expect(message.split("\n")).toEqual([
+      "… 4990 earlier lines",
+      ...lines.slice(-10),
+    ]);
+  });
+
+  it("caps each shown line at 300 characters", () => {
+    const message = failureWith("word ".repeat(400));
+
+    expect(message).toHaveLength(301);
+    expect(message.endsWith("…")).toBe(true);
+  });
+
+  it("redacts secrets and strips escape sequences", () => {
+    const escapeCharacter = String.fromCharCode(27);
+
+    const message = failureWith(
+      `${escapeCharacter}[31merror${escapeCharacter}[0m: token=abc123 rejected ${escapeCharacter}]0;pwned`,
+    );
+
+    expect(message).toBe(
+      "error: token=<redacted:credential-key> rejected ?]0;pwned",
+    );
+  });
+
+  it("falls back to '<command> exited <code>' without stderr", () => {
+    expect(failureWith("  \n", 3)).toBe("tool exited 3");
+  });
+
+  it("pre-caps a huge line before redaction and still redacts it by its prefix", () => {
+    const message = failureWith(`password=${"x".repeat(1024 * 1024)}`);
+
+    expect(message).toBe("password=<redacted:credential-key>");
+  });
+
+  it("redacts a PEM block whose BEGIN line the tail cut off", () => {
+    const pem = [
+      "-----BEGIN PRIVATE KEY-----",
+      ...Array.from({ length: 30 }, () => "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
+      "-----END PRIVATE KEY-----",
+    ].join("\n");
+
+    const message = failureWith(pem);
+
+    expect(message).not.toContain("MIIEvQ");
+    expect(message).toContain("<redacted:pem>");
+  });
+});
+
+describe("isSpawnFailure", () => {
+  it("recognises a command that could not be started", async () => {
+    const result = await runSubprocess("agemon-no-such-binary-for-test", []);
+
+    expect(isSpawnFailure(result)).toBe(true);
+    expect(isSpawnFailure({ code: 1, stdout: "", stderr: "failed" })).toBe(
+      false,
+    );
   });
 });

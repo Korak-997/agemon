@@ -36,7 +36,11 @@ import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
-import type { AgemonPlugin } from "../../../src/plugins/types.js";
+import type {
+  AgemonPlugin,
+  UntrustedGitConfig,
+} from "../../../src/plugins/types.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -62,6 +66,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -99,6 +106,7 @@ async function createTestContext(
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -179,6 +187,41 @@ function createFakeCapability(options: FakeCapabilityOptions): {
   };
 }
 
+function createSkippingCapability(packageNames: string[]): AgemonPlugin {
+  return {
+    id: "alpha",
+    riskClass: "executes",
+    async detect() {
+      return { present: false, preExisting: false };
+    },
+    async plan() {
+      return packageNames.map((name) =>
+        describeOperation({
+          capabilityId: "alpha",
+          resourceId: `package:${name}`,
+          targetPath: name,
+          action: "install-package",
+          riskClass: "executes",
+          requiresConsent: true,
+          preview: { kind: "note", text: `install ${name}` },
+        }),
+      );
+    },
+    async apply(_ctx, operations) {
+      return {
+        skipped: operations.map((operation) => ({
+          operationId: operation.id,
+          reason: `${operation.targetPath} refused on purpose`,
+        })),
+      };
+    },
+    async verify() {
+      return { ok: true };
+    },
+    async uninstall() {},
+  };
+}
+
 const RECONCILE_OPTIONS = {
   agemonVersion: "9.9.9",
   allowUnignoredState: false,
@@ -200,6 +243,61 @@ describe("reconcile", () => {
     ).resolves.toBe("written by alpha\n");
     const planFiles = await readdir(join(context.cwd, ".agemon/plans"));
     expect(planFiles.filter((name) => name.endsWith(".json"))).toHaveLength(1);
+  });
+
+  it("an apply where every approved operation is skipped ends as nothing-to-do", async () => {
+    const infoLines: string[] = [];
+    const successLines: string[] = [];
+    const context = await createTestContext(approveEveryGate);
+    context.ui = {
+      ...context.ui,
+      info: (line) => infoLines.push(line),
+      succeed: (line) => {
+        successLines.push(line ?? "");
+      },
+    };
+
+    const outcome = await reconcile(
+      context,
+      [createSkippingCapability(["alpha"])],
+      RECONCILE_OPTIONS,
+    );
+
+    expect(outcome).toBe("nothing-to-do");
+    expect(infoLines).toContain(
+      "Skipped install-package alpha — alpha refused on purpose",
+    );
+    expect(successLines).toContain(
+      "Nothing was applied; see the skipped items above.",
+    );
+  });
+
+  it("an apply where every approved operation is skipped and another gate had no consent ends in drift", async () => {
+    const context = await createTestContext(async (gates) => {
+      const [approvedOperation, missingConsentOperation] = gates.flatMap(
+        (gate) => gate.operations,
+      );
+      return {
+        approved: [approvedOperation],
+        skipped: [
+          {
+            operation: missingConsentOperation,
+            reason: "no consent for the 'install-tooling' gate",
+            consentMissing: true,
+          },
+        ],
+        workspaceIsolationApproved: true,
+        conflictResolutions: [],
+      };
+    });
+
+    const outcome = await reconcile(
+      context,
+      [createSkippingCapability(["alpha", "beta"])],
+      RECONCILE_OPTIONS,
+    );
+
+    expect(outcome).toBe("drift");
   });
 
   it("makes no changes when consent declines every operation", async () => {
@@ -449,6 +547,19 @@ describe("reconcile", () => {
       await expectRebuildMismatch(
         tamper,
         /no longer matches what agemon would do now: the repository changed since it was made, or the plan file was edited\. Run 'agemon plan' again/,
+      );
+    });
+
+    it("says the repository's git config changed when only that differs", async () => {
+      await expectRebuildMismatch(
+        (stored) =>
+          editedOperation(stored, {
+            untrustedGitConfig: {
+              kind: "unshowable",
+              fingerprint: "a".repeat(64),
+            },
+          }),
+        /this repository's git config changed since the plan\./,
       );
     });
 
@@ -723,6 +834,155 @@ describe("reconcile outcomes", () => {
       "drift",
     );
     expect(installCallCount()).toBe(0);
+  });
+
+  function createGitConfigCapability(untrustedGitConfig: UntrustedGitConfig): {
+    plugin: AgemonPlugin;
+    applied: string[];
+  } {
+    const appliedByGitty: string[] = [];
+    const gitty: AgemonPlugin = {
+      id: "gitty",
+      async detect() {
+        return { present: false, preExisting: false };
+      },
+      async plan() {
+        return [
+          {
+            ...describeOperation({
+              capabilityId: "gitty",
+              resourceId: "package:gitty",
+              targetPath: "gitty",
+              action: "install-package",
+              riskClass: "executes",
+              requiresConsent: true,
+              preview: { kind: "note", text: "install gitty" },
+            }),
+            untrustedGitConfig,
+          },
+          {
+            ...describeOperation({
+              capabilityId: "gitty",
+              resourceId: "shared:gitty",
+              targetPath: "",
+              action: "use-shared",
+              riskClass: "inert",
+              requiresConsent: false,
+              preview: { kind: "note", text: "use gitty" },
+            }),
+            untrustedGitConfig,
+          },
+        ];
+      },
+      async apply(_ctx, operations) {
+        appliedByGitty.push(...operations.map(({ action }) => action));
+      },
+      async install() {},
+      async verify() {
+        return { ok: true };
+      },
+      async uninstall() {},
+    };
+    return { plugin: gitty, applied: appliedByGitty };
+  }
+
+  it("skips operations whose untrusted git config cannot be approved, applies the rest and ends in drift", async () => {
+    const gatedOperationIds: string[] = [];
+    const context = await createTestContext((gates) => {
+      gatedOperationIds.push(
+        ...gates.flatMap((gate) => gate.operations.map(({ id }) => id)),
+      );
+      return approveEveryGate(gates);
+    });
+    const alpha = createFakeCapability({
+      id: "alpha",
+      targetPath: "alpha.txt",
+    });
+    const gitty = createGitConfigCapability({
+      kind: "unshowable",
+      fingerprint: "b".repeat(64),
+    });
+
+    await expect(
+      reconcile(context, [alpha.plugin, gitty.plugin], RECONCILE_OPTIONS),
+    ).resolves.toBe("drift");
+
+    expect(alpha.installCallCount()).toBe(1);
+    expect(gitty.applied).toEqual([]);
+    expect(gatedOperationIds.some((id) => id.startsWith("gitty"))).toBe(false);
+  });
+
+  it("routes approvable untrusted git config, including use-shared, only into the trust gate", async () => {
+    const gatesSeen: ConsentGate[] = [];
+    const context = await createTestContext((gates) => {
+      gatesSeen.push(...gates);
+      return approveEveryGate(gates);
+    });
+    const gitty = createGitConfigCapability({
+      kind: "pairs",
+      pairs: [".git/config: diff.x.command=/tmp/differ"],
+      fingerprint: "b".repeat(64),
+    });
+
+    await expect(
+      reconcile(context, [gitty.plugin], {
+        ...RECONCILE_OPTIONS,
+        trustRepoGitConfig: true,
+      }),
+    ).resolves.toBe("applied");
+
+    expect(gatesSeen.map((gate) => gate.id)).toEqual([
+      "trust-repository-git-config",
+    ]);
+    expect(gatesSeen[0].satisfiableWithYes).toBe(true);
+    expect(gitty.applied).toEqual(["install-package", "use-shared"]);
+  });
+
+  it("applies no carrying operation, use-shared included, when the trust gate is declined", async () => {
+    const context = await createTestContext(skipEveryOperation(false));
+    const gitty = createGitConfigCapability({
+      kind: "pairs",
+      pairs: [".git/config: diff.x.command=/tmp/differ"],
+      fingerprint: "b".repeat(64),
+    });
+
+    await expect(
+      reconcile(context, [gitty.plugin], RECONCILE_OPTIONS),
+    ).resolves.toBe("declined");
+
+    expect(gitty.applied).toEqual([]);
+  });
+
+  it("prints an installed capability's attention even when there is nothing to apply", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const infos: string[] = [];
+    context.ui = { ...context.ui, info: (line) => infos.push(line) };
+    await context.manifest.recordAction({
+      plugin: "watched",
+      type: "installed-binary",
+      target: "watched",
+      preExisting: false,
+    });
+    const watched: AgemonPlugin = {
+      id: "watched",
+      async detect() {
+        return { present: true, preExisting: false };
+      },
+      async plan() {
+        return [];
+      },
+      async install() {},
+      async verify() {
+        return { ok: true, attention: "untrusted repository git config" };
+      },
+      async uninstall() {},
+    };
+
+    await expect(
+      reconcile(context, [watched], RECONCILE_OPTIONS),
+    ).resolves.toBe("nothing-to-do");
+
+    expect(infos).toContain("watched: untrusted repository git config");
   });
 
   it("returns 'drift' after an apply that left an operation without consent", async () => {

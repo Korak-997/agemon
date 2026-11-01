@@ -11,10 +11,12 @@ import {
   isInteractiveTerminal,
 } from "./prompt.js";
 import { styleUnifiedDiff } from "./text-diff.js";
+import { needsGitConfigApproval } from "./untrusted-git-config.js";
 import { printable } from "./untrusted-text.js";
 
 export type ConsentGateId =
   | "workspace-isolation"
+  | "trust-repository-git-config"
   | "install-custom-skills"
   | "install-tooling"
   | "install-subagents"
@@ -64,12 +66,15 @@ type OperationGateId = Exclude<ConsentGateId, "workspace-isolation">;
 export const CUSTOM_SKILL_GROUP_RESOURCE_PREFIX = "custom-skill-group:";
 export const AGENT_FILE_RESOURCE_PREFIX = "agent-file:";
 
+const TRUST_GATE_EXPLANATION =
+  "code-review-graph and its daemon will run git here with these repository settings, which agemon does not trust by default:";
 const DIFF_HEADER_LINE_COUNT = 2;
 const FRONTMATTER_FENCE = "---";
 const TOOLS_LINE_PATTERN = /^tools: (.+)$/u;
 const UNKNOWN_TOOLS = "tools: unknown — see diff";
 
 const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
+  "trust-repository-git-config",
   "install-custom-skills",
   "install-tooling",
   "install-subagents",
@@ -82,6 +87,7 @@ const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
 export interface BuildConsentGatesInput {
   plan: Plan;
   isolationStatus: IsolationStatus;
+  trustRepoGitConfig?: boolean;
 }
 
 export function buildConsentGates(
@@ -119,35 +125,84 @@ export function buildConsentGates(
     if (operations === undefined) {
       continue;
     }
-    gates.push({
-      id: gateId,
-      summary: operationGateSummary(gateId, operations),
-      operations,
-      forcesDiff:
-        gateId === "install-custom-skills" ||
-        operations.some(
-          (operation) => operation.riskClass === "credential-adjacent",
-        ),
-      announcementWithYes:
-        gateId === "install-subagents"
-          ? `Installing ${describeSubagents(operations)}.`
-          : null,
-      satisfiableWithYes: gateId !== "resolve-conflict",
-    });
+    gates.push(
+      gateId === "trust-repository-git-config"
+        ? trustRepositoryGitConfigGate(
+            operations,
+            input.trustRepoGitConfig === true,
+          )
+        : {
+            id: gateId,
+            summary: operationGateSummary(gateId, operations),
+            operations,
+            forcesDiff:
+              gateId === "install-custom-skills" ||
+              operations.some(
+                (operation) => operation.riskClass === "credential-adjacent",
+              ),
+            announcementWithYes:
+              gateId === "install-subagents"
+                ? `Installing ${describeSubagents(operations)}.`
+                : null,
+            satisfiableWithYes: gateId !== "resolve-conflict",
+          },
+    );
   }
 
   return gates;
 }
 
+function untrustedPairsOf(operations: ProposedOperation[]): string[] {
+  return [
+    ...new Set(
+      operations.flatMap((operation) =>
+        operation.untrustedGitConfig?.kind === "pairs"
+          ? operation.untrustedGitConfig.pairs
+          : [],
+      ),
+    ),
+  ];
+}
+
+function normalActionText(operation: ProposedOperation): string {
+  const normalGate = gateForOperation({
+    ...operation,
+    untrustedGitConfig: undefined,
+  });
+  return normalGate === null
+    ? `Record that this repository uses ${operation.targetPath || operation.resourceId}.`
+    : operationGateSummary(normalGate, [operation]).replace(/ Proceed\?$/, "");
+}
+
+function trustRepositoryGitConfigGate(
+  operations: ProposedOperation[],
+  flagGiven: boolean,
+): ConsentGate {
+  const pairs = untrustedPairsOf(operations);
+  const pairLines = pairs.map((pair) => `  ${pair}`).join("\n");
+  return {
+    id: "trust-repository-git-config",
+    summary: `${operations.map(normalActionText).join(" ")}\n${TRUST_GATE_EXPLANATION}\n${pairLines}\nProceed?`,
+    operations,
+    forcesDiff: true,
+    announcementWithYes: `${TRUST_GATE_EXPLANATION}\n${pairLines}`,
+    satisfiableWithYes: flagGiven,
+  };
+}
+
 export function useSharedOperations(plan: Plan): ProposedOperation[] {
   return plan.operations.filter(
-    (operation) => operation.action === "use-shared",
+    (operation) =>
+      operation.action === "use-shared" && !needsGitConfigApproval(operation),
   );
 }
 
 function gateForOperation(
   operation: ProposedOperation,
 ): OperationGateId | null {
+  if (needsGitConfigApproval(operation)) {
+    return "trust-repository-git-config";
+  }
   if (operation.action === "conflict") {
     return "resolve-conflict";
   }
@@ -202,17 +257,34 @@ function describeTargets(operations: ProposedOperation[]): string {
     .join(", ");
 }
 
+function describeUpdates(operations: ProposedOperation[]): string {
+  return operations
+    .map(
+      (operation) =>
+        `${operation.resourceId} updates ${(operation.updates ?? []).map((update) => update.name).join(", ")}`,
+    )
+    .join("; ");
+}
+
 function installToolingSummary(operations: ProposedOperation[]): string {
   const declines = operations.filter(
     (operation) => operation.action === "skip",
   );
+  const updates = operations.filter(
+    (operation) => (operation.updates ?? []).length > 0,
+  );
   const installs = operations.filter(
-    (operation) => operation.action !== "skip",
+    (operation) => operation.action !== "skip" && !updates.includes(operation),
   );
   const parts = [
     ...(installs.length > 0
       ? [
           `Install ${installs.length} package(s) (${describeTargets(installs)}). Uses pipx / npm`,
+        ]
+      : []),
+    ...(updates.length > 0
+      ? [
+          `update or repair ${updates.length} skill group(s) to the version bundled with this agemon (${describeUpdates(updates)})`,
         ]
       : []),
     ...(declines.length > 0
@@ -261,6 +333,8 @@ function operationGateSummary(
 ): string {
   const targets = describeTargets(operations);
   switch (gateId) {
+    case "trust-repository-git-config":
+      return trustRepositoryGitConfigGate(operations, false).summary;
     case "install-custom-skills":
       return `Install skills from ${operations.length} skill group(s) defined in this repository's agemon.toml (${targets}). They come from the repository's own sources, not from agemon — review every source shown. Proceed?`;
     case "install-tooling":
@@ -351,6 +425,9 @@ export async function resolveConsent(
           });
         }
         if (outcome.decision === "replace") {
+          if (operation.resourceId.startsWith(AGENT_FILE_RESOURCE_PREFIX)) {
+            input.log.log(`Installing ${describeSubagents([operation])}.`);
+          }
           approved.push({ ...operation, action: "replace" });
           continue;
         }
@@ -375,10 +452,9 @@ export async function resolveConsent(
       continue;
     }
 
-    const consentMissing = !input.yes && !interactive;
-    const reason = consentMissing
-      ? `no consent for the '${gate.id}' gate (non-interactive, no --yes)`
-      : `declined at the '${gate.id}' consent gate`;
+    const consentMissing =
+      !interactive && !(input.yes && gate.satisfiableWithYes);
+    const reason = skipReason(gate, consentMissing);
     for (const operation of gate.operations) {
       skipped.push({ operation, reason, consentMissing });
     }
@@ -401,6 +477,18 @@ interface GateDecisionContext {
   intro?: string;
 }
 
+function skipReason(gate: ConsentGate, consentMissing: boolean): string {
+  if (gate.id === "trust-repository-git-config") {
+    const pairs = untrustedPairsOf(gate.operations).join("; ");
+    return consentMissing
+      ? `untrusted repository git config (approve interactively or pass --yes --trust-repo-git-config): ${pairs}`
+      : `declined: untrusted repository git config: ${pairs}`;
+  }
+  return consentMissing
+    ? `no consent for the '${gate.id}' gate (non-interactive, no --yes)`
+    : `declined at the '${gate.id}' consent gate`;
+}
+
 async function askGate(
   gate: ConsentGate,
   ctx: GateDecisionContext,
@@ -408,7 +496,8 @@ async function askGate(
   if (ctx.yes && gate.satisfiableWithYes) {
     if (gate.forcesDiff) {
       printOperationPreviews(gate.operations, ctx.log);
-    } else if (gate.announcementWithYes !== null) {
+    }
+    if (gate.announcementWithYes !== null) {
       ctx.log.log(gate.announcementWithYes);
     }
     return true;

@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 
 const clack = vi.hoisted(() => ({
   multiselect: vi.fn(),
@@ -25,6 +26,8 @@ import {
   SKILL_GROUPS,
 } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
+import { applyAllPlanned } from "../apply-all-planned.js";
+import { seedInstalledSkills } from "../installed-skills.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -54,6 +57,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -94,10 +100,10 @@ async function createTestContext(overrides: {
 
   process.env.AGEMON_DEV = "1";
   process.env.AGEMON_FAKE_SUBPROCESS = "1";
-  delete process.env.AGEMON_FAKE_PREINSTALLED_SKILLS;
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -130,7 +136,7 @@ async function installAsPreUpgradeProject(context: Context): Promise<void> {
     (groupId) => findSkillGroup(groupId)?.skills ?? [],
   ).map((skill) => skill.skillName);
 
-  process.env.AGEMON_FAKE_PREINSTALLED_SKILLS = preUpgradeSkillNames.join(",");
+  await seedInstalledSkills(context.cwd, preUpgradeSkillNames);
 
   for (const skillName of preUpgradeSkillNames) {
     await context.manifest.recordAction({
@@ -166,7 +172,7 @@ describe("skills plugin drift detection", () => {
     context.interactive = true;
     clack.multiselect.mockResolvedValueOnce(["architecture"]);
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     expect(clack.multiselect).toHaveBeenCalledTimes(1);
     const offeredGroupIds = clack.multiselect.mock.calls[0][0].options.map(
@@ -192,7 +198,7 @@ describe("skills plugin drift detection", () => {
     const context = await createTestContext({ interactive: false, yes: false });
     await installAsPreUpgradeProject(context);
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
     expect(clack.multiselect).not.toHaveBeenCalled();
 
     expect(await planSkills(context)).toEqual([]);
@@ -204,7 +210,7 @@ describe("skills plugin drift detection", () => {
 
     context.interactive = true;
     clack.multiselect.mockResolvedValueOnce(["architecture"]);
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     const offeredGroupIds = clack.multiselect.mock.calls[0][0].options.map(
       (option: { value: string }) => option.value,
@@ -225,7 +231,7 @@ describe("skills plugin drift detection", () => {
     }
 
     clack.multiselect.mockResolvedValueOnce([]);
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     expect(clack.multiselect).toHaveBeenCalledTimes(1);
     const offeredGroupIds = clack.multiselect.mock.calls[0][0].options.map(
@@ -233,7 +239,7 @@ describe("skills plugin drift detection", () => {
     );
     expect(offeredGroupIds).toEqual(["geo-seo"]);
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
     expect(clack.multiselect).toHaveBeenCalledTimes(1);
     expect(await planSkills(context)).toEqual([]);
   });
@@ -243,13 +249,13 @@ describe("skills plugin drift detection", () => {
     await installAsPreUpgradeProject(context);
 
     clack.multiselect.mockResolvedValueOnce([]);
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
     expect(clack.multiselect).toHaveBeenCalledTimes(1);
 
     const planAfterDecline = await planSkills(context);
     expect(planAfterDecline).toEqual([]);
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
     expect(clack.multiselect).toHaveBeenCalledTimes(1);
 
     const declinedActions = context.manifest

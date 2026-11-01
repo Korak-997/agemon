@@ -290,6 +290,24 @@ describe("runSelfUninstall for an install-script copy", () => {
     expect(printed()).toContain("agemon is running in another repository");
   });
 
+  it("removes the ledger key with the machine state and says repository ledgers lose their receipts", async () => {
+    const stateDirectory = await machineStateDirectory();
+    for (const name of [
+      "ledger-key",
+      "ledger-key.lock",
+      "ledger-key.lock.break",
+    ]) {
+      await writeFile(join(stateDirectory, name), "x", { mode: 0o600 });
+    }
+
+    await expect(uninstall()).resolves.toBe(0);
+
+    expect(existsSync(stateDirectory)).toBe(false);
+    expect(printed()).toContain(
+      "agemon's ledger key is removed too: if you install agemon again, it treats what it recorded in repositories before as unconfirmed and leaves it alone.",
+    );
+  });
+
   it("keeps machine state that holds entries agemon does not create", async () => {
     const stateDirectory = await machineStateDirectory();
     await mkdir(join(stateDirectory, "my-notes"));

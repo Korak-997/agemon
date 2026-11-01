@@ -23,7 +23,10 @@ import {
   isUsableAbsolutePath,
   resolveHomeDirectory,
 } from "../../platform/home.js";
-import { crgSubprocessEnvironment } from "./environment.js";
+import {
+  crgSubprocessEnvironment,
+  REPOSITORY_LOCAL_VARIABLES_REMOVED_FOR_CRG,
+} from "./environment.js";
 
 const CRG_BINARY_NAME = "code-review-graph";
 export const BROKEN_PIPX_VENV_HINT = `pipx venv is broken — run 'pipx uninstall ${CRG_BINARY_NAME}', then 'agemon'`;
@@ -257,6 +260,7 @@ async function readPathBinaryVersion(
   const versionCheck = await ctx.run(binaryPath, ["--version"], {
     timeoutMs: VERSION_CHECK_TIMEOUT_MS,
     env: crgSubprocessEnvironment(),
+    unsetEnv: REPOSITORY_LOCAL_VARIABLES_REMOVED_FOR_CRG,
   });
   if (versionCheck.code !== 0) {
     return null;

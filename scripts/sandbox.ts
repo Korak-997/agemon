@@ -16,6 +16,11 @@ import { takeFakeVerifiedBinaryInstallRequests } from "../src/core/fake-subproce
 import { quoteForShlex } from "../src/core/untrusted-text.js";
 import { AGNIX_VERSION } from "../src/plugins/pins.js";
 import {
+  buildAgemonArgv,
+  buildRunArgv,
+  type RunFlags,
+} from "./sandbox/argv.js";
+import {
   type DiffLine,
   diffSnapshots,
   formatDiff,
@@ -46,17 +51,6 @@ const FIXTURE_COMMIT_GIT_OPTIONS = [
   "user.email=recording@example.invalid",
 ];
 
-interface RunFlags {
-  dryRun: boolean;
-  real: boolean;
-  trace: boolean;
-  quiet: boolean;
-  skipDaemon: boolean;
-  only?: string;
-  skillGroups?: string;
-  label?: string;
-}
-
 function parseFlags(args: string[]): RunFlags {
   const flags: RunFlags = {
     dryRun: false,
@@ -84,17 +78,6 @@ function parseFlags(args: string[]): RunFlags {
     } else throw new Error(`Unknown flag: ${arg}`);
   }
   return flags;
-}
-
-function buildAgemonArgv(flags: RunFlags): string[] {
-  const argv: string[] = [];
-  if (flags.dryRun) argv.push("--dry-run");
-  if (flags.skipDaemon) argv.push("--skip-daemon");
-  if (flags.only) argv.push("--only", flags.only);
-  if (flags.skillGroups) argv.push("--skill-groups", flags.skillGroups);
-  if (flags.quiet) argv.push("--quiet");
-  if (flags.trace) argv.push("--verbose");
-  return argv;
 }
 
 function buildNukeArgv(flags: RunFlags): string[] {
@@ -253,7 +236,7 @@ async function cmdRun(fixture: string, flags: RunFlags): Promise<void> {
 
   const before = await snapshotTree(runDir);
   const { exitCode, output } = await invokeAgemon(
-    buildAgemonArgv(flags),
+    buildRunArgv(flags),
     repoDir,
     homeDir,
     flags.real,
@@ -280,12 +263,15 @@ const KEPT_MACHINE_CACHE_DIRECTORIES = [
   "home/.local/state/agemon/skills-src/",
 ];
 
+const KEPT_MACHINE_STATE_FILES = ["home/.local/state/agemon/ledger-key"];
+
 function isKeptMachineCacheFile(line: DiffLine): boolean {
   return (
     line.kind === "added" &&
-    KEPT_MACHINE_CACHE_DIRECTORIES.some((directory) =>
+    (KEPT_MACHINE_CACHE_DIRECTORIES.some((directory) =>
       line.path.startsWith(directory),
-    )
+    ) ||
+      KEPT_MACHINE_STATE_FILES.includes(line.path))
   );
 }
 
@@ -301,6 +287,35 @@ function pluginRan(flags: RunFlags, pluginId: string): boolean {
       .map((selectedPluginId) => selectedPluginId.trim())
       .includes(pluginId)
   );
+}
+
+async function assertEssentialsStatusIsCurrent(
+  repoDir: string,
+  homeDir: string,
+  fixture: string,
+): Promise<void> {
+  const status = await invokeAgemon(
+    ["status"],
+    repoDir,
+    homeDir,
+    false,
+    fixture,
+  );
+  const skillRows = status.output
+    .split("\n")
+    .filter((line) => line.trimStart().startsWith("skills "));
+  const everyGroupIsCurrent =
+    skillRows.length > 0 &&
+    skillRows.every(
+      (line) =>
+        line.includes("present · managed") &&
+        !line.includes("update available"),
+    );
+  if (!everyGroupIsCurrent) {
+    throw new Error(
+      `roundtrip failed — status after the fake install does not report every skill group, Essentials included, as current:\n${status.output}`,
+    );
+  }
 }
 
 async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
@@ -327,6 +342,9 @@ async function cmdRoundtrip(fixture: string, flags: RunFlags): Promise<void> {
     );
   }
   const verifiedBinaryInstalls = takeFakeVerifiedBinaryInstallRequests();
+  if (!flags.real && pluginRan(flags, "skills")) {
+    await assertEssentialsStatusIsCurrent(repoDir, homeDir, fixture);
+  }
 
   const nuke = await invokeAgemon(
     buildNukeArgv(flags),

@@ -11,6 +11,7 @@ import {
   type AgemonConfig,
   type CustomSkillGroupConfig,
   loadConfig,
+  SKILL_GROUPS_WHEN_ABSENT,
 } from "../core/config.js";
 import { createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
@@ -74,6 +75,8 @@ import { theme } from "../ui/theme.js";
 const VERSION = readPackageVersion();
 const DESCRIPTION =
   "Bootstraps and reverses an AI coding agent's working environment in a repo.";
+const TRUST_REPO_GIT_CONFIG_HELP =
+  "with --yes, approve installing code-review-graph and its daemon in a repository whose own git config has keys agemon does not trust by default (the keys are always printed; read them first)";
 
 interface CliOptions {
   dryRun?: boolean;
@@ -83,6 +86,7 @@ interface CliOptions {
   skillGroups?: string;
   json?: boolean;
   allowUnignoredState?: boolean;
+  trustRepoGitConfig?: boolean;
   plan?: string;
   quiet?: boolean;
   verbose?: boolean;
@@ -133,7 +137,7 @@ const ERROR_HINTS: { match: RegExp; hint: string }[] = [
   },
   {
     match: /not git-ignored|isolation/i,
-    hint: "add /.agemon/ to .gitignore, or re-run interactively or with --yes.",
+    hint: "add /.agemon/ to .gitignore, or re-run interactively or with --yes; if agemon reported that git could not answer, fix that git error first.",
   },
   {
     match: /\.gitignore: it is not a regular file/,
@@ -492,6 +496,7 @@ async function runInstall(requested: CliOptions): Promise<number> {
       only,
       agemonVersion: VERSION,
       allowUnignoredState: Boolean(options.allowUnignoredState),
+      trustRepoGitConfig: Boolean(options.trustRepoGitConfig),
       conflictDecisions: config?.conflictDecisions,
       persistConfig: config === null,
       platformSkippedCapabilities: options.platformSkippedIds ?? [],
@@ -547,6 +552,7 @@ async function runApply(requested: CliOptions): Promise<number> {
       only,
       agemonVersion: VERSION,
       allowUnignoredState: Boolean(options.allowUnignoredState),
+      trustRepoGitConfig: Boolean(options.trustRepoGitConfig),
       plan,
       conflictDecisions: config?.conflictDecisions,
       persistConfig: config === null,
@@ -706,7 +712,7 @@ Exit codes:
   2    drift found, consent missing, or applied but verification failed
   130  interrupted (143 for SIGTERM)`;
 
-function createProgram(recordExitCode: (code: number) => void): Command {
+export function createProgram(recordExitCode: (code: number) => void): Command {
   const program = new Command();
   const record =
     (run: (options: CliOptions) => Promise<number>) =>
@@ -742,13 +748,14 @@ function createProgram(recordExitCode: (code: number) => void): Command {
       "--allow-unignored-state",
       "let apply write .agemon/ state even when it cannot be git-ignored (discouraged)",
     )
+    .option("--trust-repo-git-config", TRUST_REPO_GIT_CONFIG_HELP)
     .option(
       "--only <plugins>",
       "comma-separated list of plugin ids to run (their dependencies run too, e.g. agents runs skills)",
     )
     .option(
       "--skill-groups <groups>",
-      "comma-separated skill group ids to install, or 'all'/'none' (default: interactive prompt per group, or essentials-only when non-interactive)",
+      `comma-separated skill group ids to install, or 'all'/'none' (default: ${SKILL_GROUPS_WHEN_ABSENT})`,
     )
     .option("--no-color", "disable colored output")
     .option("-v, --verbose", "show raw subprocess output beneath each step")
@@ -822,6 +829,7 @@ function createProgram(recordExitCode: (code: number) => void): Command {
       "--allow-unignored-state",
       "write .agemon/ state even when it cannot be git-ignored (discouraged)",
     )
+    .option("--trust-repo-git-config", TRUST_REPO_GIT_CONFIG_HELP)
     .option(
       "--only <plugins>",
       "comma-separated list of plugin ids to run (their dependencies run too, e.g. agents runs skills)",

@@ -7,9 +7,14 @@ recordings_dir="$(cd "$(dirname "$0")" && pwd)"
 repository_root="$(cd "$recordings_dir/../.." && pwd)"
 media_dir="$repository_root/website/public/media"
 recorded_ledger="$repository_root/website/src/data/recorded-ledger.json"
+readme_gif="$repository_root/docs/demo/agemon.gif"
 manifest="$recordings_dir/recordings.sha256"
 all_recordings="roundtrip plan-and-consent failure-and-rollback"
 work_root="${XDG_CACHE_HOME:-$HOME/.cache}/agemon-recordings"
+max_video_bytes=3145728
+max_poster_bytes=524288
+max_readme_gif_bytes=4194304
+max_ledger_bytes=1048576
 
 fail() {
   echo "record.sh: $*" >&2
@@ -40,7 +45,7 @@ remove_work_root() {
   rm -rf "$work_root" || echo "record.sh: could not remove $work_root; delete it by hand" >&2
 }
 remove_work_root
-mkdir -p "$work_root/env" "$media_dir" "$(dirname "$recorded_ledger")"
+mkdir -p "$work_root/env" "$media_dir" "$(dirname "$recorded_ledger")" "$(dirname "$readme_gif")"
 trap remove_work_root EXIT
 
 printf 'root:x:0:0::/root:/bin/sh\nrecorder:x:%s:%s::/tmp:/bin/bash\n' "$(id -u)" "$(id -g)" >"$work_root/passwd"
@@ -58,11 +63,18 @@ starts_with() {
 accept_output() {
   produced="$1"
   destination="$2"
-  signature="${3:-}"
+  max_bytes="$3"
+  signature="${4:-}"
   { [ -f "$produced" ] && [ ! -L "$produced" ]; } ||
     fail "$produced is missing or not a regular file"
+  [ "$(wc -c <"$produced")" -le "$max_bytes" ] ||
+    fail "$produced is larger than $max_bytes bytes"
   [ -z "$signature" ] || starts_with "$produced" "$signature" ||
     fail "$produced does not start with the expected signature"
+  { [ ! -L "$destination" ] && [ ! -L "$(dirname "$destination")" ]; } ||
+    fail "$destination or its directory is a symlink; remove it and record again"
+  [ ! -e "$destination" ] || [ -f "$destination" ] ||
+    fail "$destination exists and is not a regular file"
   cat <"$produced" >"$destination"
 }
 
@@ -98,10 +110,11 @@ for name in "$@"; do
     -v "$out_dir:/out" \
     "$image" "/tapes/$name.tape"
 
-  accept_output "$out_dir/$name.webm" "$media_dir/$name.webm" 1a45dfa3
-  accept_output "$out_dir/$name.png" "$media_dir/$name.png" 89504e470d0a1a0a
+  accept_output "$out_dir/$name.webm" "$media_dir/$name.webm" "$max_video_bytes" 1a45dfa3
+  accept_output "$out_dir/$name.png" "$media_dir/$name.png" "$max_poster_bytes" 89504e470d0a1a0a
   if [ "$name" = roundtrip ]; then
-    accept_output "$out_dir/recorded-ledger.json" "$recorded_ledger"
+    accept_output "$out_dir/roundtrip.gif" "$readme_gif" "$max_readme_gif_bytes" 474946383961
+    accept_output "$out_dir/recorded-ledger.json" "$recorded_ledger" "$max_ledger_bytes"
   fi
 done
 
@@ -112,6 +125,6 @@ done
   for name in $all_recordings; do
     sha256sum "website/public/media/$name.webm" "website/public/media/$name.png"
   done
-  sha256sum website/src/data/recorded-ledger.json
+  sha256sum website/src/data/recorded-ledger.json docs/demo/agemon.gif
 } >"$manifest"
 echo "record.sh: recorded $*; review the media and the recordings.sha256 diff"

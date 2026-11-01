@@ -3,13 +3,17 @@ import { join } from "node:path";
 import { readRegularFileIfExists } from "../../core/files.js";
 import type { ServiceManager } from "./index.js";
 import {
+  environmentOfUnit,
   isAgemonDaemonUnitFile,
   workingDirectoryOfUnit,
 } from "./unit-files.js";
 
 export type UserUnitFiles = Pick<
   ServiceManager,
-  "unitPathFor" | "readUnitWorkingDirectory" | "findAgemonDaemonUnit"
+  | "unitPathFor"
+  | "readUnitWorkingDirectory"
+  | "readUnitEnvironment"
+  | "findAgemonDaemonUnit"
 >;
 
 export function createUserUnitFiles(homeDir: string): UserUnitFiles {
@@ -23,6 +27,10 @@ export function createUserUnitFiles(homeDir: string): UserUnitFiles {
       return unitContents === null
         ? null
         : workingDirectoryOfUnit(unitContents);
+    },
+    async readUnitEnvironment(unitName) {
+      const unitContents = await readRegularFileIfExists(unitPathFor(unitName));
+      return unitContents === null ? null : environmentOfUnit(unitContents);
     },
     async findAgemonDaemonUnit() {
       let unitFileNames: string[];

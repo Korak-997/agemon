@@ -1,3 +1,5 @@
+import { readBoundedBody } from "./bounded-response.js";
+
 export const GITHUB_REPOSITORY = "Korak-997/agemon";
 export const RELEASE_WORKFLOW = `${GITHUB_REPOSITORY}/.github/workflows/release.yml`;
 const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest`;
@@ -8,6 +10,7 @@ const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const PRERELEASE_CHANNEL_ORDER = ["alpha", "beta", "rc"];
 const RELEASE_DOWNLOAD_TIMEOUT_MS = 30_000;
 const USER_AGENT = "agemon-update-check";
+const MAX_LATEST_RELEASE_RESPONSE_BYTES = 1024 * 1024;
 
 export function parseReleaseVersion(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -62,10 +65,17 @@ export async function fetchLatestReleaseVersion(
     headers: { "User-Agent": USER_AGENT },
     signal,
   });
-  if (!response.ok) {
+  if (!response.ok || !response.body) {
     return undefined;
   }
-  const body = (await response.json()) as { tag_name?: unknown };
+  const bodyBytes = await readBoundedBody(
+    response.body,
+    MAX_LATEST_RELEASE_RESPONSE_BYTES,
+    () => new Error("the latest-release response is larger than expected"),
+  );
+  const body = JSON.parse(bodyBytes.toString("utf8")) as {
+    tag_name?: unknown;
+  };
   return parseReleaseVersion(body.tag_name);
 }
 
@@ -87,15 +97,18 @@ export async function downloadReleaseAsset(
       `downloading ${assetName} failed with HTTP ${response.status}`,
     );
   }
+  if (!response.body) {
+    throw new Error(`downloading ${assetName} returned no body`);
+  }
   const declaredBytes = Number(response.headers.get("content-length") ?? 0);
   if (declaredBytes > maxBytes) {
     throw new Error(`${assetName} is larger than expected`);
   }
-  const body = Buffer.from(await response.arrayBuffer());
-  if (body.byteLength > maxBytes) {
-    throw new Error(`${assetName} is larger than expected`);
-  }
-  return body;
+  return readBoundedBody(
+    response.body,
+    maxBytes,
+    () => new Error(`${assetName} is larger than expected`),
+  );
 }
 
 export function readExpectedChecksum(

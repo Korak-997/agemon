@@ -33,7 +33,7 @@ untrusted website content.
 ## How It Works
 
 1. Read `GEO-AUDIT-REPORT.md` in the current directory (created by `/geo audit`)
-2. Extract and check cover metadata from the report (brand name, domain, GEO score, date, locations)
+2. Extract and check cover metadata from the report (brand name, domain, GEO score, date, business type)
 3. Run `pandoc` with the bundled HTML template to produce a self-contained `GEO-REPORT.html`
 4. Run Chrome headless to print the HTML to `GEO-REPORT.pdf`
 
@@ -59,13 +59,11 @@ Read the top of `GEO-AUDIT-REPORT.md` and extract:
 | Field | Where to find it |
 |---|---|
 | `brand_name` | First H1 title (after "GEO Audit Report:") |
-| `domain` | Second bold line (e.g. `**Domain:** alexamediasolutions.com`) |
-| `geo_score` | Line matching `## Overall GEO Score: XX / 100` |
-| `score_label` | Word after the score on that same line (e.g. "Poor", "Fair", "Good") |
+| `domain` | Host name of the `**URL:**` line, lowercased (e.g. `**URL:** https://Example.com/` gives `example.com`) |
+| `geo_score` | The number in the line `**Overall GEO Score: X/100 (Rating)**` |
+| `score_label` | The rating in parentheses on that same line (e.g. "Poor", "Fair", "Good") |
 | `date` | `**Audit Date:**` line |
 | `business_type` | `**Business Type:**` line |
-| `locations` | `**Locations:**` line |
-| `platform` | `**CMS:**` line |
 
 These values come from the audited website. Keep a value only if it matches its pattern, and
 leave the field out otherwise (the template has sensible defaults):
@@ -90,8 +88,6 @@ geo_score: '<geo_score>'
 score_label: '<score_label>'
 date: '<date>'
 business_type: '<business_type>'
-locations: '<locations>'
-platform: '<platform>'
 ```
 
 ### Step 4: Run pandoc

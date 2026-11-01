@@ -1,8 +1,13 @@
 import {
+  cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -13,7 +18,19 @@ import {
   CODE_REVIEW_GRAPH_VERSION,
   ESSENTIALS_SKILLS_COMMIT,
 } from "../plugins/pins.js";
+import { SKILL_GROUPS } from "../plugins/skills/catalog.js";
+import { skillPathInRepository } from "../plugins/skills/pinned-source.js";
+import { isLeftOutBySkillsCli } from "../plugins/skills/skill-tree.js";
 import { SKILLS_CLI_PATH_IN_TOOLS_DIR } from "../plugins/skills/skills-cli.js";
+import {
+  CANONICAL_SKILLS_DIRECTORY,
+  CLAUDE_SKILLS_DIRECTORY,
+} from "../plugins/skills/skills-cli-targets.js";
+import { isPlainSkillName } from "./config.js";
+import {
+  FAKE_PINNED_SKILL_MANIFEST_FILE,
+  fakePinnedSkillManifest,
+} from "./fake-pinned-skills.js";
 import { resolveStateRoot } from "./state-root.js";
 import type { SubprocessResult } from "./subprocess-runner.js";
 import type {
@@ -29,7 +46,6 @@ function formatCommand(command: string, args: string[]): string {
 }
 
 let fakeCrgInstalledState: boolean | null = null;
-let fakeInstalledSkillNames: Set<string> | null = null;
 let fakeInstalledGlobalNpmPackageNames: Set<string> | null = null;
 let fakeVersionedAgentBinaryNames: Set<string> | null = null;
 let fakeUsableAgentBinaryNames: Set<string> | null = null;
@@ -39,7 +55,6 @@ let fakeVerifiedBinaryInstallRequests: VerifiedBinaryInstallRequest[] = [];
 function buildFakeStateSignature(): string {
   return [
     process.env.AGEMON_FAKE_PREINSTALLED_CRG ?? "",
-    process.env.AGEMON_FAKE_PREINSTALLED_SKILLS ?? "",
     process.env.AGEMON_FAKE_PREINSTALLED_NPM_PACKAGES ?? "",
     process.env.AGEMON_FAKE_INSTALLED_AGENTS ?? "",
     process.env.AGEMON_FAKE_USABLE_AGENTS ?? "",
@@ -72,7 +87,6 @@ function loadSavedFakeGlobalNpmPackages(): string[] | null {
 export function resetFakeSubprocessState(): void {
   rmSync(fakeGlobalNpmStatePath(), { force: true });
   fakeCrgInstalledState = null;
-  fakeInstalledSkillNames = null;
   fakeInstalledGlobalNpmPackageNames = null;
   fakeVersionedAgentBinaryNames = null;
   fakeUsableAgentBinaryNames = null;
@@ -113,13 +127,6 @@ function initializeFakeStateIfNeeded(): void {
 
   fakeCrgInstalledState = process.env.AGEMON_FAKE_PREINSTALLED_CRG === "1";
 
-  const preinstalledSkills = process.env.AGEMON_FAKE_PREINSTALLED_SKILLS?.split(
-    ",",
-  )
-    .map((skillName) => skillName.trim())
-    .filter((skillName) => skillName.length > 0);
-  fakeInstalledSkillNames = new Set(preinstalledSkills ?? []);
-
   const preinstalledGlobalNpmPackages =
     process.env.AGEMON_FAKE_PREINSTALLED_NPM_PACKAGES?.split(",")
       .map((packageName) => packageName.trim())
@@ -154,10 +161,36 @@ function readOptionValue(
   return args[optionIndex + 1];
 }
 
-function buildFakeSkillsList(): SubprocessResult {
-  const skills = Array.from(fakeInstalledSkillNames ?? []).map((name) => ({
+function declaredSkillName(
+  manifestPath: string,
+  directoryName: string,
+): string {
+  const nameLine = readFileSync(manifestPath, "utf8")
+    .split("\n")
+    .find((line) => line.startsWith("name:"));
+  return nameLine?.slice("name:".length).trim() || directoryName;
+}
+
+function installedSkillNamesIn(skillsDirectory: string): string[] {
+  if (!existsSync(skillsDirectory)) {
+    return [];
+  }
+  return readdirSync(skillsDirectory).flatMap((directoryName) => {
+    const manifestPath = join(skillsDirectory, directoryName, "SKILL.md");
+    return existsSync(manifestPath)
+      ? [declaredSkillName(manifestPath, directoryName)]
+      : [];
+  });
+}
+
+function buildFakeSkillsList(cwd: string): SubprocessResult {
+  const names = new Set([
+    ...installedSkillNamesIn(join(cwd, CANONICAL_SKILLS_DIRECTORY)),
+    ...installedSkillNamesIn(join(cwd, CLAUDE_SKILLS_DIRECTORY)),
+  ]);
+  const skills = [...names].sort().map((name) => ({
     name,
-    path: `/fake/.claude/skills/${name}`,
+    path: join(cwd, CLAUDE_SKILLS_DIRECTORY, name),
     scope: "project",
     agents: ["Claude Code"],
   }));
@@ -169,7 +202,33 @@ function buildFakeSkillsList(): SubprocessResult {
   };
 }
 
-function buildFakeSkillsAdd(args: string[]): SubprocessResult {
+function removeInstalledCopy(copyPath: string): void {
+  const stats = lstatSync(copyPath, { throwIfNoEntry: false });
+  if (stats?.isSymbolicLink()) {
+    unlinkSync(copyPath);
+  } else if (stats !== undefined) {
+    rmSync(copyPath, { recursive: true, force: true });
+  }
+}
+
+function copyLikeSkillsCli(source: string, destination: string): void {
+  cpSync(source, destination, {
+    recursive: true,
+    dereference: true,
+    filter: (path) =>
+      path === source || !isLeftOutBySkillsCli(basename(path), statSync(path)),
+  });
+}
+
+function refusedSkillName(skillName: string): SubprocessResult {
+  return {
+    code: 1,
+    stdout: "",
+    stderr: `the fake skills CLI refuses the skill name ${JSON.stringify(skillName)}`,
+  };
+}
+
+function buildFakeSkillsAdd(args: string[], cwd: string): SubprocessResult {
   const packageSource = args[1];
   if (!packageSource) {
     return {
@@ -180,7 +239,22 @@ function buildFakeSkillsAdd(args: string[]): SubprocessResult {
   }
 
   const skillName = readOptionValue(args, "--skill") ?? packageSource;
-  fakeInstalledSkillNames?.add(skillName);
+  if (!isPlainSkillName(skillName)) {
+    return refusedSkillName(skillName);
+  }
+  const copyPath = join(cwd, CLAUDE_SKILLS_DIRECTORY, skillName);
+  removeInstalledCopy(copyPath);
+  mkdirSync(dirname(copyPath), { recursive: true });
+  if (existsSync(packageSource)) {
+    copyLikeSkillsCli(packageSource, copyPath);
+  } else {
+    mkdirSync(copyPath);
+    writeFileSync(
+      join(copyPath, "SKILL.md"),
+      `---\nname: ${skillName}\n---\n`,
+      "utf8",
+    );
+  }
 
   return {
     code: 0,
@@ -189,7 +263,7 @@ function buildFakeSkillsAdd(args: string[]): SubprocessResult {
   };
 }
 
-function buildFakeSkillsRemove(args: string[]): SubprocessResult {
+function buildFakeSkillsRemove(args: string[], cwd: string): SubprocessResult {
   const agentName = readOptionValue(args, "--agent");
   const skillNames = args
     .slice(1)
@@ -197,8 +271,14 @@ function buildFakeSkillsRemove(args: string[]): SubprocessResult {
       (arg) => arg.length > 0 && !arg.startsWith("-") && arg !== agentName,
     );
 
+  const unsafeName = skillNames.find(
+    (skillName) => !isPlainSkillName(skillName),
+  );
+  if (unsafeName !== undefined) {
+    return refusedSkillName(unsafeName);
+  }
   for (const skillName of skillNames) {
-    fakeInstalledSkillNames?.delete(skillName);
+    removeInstalledCopy(join(cwd, CLAUDE_SKILLS_DIRECTORY, skillName));
   }
 
   return {
@@ -208,18 +288,31 @@ function buildFakeSkillsRemove(args: string[]): SubprocessResult {
   };
 }
 
-function buildFakeSkillsCliResponse(args: string[]): SubprocessResult {
+function buildFakeSkillsCliResponse(
+  args: string[],
+  cwd: string | undefined,
+): SubprocessResult {
   const subcommand = args[0];
-  if (subcommand === "list" || subcommand === "ls") {
-    return buildFakeSkillsList();
+  const needsRepository = ["list", "ls", "add", "remove", "rm"].includes(
+    subcommand ?? "",
+  );
+  if (needsRepository && cwd === undefined) {
+    return {
+      code: 1,
+      stdout: "",
+      stderr: "the fake skills CLI needs the repository as its cwd",
+    };
+  }
+  if (cwd !== undefined && (subcommand === "list" || subcommand === "ls")) {
+    return buildFakeSkillsList(cwd);
   }
 
-  if (subcommand === "add") {
-    return buildFakeSkillsAdd(args);
+  if (cwd !== undefined && subcommand === "add") {
+    return buildFakeSkillsAdd(args, cwd);
   }
 
-  if (subcommand === "remove" || subcommand === "rm") {
-    return buildFakeSkillsRemove(args);
+  if (cwd !== undefined && (subcommand === "remove" || subcommand === "rm")) {
+    return buildFakeSkillsRemove(args, cwd);
   }
 
   return {
@@ -227,6 +320,25 @@ function buildFakeSkillsCliResponse(args: string[]): SubprocessResult {
     stdout: `[fake subprocess] skills ${args.join(" ")}\n`,
     stderr: "",
   };
+}
+
+function writeFakePinnedSkills(sourceDirectory: string): void {
+  const commit = basename(sourceDirectory);
+  for (const entry of SKILL_GROUPS.flatMap((group) => group.skills)) {
+    if (entry.pinnedRepository?.commit !== commit) {
+      continue;
+    }
+    const skillDirectory = join(
+      sourceDirectory,
+      skillPathInRepository(entry.skillName),
+    );
+    mkdirSync(skillDirectory, { recursive: true });
+    writeFileSync(
+      join(skillDirectory, FAKE_PINNED_SKILL_MANIFEST_FILE),
+      fakePinnedSkillManifest(entry.skillName),
+      "utf8",
+    );
+  }
 }
 
 export function fakePipxHome(): string {
@@ -552,7 +664,7 @@ export function runFakeSubprocess(
   }
 
   if (args[0]?.endsWith(PINNED_SKILLS_CLI_SUFFIX)) {
-    return buildFakeSkillsCliResponse(args.slice(1));
+    return buildFakeSkillsCliResponse(args.slice(1), options.cwd);
   }
 
   if (
@@ -561,6 +673,14 @@ export function runFakeSubprocess(
     args.at(-1) === "HEAD"
   ) {
     return { code: 0, stdout: `${ESSENTIALS_SKILLS_COMMIT}\n`, stderr: "" };
+  }
+
+  if (
+    command === "git" &&
+    args.slice(-3).join(" ") === "checkout -q FETCH_HEAD" &&
+    options.cwd !== undefined
+  ) {
+    writeFakePinnedSkills(options.cwd);
   }
 
   if (basename(command) === "npm") {

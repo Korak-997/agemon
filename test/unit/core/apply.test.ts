@@ -30,6 +30,7 @@ import type {
   AgemonPlugin,
   ProposedOperation,
 } from "../../../src/plugins/types.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 vi.mock("../../../src/core/files.js", async (importOriginal) => {
@@ -65,6 +66,9 @@ function createNoOpServiceManager(): ServiceManager {
     async readUnitWorkingDirectory() {
       return null;
     },
+    async readUnitEnvironment() {
+      return null;
+    },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
     async isLingerEnabled() {
       return false;
@@ -83,6 +87,7 @@ async function createSandboxContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -206,6 +211,61 @@ describe("applyPlan workspace isolation", () => {
     await expect(
       readFile(join(ctx.cwd, ".gitignore"), "utf8"),
     ).resolves.toContain("/.agemon/");
+  });
+
+  it("appends /.agemon/ after an approval even when a negated .agemon line exists", async () => {
+    const ctx = await createSandboxContext();
+    await writeFile(join(ctx.cwd, ".gitignore"), ".agemon\n!.agemon\n", "utf8");
+    const op = operation();
+
+    await applyPlan(
+      ctx,
+      [createFilePlugin({ id: "cap", onInstall: async () => {} })],
+      {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: true,
+        isolationStatus: "not-ignored",
+        allowUnignoredState: false,
+      },
+    );
+
+    await expect(readFile(join(ctx.cwd, ".gitignore"), "utf8")).resolves.toBe(
+      ".agemon\n!.agemon\n/.agemon/\n",
+    );
+  });
+
+  it("prints a failing tool's escape sequences as ? in the rollback line", async () => {
+    const ctx = await createSandboxContext();
+    const failed: string[] = [];
+    ctx.ui = {
+      ...ctx.ui,
+      fail(label) {
+        failed.push(label ?? "");
+      },
+    };
+    const op = operation();
+    const escapeCharacter = String.fromCharCode(27);
+
+    await expect(
+      applyPlan(
+        ctx,
+        [
+          createFilePlugin({
+            id: "cap",
+            onInstall: async () => {
+              throw new Error(
+                `pip said ${escapeCharacter}]0;pwned${String.fromCharCode(7)}`,
+              );
+            },
+          }),
+        ],
+        { plan: planWith([op]), approved: [op], ...IGNORED_ISOLATION },
+      ),
+    ).rejects.toBeInstanceOf(ApplyRollbackError);
+
+    expect(failed.join("\n")).toContain("pip said ?]0;pwned?");
+    expect(failed.join("\n")).not.toContain(escapeCharacter);
   });
 
   it("proceeds without touching .gitignore under --allow-unignored-state", async () => {
@@ -512,7 +572,9 @@ describe("applyPlan transaction protocol", () => {
         return { ok: true };
       },
       async revert() {
-        throw new Error("pipx uninstall unavailable");
+        throw new Error(
+          `pipx uninstall unavailable ${String.fromCharCode(27)}]0;title`,
+        );
       },
       async uninstall() {},
     };
@@ -535,11 +597,12 @@ describe("applyPlan transaction protocol", () => {
 
     expect(
       failures.some((message) =>
-        /manual cleanup needed: installer: pipx uninstall unavailable/.test(
+        /manual cleanup needed: installer: pipx uninstall unavailable \?\]0;title/.test(
           message,
         ),
       ),
     ).toBe(true);
+    expect(failures.join("\n")).not.toContain(String.fromCharCode(27));
     expect(ctx.manifest.getActions().map((entry) => entry.target)).toEqual([
       "pkg",
     ]);
@@ -572,6 +635,55 @@ describe("applyPlan transaction protocol", () => {
     await expect(readFile(join(ctx.cwd, "res.txt"), "utf8")).resolves.toBe(
       "done\n",
     );
+  });
+
+  it("a capability with neither apply nor install fails clearly", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation({ action: "install-package", targetPath: "pkg" });
+    const { install: _install, ...pluginWithoutWork } = createFilePlugin({
+      id: "cap",
+      onInstall: async () => {},
+    });
+
+    const error = await captureRollbackError(
+      applyPlan(ctx, [pluginWithoutWork], {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      }),
+    );
+
+    expect(error.message).toContain(
+      "Capability 'cap' has neither apply nor install.",
+    );
+  });
+
+  it("plugins whose apply returns nothing still count every operation", async () => {
+    const ctx = await createSandboxContext();
+    const op = operation({ action: "install-package", targetPath: "pkg" });
+
+    const result = await applyPlan(
+      ctx,
+      [
+        {
+          ...createFilePlugin({ id: "cap", onInstall: async () => {} }),
+          async apply() {
+            return undefined;
+          },
+        },
+      ],
+      {
+        plan: planWith([op]),
+        approved: [op],
+        workspaceIsolationApproved: null,
+        isolationStatus: "ignored",
+        allowUnignoredState: false,
+      },
+    );
+
+    expect(result).toEqual({ applied: [op], skipped: [] });
   });
 
   it("applies a capability whose verify passes with an attention note, printing it and rolling nothing back", async () => {
@@ -1567,7 +1679,7 @@ describe("applyPlan signal handling", () => {
             approved: [op],
             ...IGNORED_ISOLATION,
           }),
-        ).resolves.toEqual({ applied: [op] });
+        ).resolves.toEqual({ applied: [op], skipped: [] });
       } finally {
         await chmod(journalDirectory, 0o700);
       }

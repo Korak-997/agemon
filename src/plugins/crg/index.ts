@@ -2,6 +2,14 @@ import { lstat, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "../../core/context.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
+import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
+import {
+  assertGitConfigMatchesPlan,
+  joinAttention,
+  markUntrustedGitConfig,
+  UNTRUSTED_GIT_CONFIG_REMEDY,
+  verifyRepositoryGitConfig,
+} from "../../core/untrusted-git-config.js";
 import { printable } from "../../core/untrusted-text.js";
 import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../pins.js";
 import { describeOperation } from "../proposed-operation.js";
@@ -15,15 +23,19 @@ import {
   wasInstalledByAgemon,
 } from "../shared-resource.js";
 import type {
-  AgemonPlugin,
   CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
+  PluginWithInstall,
   ProposedOperation,
   SharedResourceDeclaration,
 } from "../types.js";
 import { ensureCrgConstraintsFile, hashLockedPipArgs } from "./constraints.js";
-import { crgSubprocessEnvironment, resolveCrgHome } from "./environment.js";
+import {
+  crgSubprocessEnvironment,
+  REPOSITORY_LOCAL_VARIABLES_REMOVED_FOR_CRG,
+  resolveCrgHome,
+} from "./environment.js";
 import {
   BROKEN_PIPX_VENV_HINT,
   type CrgLocation,
@@ -63,12 +75,14 @@ function getPluginActions(ctx: Context) {
     .filter((action) => action.plugin === PLUGIN_ID);
 }
 
-function hasManagedInstall(ctx: Context): boolean {
-  return getPluginActions(ctx).some(
-    (action) =>
-      action.type === ACTION_TYPE_INSTALLED_BINARY &&
-      action.preExisting === false,
+function confirmedPluginActions(ctx: Context): LedgerEntry[] {
+  return getPluginActions(ctx).filter((action) =>
+    ctx.manifest.isConfirmed(action),
   );
+}
+
+function hasManagedInstall(ctx: Context): boolean {
+  return entriesHaveManagedInstall(confirmedPluginActions(ctx));
 }
 
 type FoundCrg = Extract<CrgLocation, { status: "found" }>;
@@ -134,6 +148,13 @@ async function describeCrgState(ctx: Context): Promise<CapabilityStateRow[]> {
 }
 
 async function planCrg(ctx: Context): Promise<ProposedOperation[]> {
+  return markUntrustedGitConfig(ctx, await planCrgOperations(ctx), {
+    runsGit: () => true,
+    reportsUnreadableConfig: true,
+  });
+}
+
+async function planCrgOperations(ctx: Context): Promise<ProposedOperation[]> {
   const location = await locateCodeReviewGraph(ctx);
   if (location.status === "broken-venv") {
     ctx.ui.info(BROKEN_PIPX_VENV_HINT);
@@ -223,13 +244,15 @@ async function pipxInstallCrg(ctx: Context, pipxHome: string): Promise<void> {
   }
   if (installResult.code !== 0) {
     throw new Error(
-      printable(installResult.stderr) ||
-        `pipx install failed for ${CODE_REVIEW_GRAPH_PACKAGE_SPEC}`,
+      `pipx install failed for ${CODE_REVIEW_GRAPH_PACKAGE_SPEC}: ${describeSubprocessFailure(installResult, "pipx")}`,
     );
   }
 }
 
-async function installCrg(ctx: Context): Promise<void> {
+async function installCrg(
+  ctx: Context,
+  operation?: ProposedOperation,
+): Promise<void> {
   if (ctx.dryRun) {
     ctx.ui.info(`Would install ${PACKAGE_NAME} via pipx`);
     ctx.ui.info("Would build graph for current repository");
@@ -275,6 +298,7 @@ async function installCrg(ctx: Context): Promise<void> {
   }
 
   reportIgnoredCrgEnvironment(ctx);
+  await assertGitConfigMatchesPlan(ctx.gitConfigGuard, operation);
   await ctx.manifest.recordAction({
     plugin: PLUGIN_ID,
     type: ACTION_TYPE_GRAPH_BUILT,
@@ -284,9 +308,12 @@ async function installCrg(ctx: Context): Promise<void> {
   const buildResult = await ctx.run(location.binaryPath, ["build"], {
     timeoutMs: BUILD_TIMEOUT_MS,
     env: crgSubprocessEnvironment(),
+    unsetEnv: REPOSITORY_LOCAL_VARIABLES_REMOVED_FOR_CRG,
   });
   if (buildResult.code !== 0) {
-    throw new Error(buildResult.stderr || "code-review-graph build failed");
+    throw new Error(
+      `code-review-graph build failed: ${describeSubprocessFailure(buildResult, "code-review-graph build")}`,
+    );
   }
 }
 
@@ -304,12 +331,12 @@ async function useInstalledCrg(ctx: Context): Promise<void> {
 async function applyCrg(
   ctx: Context,
   operations: ProposedOperation[],
-): Promise<void> {
+): Promise<undefined> {
   for (const operation of operations) {
     if (operation.action === "use-shared") {
       await useInstalledCrg(ctx);
     } else if (operation.action === "install-package") {
-      await installCrg(ctx);
+      await installCrg(ctx, operation);
     }
   }
 }
@@ -327,12 +354,21 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
     return { ok: false, detail: `${PACKAGE_NAME} is not installed` };
   }
 
+  const gitConfig = await verifyRepositoryGitConfig(ctx.gitConfigGuard);
+  if (gitConfig.kind === "unreadable") {
+    return { ok: false, detail: gitConfig.detail };
+  }
+  const gitConfigAttention =
+    gitConfig.kind === "untrusted"
+      ? `this repository's git config has keys agemon does not trust by default: ${gitConfig.untrustedKeys}; ${PACKAGE_NAME} runs git here. ${UNTRUSTED_GIT_CONFIG_REMEDY}`
+      : undefined;
+
   const graphEntry = await graphEntryKind(ctx);
   if (graphEntry === "other") {
     return { ok: false, detail: GRAPH_ENTRY_NOT_DIRECTORY };
   }
   if (graphEntry === "missing") {
-    return entriesHaveBuiltGraph(getPluginActions(ctx))
+    return entriesHaveBuiltGraph(confirmedPluginActions(ctx))
       ? {
           ok: false,
           detail: `${GRAPH_DIRECTORY}/ is missing — run agemon to build it again`,
@@ -340,19 +376,32 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
       : {
           ok: true,
           detail: "installed; no graph built in this repository",
-          ...(await hashLockAttention(ctx, location)),
+          ...joinAttention(
+            (await hashLockAttention(ctx, location)).attention,
+            gitConfigAttention,
+          ),
         };
+  }
+  if (gitConfigAttention !== undefined) {
+    return {
+      ok: true,
+      detail: `installed; ${PACKAGE_NAME} status not run`,
+      ...joinAttention(
+        (await hashLockAttention(ctx, location)).attention,
+        gitConfigAttention,
+      ),
+    };
   }
 
   const statusResult = await ctx.run(location.binaryPath, ["status"], {
     timeoutMs: STATUS_TIMEOUT_MS,
     env: crgSubprocessEnvironment(),
+    unsetEnv: REPOSITORY_LOCAL_VARIABLES_REMOVED_FOR_CRG,
   });
   if (statusResult.code !== 0) {
     return {
       ok: false,
-      detail:
-        printable(statusResult.stderr) || "code-review-graph status failed",
+      detail: `code-review-graph status failed: ${describeSubprocessFailure(statusResult, "code-review-graph status")}`,
     };
   }
 
@@ -402,12 +451,20 @@ async function removeBuiltGraph(ctx: Context): Promise<void> {
 }
 
 async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
-  const managedInstall = entriesHaveManagedInstall(entries);
+  const confirmedEntries = entries.filter((entry) =>
+    ctx.manifest.isConfirmed(entry),
+  );
+  const managedInstall = entriesHaveManagedInstall(confirmedEntries);
   const usesSharedCrg =
-    managedInstall ||
+    entriesHaveManagedInstall(entries) ||
     repoLedgerUsesSharedResource(entries, CRG_SHARED_RESOURCE);
-  const builtGraph = entriesHaveBuiltGraph(entries);
+  const builtGraph = entriesHaveBuiltGraph(confirmedEntries);
 
+  if (!builtGraph && entriesHaveBuiltGraph(entries)) {
+    ctx.ui.info(
+      `${ctx.dryRun ? "Would keep" : "Keeping"} ${GRAPH_DIRECTORY}/: agemon has no record on this machine that it built it here`,
+    );
+  }
   if (builtGraph) {
     if (ctx.dryRun) {
       ctx.ui.info(
@@ -439,8 +496,7 @@ async function revertCrg(ctx: Context, entries: LedgerEntry[]): Promise<void> {
       );
       if (uninstallResult.code !== 0) {
         throw new Error(
-          printable(uninstallResult.stderr) ||
-            `pipx uninstall failed for ${PACKAGE_NAME}`,
+          `pipx uninstall failed for ${PACKAGE_NAME}: ${describeSubprocessFailure(uninstallResult, "pipx")}`,
         );
       }
     },
@@ -451,7 +507,7 @@ async function uninstallCrg(ctx: Context): Promise<void> {
   await revertCrg(ctx, getPluginActions(ctx));
 }
 
-export const crgPlugin: AgemonPlugin = {
+export const crgPlugin: PluginWithInstall = {
   id: PLUGIN_ID,
   riskClass: "executes",
   sharedResources: [CRG_SHARED_RESOURCE],

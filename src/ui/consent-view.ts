@@ -5,6 +5,7 @@ import { theme } from "./theme.js";
 
 const GATE_TITLES: Record<string, string> = {
   "workspace-isolation": "Workspace isolation",
+  "trust-repository-git-config": "Trust this repository's git config",
   "install-custom-skills": "Install skills from this repository",
   "install-tooling": "Install tooling",
   "install-subagents": "Install Claude Code subagents",

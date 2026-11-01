@@ -20,6 +20,10 @@ export interface GeneratedPage {
   body: RootContent[];
 }
 
+export function pagePathFromRoute(route: string): string {
+  return `${route.slice(1, -1)}.md`;
+}
+
 export function renderPage(page: GeneratedPage): string {
   const frontmatter = [
     "---",

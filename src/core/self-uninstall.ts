@@ -31,8 +31,11 @@ const PREVIOUS_INSTALL_SUFFIX = ".prev";
 const MACHINE_LOCK_FILE_NAME = "machine.lock";
 const GROUP_AND_OTHER_WRITE_BITS = 0o022;
 const UPDATE_CHECK_CACHE_FILE_NAME = "update-check.json";
+const LEDGER_KEY_FILE_NAME = "ledger-key";
+const LEDGER_KEY_REMOVAL_NOTE =
+  "agemon's ledger key is removed too: if you install agemon again, it treats what it recorded in repositories before as unconfirmed and leaves it alone.";
 const ENTRIES_AGEMON_CREATES_IN_ITS_STATE =
-  /^(machine\.json(\.tmp-.+)?|(machine|tools|skills-src)\.lock(\.break)?|tools|skills-src|journals|runs)$/;
+  /^((machine\.json|ledger-key)(\.tmp-.+)?|(machine|tools|skills-src|ledger-key)\.lock(\.break)?|tools|skills-src|journals|runs)$/;
 
 export interface SharedToolRemoval {
   id: SharedResourceId;
@@ -57,6 +60,7 @@ interface RemovalPlan {
   binLinks: string[];
   previousInstall: string | null;
   machineState: string | null;
+  removesLedgerKey: boolean;
   cacheDirectory: string | null;
   installDir: string;
   kept: string[];
@@ -250,6 +254,7 @@ async function planInstallScriptRemoval(
   }
 
   let machineState: string | null = null;
+  let removesLedgerKey = false;
   let machineStateUse: MachineStateUse = {
     blockers: [],
     repositoriesWithState: [],
@@ -270,6 +275,9 @@ async function planInstallScriptRemoval(
       if (machineStateUse.blockers.length === 0) {
         await checkRemovable(stateDirectory, problems);
         machineState = stateDirectory;
+        removesLedgerKey = await pathExists(
+          join(stateDirectory, LEDGER_KEY_FILE_NAME),
+        );
       } else {
         kept.push(
           `${printable(stateDirectory)}: ${machineStateUse.blockers.join("; ")}`,
@@ -305,6 +313,7 @@ async function planInstallScriptRemoval(
     binLinks,
     previousInstall,
     machineState,
+    removesLedgerKey,
     cacheDirectory: removableCache,
     installDir,
     kept,
@@ -352,6 +361,7 @@ function printPlan(plan: RemovalPlan): void {
         ? ["and keeps:", ...plan.kept.map((reason) => `  ${reason}`)]
         : []),
       "It never changes files inside repositories.",
+      ...(plan.removesLedgerKey ? [LEDGER_KEY_REMOVAL_NOTE] : []),
     ].join("\n"),
   );
   printRepositoryNotes(plan.machineStateUse);

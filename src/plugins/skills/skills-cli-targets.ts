@@ -1,12 +1,12 @@
-import { lstat, rm } from "node:fs/promises";
+import { lstat, rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { isPlainSkillName } from "../../core/config.js";
 import { RefusedPathError } from "../../core/files.js";
 import { resolveRepoDirectory } from "../../core/repo-paths.js";
 import { printable } from "../../core/untrusted-text.js";
 
-const CANONICAL_SKILLS_DIRECTORY = ".agents/skills";
-const CLAUDE_SKILLS_DIRECTORY = ".claude/skills";
+export const CANONICAL_SKILLS_DIRECTORY = ".agents/skills";
+export const CLAUDE_SKILLS_DIRECTORY = ".claude/skills";
 export const SKILLS_LOCK_FILE = "skills-lock.json";
 
 async function lstatIfPresent(
@@ -45,7 +45,7 @@ export async function assertSkillsCliTargetsStayInRepo(
   const canonicalDirectory = await resolveRepoDirectory(
     repoRoot,
     CANONICAL_SKILLS_DIRECTORY,
-    options,
+    { create: false },
   );
   await resolveRepoDirectory(repoRoot, CLAUDE_SKILLS_DIRECTORY, options);
 
@@ -64,28 +64,23 @@ export async function assertSkillsCliTargetsStayInRepo(
   }
 }
 
-export async function removeLeftoverCanonicalSkill(
+export async function removeInstalledSkillCopy(
   repoRoot: string,
   skillName: string,
 ): Promise<void> {
-  const canonicalDirectory = await resolveRepoDirectory(
-    repoRoot,
-    CANONICAL_SKILLS_DIRECTORY,
-  );
-  if (canonicalDirectory === null) {
-    return;
-  }
   assertPlainSkillName(skillName);
-  const skillPath = join(canonicalDirectory, skillName);
-  const stats = await lstatIfPresent(skillPath);
-  if (stats === null) {
+  const skillsDirectory = await resolveRepoDirectory(
+    repoRoot,
+    CLAUDE_SKILLS_DIRECTORY,
+  );
+  if (skillsDirectory === null) {
     return;
   }
-  if (!stats.isDirectory()) {
-    refuse(
-      `${CANONICAL_SKILLS_DIRECTORY}/${skillName}`,
-      "is a symlink or not a directory",
-    );
+  const copyPath = join(skillsDirectory, skillName);
+  const stats = await lstatIfPresent(copyPath);
+  if (stats?.isSymbolicLink()) {
+    await unlink(copyPath);
+  } else if (stats !== null) {
+    await rm(copyPath, { recursive: true, force: true });
   }
-  await rm(skillPath, { recursive: true, force: true });
 }

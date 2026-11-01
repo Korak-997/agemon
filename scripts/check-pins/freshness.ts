@@ -5,7 +5,7 @@ const FULL_COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 export interface PublishedRelease {
   version: string;
   publishedAt: string;
-  yanked: boolean;
+  withdrawn: boolean;
 }
 
 export interface CommitSummary {
@@ -47,11 +47,55 @@ export function newestSettledVersion(
 ): string | undefined {
   return releases
     .filter(
-      (release) => !release.yanked && hasSettled(release.publishedAt, now),
+      (release) => !release.withdrawn && hasSettled(release.publishedAt, now),
     )
     .map((release) => release.version)
     .sort(compareVersions)
     .at(-1);
+}
+
+export function pinnedReleaseProblem(
+  releases: PublishedRelease[],
+  pinned: string,
+): string | undefined {
+  const pinnedRelease = releases.find((release) => release.version === pinned);
+  if (pinnedRelease === undefined) {
+    return "not published";
+  }
+  return pinnedRelease.withdrawn ? "withdrawn upstream" : undefined;
+}
+
+const INSTALL_DEPENDENCY_FIELDS = [
+  "dependencies",
+  "optionalDependencies",
+  "peerDependencies",
+] as const;
+
+export function declaredInstallDependencies(
+  packument: unknown,
+  version: string,
+): string[] {
+  const manifest =
+    isRecord(packument) && isRecord(packument.versions)
+      ? packument.versions[version]
+      : undefined;
+  if (!isRecord(manifest)) {
+    throw unexpectedResponse(
+      `the npm packument has no manifest for ${version}`,
+    );
+  }
+  return INSTALL_DEPENDENCY_FIELDS.flatMap((field) => {
+    const dependencies = manifest[field];
+    return isRecord(dependencies) ? Object.keys(dependencies) : [];
+  });
+}
+
+function isDeprecated(manifest: unknown): boolean {
+  return (
+    isRecord(manifest) &&
+    typeof manifest.deprecated === "string" &&
+    manifest.deprecated !== ""
+  );
 }
 
 export function npmReleases(packument: unknown): PublishedRelease[] {
@@ -70,7 +114,11 @@ export function npmReleases(packument: unknown): PublishedRelease[] {
         typeof entry[1] === "string" &&
         Object.hasOwn(publishedVersions, entry[0]),
     )
-    .map(([version, publishedAt]) => ({ version, publishedAt, yanked: false }));
+    .map(([version, publishedAt]) => ({
+      version,
+      publishedAt,
+      withdrawn: isDeprecated(publishedVersions[version]),
+    }));
 }
 
 interface PypiFile {
@@ -100,7 +148,7 @@ export function pypiReleases(project: unknown): PublishedRelease[] {
     releases.push({
       version,
       publishedAt: firstUpload,
-      yanked: (files as PypiFile[]).every((file) => file.yanked === true),
+      withdrawn: (files as PypiFile[]).every((file) => file.yanked === true),
     });
   }
   return releases;

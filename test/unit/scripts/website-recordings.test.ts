@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RECORDINGS } from "../../../website/src/recordings.js";
+import { RECORDINGS, ROUNDTRIP } from "../../../website/src/recordings.js";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "../../..");
 const RECORDINGS_DIRECTORY = "website/recordings";
@@ -10,6 +10,9 @@ const MEDIA_DIRECTORY = "website/public/media";
 const RECORDED_LEDGER = "website/src/data/recorded-ledger.json";
 const MAX_VIDEO_BYTES = 3 * 1024 * 1024;
 const MAX_POSTER_BYTES = 512 * 1024;
+const README_GIF = "docs/demo/agemon.gif";
+const MAX_README_GIF_BYTES = 4 * 1024 * 1024;
+const GIF_SIGNATURE = "GIF89a";
 const RECORDING_INPUTS = ["Dockerfile", "record.sh", "settings.tape"];
 
 function repositoryFile(path: string): Buffer {
@@ -47,6 +50,7 @@ describe("website recordings", () => {
         `${MEDIA_DIRECTORY}/${name}.png`,
       ]),
       RECORDED_LEDGER,
+      README_GIF,
     ];
     const entries = manifestEntries();
 
@@ -66,8 +70,10 @@ describe("website recordings", () => {
 
     expect(tapes).toEqual(RECORDINGS.map(({ name }) => `${name}.tape`).sort());
     for (const { name } of RECORDINGS) {
+      const readmeGif = name === ROUNDTRIP.name ? [`${name}.gif`] : [];
       expect(tapeOutputs(`${name}.tape`)).toEqual([
         `${name}.webm`,
+        ...readmeGif,
         `${name}.png`,
       ]);
       expect(readdirSync(join(REPOSITORY_ROOT, MEDIA_DIRECTORY))).toEqual(
@@ -86,5 +92,14 @@ describe("website recordings", () => {
       );
       expect(media("png"), `${name}.png`).toBeLessThanOrEqual(MAX_POSTER_BYTES);
     }
+  });
+
+  it("writes the README GIF from the roundtrip recording, under 4 MiB", () => {
+    const gif = repositoryFile(README_GIF);
+
+    expect(gif.subarray(0, GIF_SIGNATURE.length).toString("latin1")).toBe(
+      GIF_SIGNATURE,
+    );
+    expect(gif.length).toBeLessThanOrEqual(MAX_README_GIF_BYTES);
   });
 });

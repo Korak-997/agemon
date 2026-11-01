@@ -42,7 +42,8 @@ npm test
 ```
 
 4. If you change anything the website is built from (`README.md`, `SECURITY.md`,
-   `CHANGELOG.md`, `docs/contributing/`, the skill catalog, CLI help text or `website/`),
+   `CHANGELOG.md`, `docs/contributing/`, the skill catalog, CLI help text, the `agemon.toml`
+   key reference in `src/core/config.ts` or `website/`),
    build it once. CI does the same on every pull request:
 
 ```bash

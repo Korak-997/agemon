@@ -246,6 +246,8 @@ export const SKILL_GROUPS: SkillGroup[] = [
   },
 ];
 
+export const RETIRED_AGENT_NAMES: readonly string[] = [];
+
 export function findSkillGroup(groupId: string): SkillGroup | undefined {
   return SKILL_GROUPS.find((group) => group.id === groupId);
 }

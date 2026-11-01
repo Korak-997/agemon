@@ -15,6 +15,7 @@ import {
   prepareToolsRoot,
   withAgemonStateLock,
 } from "../../core/state-root.js";
+import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
 
 const TOOLS_LOCK_HASH_LENGTH = 16;
 const TOOLS_INSTALL_TIMEOUT_MS = 180_000;
@@ -107,9 +108,7 @@ async function installToolsDirectory(
     );
     if (installResult.code !== 0) {
       throw new Error(
-        `Installing the pinned skills CLI into ${toolsRoot} failed: ${
-          installResult.stderr.trim() || `npm ci exited ${installResult.code}`
-        }`,
+        `Installing the pinned skills CLI into ${toolsRoot} failed: ${describeSubprocessFailure(installResult, "npm ci")}`,
       );
     }
     await promoteStagingDirectory(stagingDirectory, toolsDirectory, cliPath);
@@ -150,10 +149,13 @@ export async function ensureSkillsCli(ctx: SkillsCliContext): Promise<string> {
 }
 
 export async function runSkillsCli(
-  ctx: SkillsCliContext,
+  ctx: Pick<Context, "run" | "cwd">,
   args: string[],
   timeoutMs: number,
 ): Promise<SubprocessResult> {
   const cliPath = await ensureSkillsCli(ctx);
-  return ctx.run(process.execPath, [cliPath, ...args], { timeoutMs });
+  return ctx.run(process.execPath, [cliPath, ...args], {
+    cwd: ctx.cwd,
+    timeoutMs,
+  });
 }

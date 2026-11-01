@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import { relative } from "node:path";
-import type { AgemonPlugin } from "../plugins/types.js";
+import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
 import type { ApplyJournal, JournalSnapshot } from "./apply-journal.js";
 import type { Context } from "./context.js";
 import { errorMessage } from "./error-message.js";
@@ -11,6 +11,7 @@ import {
   writeFileAtomic,
 } from "./files.js";
 import { fingerprintContent } from "./fingerprint.js";
+import { readPlan } from "./plan-store.js";
 import { resolveInsideRepo } from "./repo-paths.js";
 import type { LedgerEntry } from "./state-manifest.js";
 import { printable } from "./untrusted-text.js";
@@ -25,6 +26,7 @@ export interface ClassifiedSnapshot {
 export interface RollbackOutcome {
   restored: string[];
   reverted: string[];
+  kept: string[];
   manualCleanup: string[];
   unsavedCount: number;
 }
@@ -207,6 +209,7 @@ export async function rollBackApply(
   const outcome: RollbackOutcome = {
     restored: [],
     reverted: [],
+    kept: [],
     manualCleanup: [],
     unsavedCount: 0,
   };
@@ -240,5 +243,50 @@ export async function rollBackApply(
   } catch (ledgerError) {
     outcome.manualCleanup.push(`ledger: ${errorMessage(ledgerError)}`);
   }
+  outcome.kept = await describeKeptChanges(ctx, pluginById, journal);
   return outcome;
+}
+
+async function describeKeptChanges(
+  ctx: Context,
+  pluginById: Map<string, AgemonPlugin>,
+  journal: ApplyJournal,
+): Promise<string[]> {
+  return (await describeKeptSubjects(ctx, pluginById, journal)).map(
+    (subject) => `Kept ${subject}`,
+  );
+}
+
+export async function describeKeptSubjects(
+  ctx: Context,
+  pluginById: Map<string, AgemonPlugin>,
+  journal: ApplyJournal,
+): Promise<string[]> {
+  let operations: ProposedOperation[];
+  try {
+    operations = (await readPlan(ctx.cwd, journal.planId)).operations;
+  } catch {
+    return [];
+  }
+  const lines: string[] = [];
+  for (const capabilityId of journal.capabilityOrder) {
+    const describeKept =
+      pluginById.get(capabilityId)?.describeKeptAfterRollback;
+    if (describeKept === undefined) {
+      continue;
+    }
+    try {
+      lines.push(
+        ...(await describeKept(
+          ctx,
+          operations.filter(
+            (operation) => operation.capabilityId === capabilityId,
+          ),
+        )),
+      );
+    } catch {
+      // A kept-changes note is informational; the rollback itself already finished.
+    }
+  }
+  return lines;
 }

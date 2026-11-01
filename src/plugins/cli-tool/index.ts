@@ -6,6 +6,7 @@ import { readMachineLedger } from "../../core/machine-ledger.js";
 import { resolveGlobalNpmRoot } from "../../core/npm-global.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { resolveAgemonStateDirectory } from "../../core/state-root.js";
+import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
 import { printable } from "../../core/untrusted-text.js";
 import type {
   InstalledPackageInspection,
@@ -23,10 +24,10 @@ import {
   wasInstalledByAgemon,
 } from "../shared-resource.js";
 import type {
-  AgemonPlugin,
   CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
+  PluginWithInstall,
   ProposedOperation,
 } from "../types.js";
 import { CLI_TOOL_BUNDLE, type CliToolBundleEntry } from "./catalog.js";
@@ -78,12 +79,18 @@ function getPluginActions(ctx: Context) {
     .filter((action) => action.plugin === PLUGIN_ID);
 }
 
+function isManagedInstallOf(action: LedgerEntry, toolId: string): boolean {
+  return (
+    action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
+    action.target === toolId &&
+    action.preExisting === false
+  );
+}
+
 function hasManagedInstallRecord(ctx: Context, toolId: string): boolean {
   return getPluginActions(ctx).some(
     (action) =>
-      action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
-      action.target === toolId &&
-      action.preExisting === false,
+      isManagedInstallOf(action, toolId) && ctx.manifest.isConfirmed(action),
   );
 }
 
@@ -235,7 +242,7 @@ async function planCliTools(ctx: Context): Promise<ProposedOperation[]> {
       operations.push(describeInstallOperation(entry));
     } else if (
       !(
-        entriesForTool(getPluginActions(ctx), entry).usesIt &&
+        entriesForTool(ctx, getPluginActions(ctx), entry).usesIt &&
         (await isHeldByThisRepository(ctx, entry.sharedResource))
       )
     ) {
@@ -264,8 +271,7 @@ async function uninstallGlobalPackage(
   );
   if (uninstallResult.code !== 0) {
     throw new Error(
-      uninstallResult.stderr ||
-        `npm global uninstall failed for ${packageName}`,
+      `npm global uninstall failed for ${printable(packageName)}: ${describeSubprocessFailure(uninstallResult, "npm uninstall")}`,
     );
   }
 }
@@ -393,7 +399,7 @@ async function installCliTools(ctx: Context): Promise<void> {
 async function applyCliTools(
   ctx: Context,
   operations: ProposedOperation[],
-): Promise<void> {
+): Promise<undefined> {
   for (const operation of operations) {
     const installEntry = CLI_TOOL_BUNDLE.find(
       (entry) => operation.resourceId === `package:${entry.id}`,
@@ -447,17 +453,18 @@ async function verifyCliTools(ctx: Context): Promise<PluginVerificationResult> {
 }
 
 function entriesForTool(
+  ctx: Context,
   entries: LedgerEntry[],
   entry: CliToolBundleEntry,
 ): { installedIt: boolean; usesIt: boolean } {
-  const installedIt = entries.some(
-    (action) =>
-      action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
-      action.target === entry.id &&
-      action.preExisting === false,
+  const installEntries = entries.filter((action) =>
+    isManagedInstallOf(action, entry.id),
+  );
+  const installedIt = installEntries.some((action) =>
+    ctx.manifest.isConfirmed(action),
   );
   const usesIt =
-    installedIt ||
+    installEntries.length > 0 ||
     repoLedgerUsesSharedResource(entries, entry.sharedResource) ||
     entries.some(
       (action) =>
@@ -490,7 +497,7 @@ async function revertCliTools(
   reportUnmanagedTargets(ctx, entries);
   let releasedAny = false;
   for (const entry of CLI_TOOL_BUNDLE) {
-    const { installedIt, usesIt } = entriesForTool(entries, entry);
+    const { installedIt, usesIt } = entriesForTool(ctx, entries, entry);
     if (!usesIt) {
       continue;
     }
@@ -513,7 +520,7 @@ async function uninstallCliTools(ctx: Context): Promise<void> {
   await revertCliTools(ctx, getPluginActions(ctx));
 }
 
-export const cliToolPlugin: AgemonPlugin = {
+export const cliToolPlugin: PluginWithInstall = {
   id: PLUGIN_ID,
   riskClass: "executes",
   sharedResources: CLI_TOOL_BUNDLE.map((entry) => entry.sharedResource),

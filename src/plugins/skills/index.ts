@@ -1,21 +1,24 @@
 import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { isPlainSkillName } from "../../core/config.js";
 import { CUSTOM_SKILL_GROUP_RESOURCE_PREFIX } from "../../core/consent.js";
 import type { Context } from "../../core/context.js";
-import { readRegularFileIfExists } from "../../core/files.js";
+import { RefusedPathError, readRegularFileIfExists } from "../../core/files.js";
 import { fingerprintJson } from "../../core/fingerprint.js";
 import { ensureGitignoreEntry } from "../../core/gitignore.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { withAgemonStateLock } from "../../core/state-root.js";
+import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
 import { printable } from "../../core/untrusted-text.js";
 import { describeOperation } from "../proposed-operation.js";
 import type {
   AgemonPlugin,
+  CapabilityState,
   CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
+  SkillUpdate,
 } from "../types.js";
 import {
   buildCustomSkillGroups,
@@ -32,6 +35,7 @@ import {
   ACTION_TYPE_DECLINED_SKILL_GROUP,
   ACTION_TYPE_INSTALLED_SKILL,
   ACTION_TYPE_PREEXISTING_SKILL,
+  confirmedRecordedSkillNames,
   declinedSkillGroupIds,
   recordedSkillNames,
   SKILL_GROUP_RESOURCE_PREFIX,
@@ -49,10 +53,27 @@ import {
   resolvePinnedSkillPath,
 } from "./pinned-source.js";
 import { assertSkillManifestName } from "./skill-manifest.js";
+import {
+  removeAgemonSkillCopy,
+  removeSkillsFromLock,
+  reportLeftCanonicalCopy,
+} from "./skill-removal.js";
+import {
+  classifyInstalledSkill,
+  classifyInstalledSkillForReport,
+  currentSkillFingerprint,
+  fingerprintsAgemonInstalled,
+  forgetSkillClassifications,
+  installedSkillFingerprint,
+  shippedFingerprints,
+  verifiedCustomInstallFingerprint,
+} from "./skill-revisions.js";
 import { runSkillsCli } from "./skills-cli.js";
 import {
   assertSkillsCliTargetsStayInRepo,
-  removeLeftoverCanonicalSkill,
+  CANONICAL_SKILLS_DIRECTORY,
+  CLAUDE_SKILLS_DIRECTORY,
+  removeInstalledSkillCopy,
   SKILLS_LOCK_FILE,
 } from "./skills-cli-targets.js";
 
@@ -64,11 +85,12 @@ const BUILT_IN_SOURCE_DESCRIPTION = "bundled with agemon";
 const DECLINED_GROUP_PREVIEW = "declined — agemon will not offer it again";
 const SKILL_MANIFEST_PATH = "SKILL.md";
 const SKILLS_LOCK_GITIGNORE_ENTRY = "/skills-lock.json";
+const ORPHANED_SKILLS_RESOURCE_ID = "skill-groups:orphaned";
+const UPDATE_PREVIEW_NOTE = " — update (bundled content changed)";
 
 const SKILLS_LIST_TIMEOUT_MS = 30_000;
 const SKILLS_ADD_TIMEOUT_MS = 180_000;
 const SKILLS_SOURCE_LOCK_WAIT_MS = 30 * 60_000;
-const SKILLS_REMOVE_TIMEOUT_MS = 120_000;
 
 interface SkillsListEntry {
   name: string;
@@ -88,9 +110,13 @@ function getAvailableGroups(ctx: Context): SkillGroup[] {
 
 function getRecordedGroups(ctx: Context): SkillGroup[] {
   const skillNames = recordedSkillNames(ctx);
-  return getAvailableGroups(ctx).filter((group) =>
-    group.skills.some((skill) => skillNames.has(skill.skillName)),
-  );
+  const confirmedSkillNames = confirmedRecordedSkillNames(ctx);
+  return getAvailableGroups(ctx).filter((group) => {
+    const namesThatCount = group.definedByRepository
+      ? confirmedSkillNames
+      : skillNames;
+    return group.skills.some((skill) => namesThatCount.has(skill.skillName));
+  });
 }
 function getOfferedGroupIds(ctx: Context): Set<string> {
   return new Set(
@@ -137,12 +163,18 @@ function getSkillsLockPath(cwd: string): string {
   return join(cwd, SKILLS_LOCK_FILE);
 }
 
+function isManagedSkillsLockEntry(action: LedgerEntry): boolean {
+  return (
+    action.type === ACTION_TYPE_GENERATED_SKILLS_LOCK &&
+    action.target === SKILLS_LOCK_FILE &&
+    action.preExisting === false
+  );
+}
+
 function hasManagedSkillsLockRecord(ctx: Context): boolean {
   return skillsLedgerEntries(ctx).some(
     (action) =>
-      action.type === ACTION_TYPE_GENERATED_SKILLS_LOCK &&
-      action.target === SKILLS_LOCK_FILE &&
-      action.preExisting === false,
+      isManagedSkillsLockEntry(action) && ctx.manifest.isConfirmed(action),
   );
 }
 
@@ -153,16 +185,19 @@ async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
     SKILLS_LIST_TIMEOUT_MS,
   );
   if (listResult.code !== 0) {
-    throw new Error(listResult.stderr || "skills list failed");
+    throw new Error(
+      `skills list failed: ${describeSubprocessFailure(listResult, "skills list")}`,
+    );
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(listResult.stdout || "[]");
   } catch {
-    const stderr = listResult.stderr.trim();
-    const stdoutPreview = listResult.stdout.trim().slice(0, 200);
-    const detail = stderr || stdoutPreview || "no command output";
+    const stdoutPreview = printable(listResult.stdout.trim().slice(0, 200));
+    const detail = listResult.stderr.trim()
+      ? describeSubprocessFailure(listResult, "skills list")
+      : stdoutPreview || "no command output";
     throw new Error(`skills list returned invalid JSON: ${detail}`);
   }
 
@@ -219,20 +254,158 @@ function getReportableGroups(ctx: Context): SkillGroup[] {
   return [...combinedGroups.values()];
 }
 
+function latestConfirmedSkillRecord(
+  ctx: Context,
+  skillName: string,
+): LedgerEntry | undefined {
+  return skillsLedgerEntries(ctx)
+    .filter(
+      (action) =>
+        action.target === skillName &&
+        (action.type === ACTION_TYPE_INSTALLED_SKILL ||
+          action.type === ACTION_TYPE_PREEXISTING_SKILL) &&
+        ctx.manifest.isConfirmed(action),
+    )
+    .at(-1);
+}
+
+function isUpdatableBundledSkill(
+  ctx: Context,
+  group: SkillGroup,
+  entry: SkillBundleEntry,
+): boolean {
+  return (
+    !group.definedByRepository &&
+    hasManagedInstallRecord(ctx, entry.skillName) &&
+    latestConfirmedSkillRecord(ctx, entry.skillName)?.type !==
+      ACTION_TYPE_PREEXISTING_SKILL
+  );
+}
+
+interface KeptSkill {
+  name: string;
+  reason: string;
+}
+
+interface GroupRevisionReport {
+  outdatedNames: string[];
+  kept: KeptSkill[];
+}
+
+async function reportGroupRevisions(
+  ctx: Context,
+  group: SkillGroup,
+): Promise<GroupRevisionReport> {
+  const report: GroupRevisionReport = { outdatedNames: [], kept: [] };
+  for (const entry of group.skills) {
+    if (!isUpdatableBundledSkill(ctx, group, entry)) {
+      continue;
+    }
+    const classification = await classifyInstalledSkillForReport(ctx, entry);
+    if (classification.kind === "outdated") {
+      report.outdatedNames.push(entry.skillName);
+    } else if (classification.kind === "kept") {
+      report.kept.push({
+        name: entry.skillName,
+        reason: classification.reason,
+      });
+    }
+  }
+  return report;
+}
+
+function describeGroupRevisions(report: GroupRevisionReport): string[] {
+  const fragments: string[] = [];
+  if (report.outdatedNames.length > 0) {
+    fragments.push(
+      `update available for ${report.outdatedNames.length} skill(s)`,
+    );
+  }
+  if (report.kept.length > 0) {
+    fragments.push(
+      `agemon keeps ${report.kept.map(({ name }) => name).join(", ")}`,
+    );
+  }
+  return fragments;
+}
+
+function describeKeptSkill({ name, reason }: KeptSkill): string {
+  return `skills: agemon keeps ${name} (${reason}); to get agemon's version, delete ${CLAUDE_SKILLS_DIRECTORY}/${name} and run agemon`;
+}
+
+function presentGroupState(
+  ctx: Context,
+  group: SkillGroup,
+  revisions: GroupRevisionReport,
+): CapabilityState {
+  if (revisions.kept.length > 0) {
+    return "present-modified";
+  }
+  const allManaged = group.skills.every((skill) =>
+    hasManagedInstallRecord(ctx, skill.skillName),
+  );
+  return allManaged ? "present-managed" : "present-adopted";
+}
+
+function orphanedSkillEntries(ctx: Context): LedgerEntry[] {
+  const groupSkillNames = new Set(
+    flattenSkills(getAvailableGroups(ctx)).map((entry) => entry.skillName),
+  );
+  return skillsLedgerEntries(ctx).filter(
+    (action) =>
+      action.type === ACTION_TYPE_INSTALLED_SKILL &&
+      action.preExisting === false &&
+      isPlainSkillName(action.target) &&
+      !groupSkillNames.has(action.target),
+  );
+}
+
+function describeOrphanedSkills(ctx: Context): CapabilityStateRow[] {
+  const orphanedEntries = orphanedSkillEntries(ctx);
+  const names = [...new Set(orphanedEntries.map((entry) => entry.target))];
+  if (names.length === 0) {
+    return [];
+  }
+  const confirmedNames = new Set(
+    orphanedEntries
+      .filter((entry) => ctx.manifest.isConfirmed(entry))
+      .map((entry) => entry.target),
+  );
+  const unconfirmedCount = names.filter(
+    (name) => !confirmedNames.has(name),
+  ).length;
+  const claimNote =
+    unconfirmedCount === 0
+      ? ""
+      : ` (${unconfirmedCount} not recorded on this machine; nuke keeps those)`;
+  return [
+    {
+      capabilityId: PLUGIN_ID,
+      resourceId: ORPHANED_SKILLS_RESOURCE_ID,
+      label: "skills of removed groups",
+      state: unconfirmedCount === 0 ? "present-managed" : "present-adopted",
+      detail: `${names.join(", ")}: their skill group is no longer defined; 'agemon nuke --only skills' removes them${claimNote}`,
+    },
+  ];
+}
+
 async function describeSkillsState(
   ctx: Context,
 ): Promise<CapabilityStateRow[]> {
   const reportableGroups = getReportableGroups(ctx);
+  const orphanedRows = describeOrphanedSkills(ctx);
   if (reportableGroups.length === 0) {
-    return [
-      {
-        capabilityId: PLUGIN_ID,
-        resourceId: "skill-groups:none",
-        label: "skill groups",
-        state: "absent",
-        detail: null,
-      },
-    ];
+    return orphanedRows.length > 0
+      ? orphanedRows
+      : [
+          {
+            capabilityId: PLUGIN_ID,
+            resourceId: "skill-groups:none",
+            label: "skill groups",
+            state: "absent",
+            detail: null,
+          },
+        ];
   }
 
   let installedSkillNames: Set<string>;
@@ -252,14 +425,15 @@ async function describeSkillsState(
 
   const declinedGroupIds = declinedSkillGroupIds(ctx);
 
-  return reportableGroups.map((group): CapabilityStateRow => {
+  const groupRows: CapabilityStateRow[] = [];
+  for (const group of reportableGroups) {
     const resourceId = groupResourceId(group);
     const installedCount = group.skills.filter((skill) =>
       installedSkillNames.has(skill.skillName),
     ).length;
 
     if (installedCount < group.skills.length) {
-      return {
+      groupRows.push({
         capabilityId: PLUGIN_ID,
         resourceId,
         label: group.label,
@@ -268,20 +442,23 @@ async function describeSkillsState(
             ? "declined"
             : "absent",
         detail: `${installedCount}/${group.skills.length} skills installed`,
-      };
+      });
+      continue;
     }
 
-    const allManaged = group.skills.every((skill) =>
-      hasManagedInstallRecord(ctx, skill.skillName),
-    );
-    return {
+    const revisions = await reportGroupRevisions(ctx, group);
+    groupRows.push({
       capabilityId: PLUGIN_ID,
       resourceId,
       label: group.label,
-      state: allManaged ? "present-managed" : "present-adopted",
-      detail: `${group.skills.length} skill(s)`,
-    };
-  });
+      state: presentGroupState(ctx, group, revisions),
+      detail: [
+        `${group.skills.length} skill(s)`,
+        ...describeGroupRevisions(revisions),
+      ].join("; "),
+    });
+  }
+  return [...groupRows, ...orphanedRows];
 }
 
 function describeSkillSource(entry: SkillBundleEntry): string {
@@ -325,18 +502,55 @@ function groupResourceId(group: SkillGroup): string {
   }${group.id}`;
 }
 
+function skillUpdatesFingerprint(updates: SkillUpdate[]): string {
+  return fingerprintJson(
+    updates.map((update) => [
+      update.name,
+      update.installedFingerprint,
+      update.currentFingerprint,
+    ]),
+  );
+}
+
+async function findSkillUpdates(
+  ctx: Context,
+  group: SkillGroup,
+  classify: typeof classifyInstalledSkill,
+): Promise<SkillUpdate[]> {
+  const updates: SkillUpdate[] = [];
+  for (const entry of group.skills) {
+    if (!isUpdatableBundledSkill(ctx, group, entry)) {
+      continue;
+    }
+    const classification = await classify(ctx, entry);
+    if (classification.kind === "outdated") {
+      updates.push({
+        name: entry.skillName,
+        installedFingerprint: classification.installedFingerprint,
+        currentFingerprint: classification.currentFingerprint,
+      });
+    }
+  }
+  return updates;
+}
+
 async function describeGroupInstall(
   ctx: Context,
   group: SkillGroup,
+  updates: SkillUpdate[],
 ): Promise<ProposedOperation> {
   const localFingerprints = await fingerprintLocalSkills(ctx, group);
+  const updatedNames = new Set(updates.map((update) => update.name));
   const skillLines = group.skills.map((entry) => {
     const localFingerprint = localFingerprints.get(entry.skillName);
     const contentNote =
       localFingerprint === undefined
         ? ""
         : ` in this repository, content sha256 ${localFingerprint.slice(0, 16)}`;
-    return `${entry.skillName} — ${describeSkillSource(entry)}${contentNote}`;
+    const updateNote = updatedNames.has(entry.skillName)
+      ? UPDATE_PREVIEW_NOTE
+      : "";
+    return `${entry.skillName} — ${describeSkillSource(entry)}${contentNote}${updateNote}`;
   });
   return describeOperation({
     capabilityId: PLUGIN_ID,
@@ -345,11 +559,15 @@ async function describeGroupInstall(
     action: "install-package",
     riskClass: "executes",
     requiresConsent: true,
-    expectedFingerprint: combineLocalFingerprints(localFingerprints),
+    expectedFingerprint:
+      updates.length > 0
+        ? skillUpdatesFingerprint(updates)
+        : combineLocalFingerprints(localFingerprints),
     preview: {
       kind: "note",
       text: [`${group.label}:`, ...skillLines].join("\n"),
     },
+    ...(updates.length > 0 ? { updates } : {}),
   });
 }
 
@@ -391,12 +609,24 @@ function selectGroups(
 async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
   const recordedGroups = getRecordedGroups(ctx);
   const selection = await selectGroups(ctx, recordedGroups);
-  const groupIdsToInstall = new Set(
-    [
+  const updatesByGroupId = new Map<string, SkillUpdate[]>();
+  for (const group of recordedGroups) {
+    const updates = await findSkillUpdates(
+      ctx,
+      group,
+      classifyInstalledSkillForReport,
+    );
+    if (updates.length > 0) {
+      updatesByGroupId.set(group.id, updates);
+    }
+  }
+  const groupIdsToInstall = new Set([
+    ...[
       ...(await findGroupsMissingSkills(ctx, recordedGroups)),
       ...selection.chosen,
     ].map((group) => group.id),
-  );
+    ...updatesByGroupId.keys(),
+  ]);
   const availableGroups = getAvailableGroups(ctx);
   const groupsToInstall = availableGroups.filter((group) =>
     groupIdsToInstall.has(group.id),
@@ -407,7 +637,13 @@ async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
 
   const operations: ProposedOperation[] = [];
   for (const group of groupsToInstall) {
-    operations.push(await describeGroupInstall(ctx, group));
+    operations.push(
+      await describeGroupInstall(
+        ctx,
+        group,
+        updatesByGroupId.get(group.id) ?? [],
+      ),
+    );
   }
   operations.push(...declinedGroups.map(describeGroupDecline));
   return operations;
@@ -502,6 +738,7 @@ async function stageLocalSkills(
     }
   }
   if (
+    group.definedByRepository &&
     combineLocalFingerprints(fingerprints) !== operation.expectedFingerprint
   ) {
     throw new Error(
@@ -509,6 +746,112 @@ async function stageLocalSkills(
     );
   }
   return stagedPaths;
+}
+
+interface PlannedSkillUpdate {
+  group: SkillGroup;
+  entry: SkillBundleEntry;
+  update: SkillUpdate;
+}
+
+function changedSincePlanned(group: SkillGroup): Error {
+  return new Error(
+    `The skill group '${group.id}' changed since it was planned. Re-run 'agemon plan' and review it again.`,
+  );
+}
+
+async function confirmPlannedUpdates({
+  ctx,
+  group,
+  operation,
+}: GroupInstall & { ctx: Context }): Promise<PlannedSkillUpdate[]> {
+  if ((operation.updates ?? []).length === 0) {
+    return [];
+  }
+  const updates = await findSkillUpdates(ctx, group, classifyInstalledSkill);
+  if (skillUpdatesFingerprint(updates) !== operation.expectedFingerprint) {
+    throw changedSincePlanned(group);
+  }
+  return updates.flatMap((update) => {
+    const entry = group.skills.find(
+      (candidate) => candidate.skillName === update.name,
+    );
+    return entry === undefined ? [] : [{ group, entry, update }];
+  });
+}
+
+async function assertStillOutdatedAsPlanned(
+  ctx: Context,
+  { group, entry, update }: PlannedSkillUpdate,
+): Promise<void> {
+  const classification = await classifyInstalledSkill(ctx, entry);
+  if (
+    classification.kind !== "outdated" ||
+    classification.installedFingerprint !== update.installedFingerprint
+  ) {
+    throw changedSincePlanned(group);
+  }
+}
+
+async function discardHalfWrittenCopy(
+  ctx: Context,
+  { update }: PlannedSkillUpdate,
+): Promise<string> {
+  const installed = await installedSkillFingerprint(ctx, update.name);
+  if (installed === update.installedFingerprint) {
+    return `${CLAUDE_SKILLS_DIRECTORY}/${update.name} is unchanged`;
+  }
+  await removeInstalledSkillCopy(ctx.cwd, update.name);
+  return `agemon removed ${CLAUDE_SKILLS_DIRECTORY}/${update.name} so the next run reinstalls it`;
+}
+
+async function updateSkills(
+  ctx: Context,
+  plannedUpdates: PlannedSkillUpdate[],
+): Promise<void> {
+  if (plannedUpdates.length === 0) {
+    return;
+  }
+  const entriesToUpdate = plannedUpdates.map(({ entry }) => entry);
+  await fetchPinnedSources(ctx, entriesToUpdate);
+  await assertSkillsCliTargetsStayInRepo(
+    ctx.cwd,
+    entriesToUpdate.map((entry) => entry.skillName),
+    { create: true },
+  );
+  for (const plannedUpdate of plannedUpdates) {
+    const { entry } = plannedUpdate;
+    await assertStillOutdatedAsPlanned(ctx, plannedUpdate);
+    const addResult = await runSkillsCli(
+      ctx,
+      [
+        "add",
+        entry.source,
+        "--skill",
+        entry.skillName,
+        "--agent",
+        entry.agent,
+        "--yes",
+      ],
+      SKILLS_ADD_TIMEOUT_MS,
+    );
+    if (addResult.code !== 0) {
+      const outcome = await discardHalfWrittenCopy(ctx, plannedUpdate);
+      throw new Error(
+        `skills add failed for ${printable(entry.skillName)}: ${describeSubprocessFailure(addResult, "skills add")}. ${outcome}.`,
+      );
+    }
+    const installed = await installedSkillFingerprint(ctx, entry.skillName);
+    if (installed !== (await currentSkillFingerprint(entry))) {
+      await removeInstalledSkillCopy(ctx.cwd, entry.skillName);
+      throw new Error(
+        `The skills CLI installed ${entry.skillName} with different content than agemon bundles; agemon removed ${CLAUDE_SKILLS_DIRECTORY}/${entry.skillName} so the next run reinstalls it.`,
+      );
+    }
+    ctx.ui.info(
+      `Updated skill ${entry.skillName} to the version bundled with this agemon`,
+    );
+  }
 }
 
 async function addSkills(
@@ -541,7 +884,7 @@ async function addSkills(
     );
     if (addResult.code !== 0) {
       throw new Error(
-        addResult.stderr || `skills add failed for ${entry.skillName}`,
+        `skills add failed for ${printable(entry.skillName)}: ${describeSubprocessFailure(addResult, "skills add")}`,
       );
     }
 
@@ -550,6 +893,13 @@ async function addSkills(
       type: ACTION_TYPE_INSTALLED_SKILL,
       target: entry.skillName,
       preExisting: false,
+      fingerprintAfter: customSkillNames(ctx).has(entry.skillName)
+        ? await verifiedCustomInstallFingerprint(
+            ctx,
+            entry,
+            stagedPaths.get(entry.skillName),
+          )
+        : null,
     });
   }
 }
@@ -576,6 +926,13 @@ async function installGroups(
     }
   }
 
+  const plannedUpdates: PlannedSkillUpdate[] = [];
+  for (const groupInstall of groupInstalls) {
+    plannedUpdates.push(
+      ...(await confirmPlannedUpdates({ ...groupInstall, ctx })),
+    );
+  }
+
   const skillsLockPreviouslyExisted = existsSync(getSkillsLockPath(ctx.cwd));
   const installedSkillNames = await listInstalledSkillNames(ctx);
   const entriesToAdd: SkillBundleEntry[] = [];
@@ -592,11 +949,18 @@ async function installGroups(
     }
   }
 
-  await withAgemonStateLock(
-    "skills-src.lock",
-    () => addSkills(ctx, entriesToAdd, stagedPaths),
-    SKILLS_SOURCE_LOCK_WAIT_MS,
-  );
+  try {
+    await withAgemonStateLock(
+      "skills-src.lock",
+      async () => {
+        await addSkills(ctx, entriesToAdd, stagedPaths);
+        await updateSkills(ctx, plannedUpdates);
+      },
+      SKILLS_SOURCE_LOCK_WAIT_MS,
+    );
+  } finally {
+    forgetSkillClassifications(ctx);
+  }
 
   const skillsLockExistsAfterInstall = existsSync(getSkillsLockPath(ctx.cwd));
   if (
@@ -632,7 +996,7 @@ function findOperationGroup(
 async function applySkills(
   ctx: Context,
   operations: ProposedOperation[],
-): Promise<void> {
+): Promise<undefined> {
   const availableGroups = getAvailableGroups(ctx);
   const groupInstalls: GroupInstall[] = [];
   const declinedGroups: SkillGroup[] = [];
@@ -655,10 +1019,6 @@ async function applySkills(
       installGroups(ctx, groupInstalls, stageDirectory),
     );
   }
-}
-
-async function installSkills(ctx: Context): Promise<void> {
-  await applySkills(ctx, await planSkills(ctx));
 }
 
 async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
@@ -684,75 +1044,156 @@ async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
     };
   }
 
+  const outdatedNames: string[] = [];
+  for (const group of recordedGroups) {
+    const revisions = await reportGroupRevisions(ctx, group);
+    outdatedNames.push(...revisions.outdatedNames);
+    for (const keptSkill of revisions.kept) {
+      ctx.ui.info(printable(describeKeptSkill(keptSkill)));
+    }
+  }
   return {
     ok: true,
     detail: `${recordedGroups.length} skill group(s), ${recordedEntries.length} skill(s) present`,
+    ...(outdatedNames.length > 0
+      ? {
+          attention: `a newer bundled version of ${outdatedNames.join(", ")} is available; run agemon`,
+        }
+      : {}),
   };
+}
+
+function reportUnconfirmedSkills(
+  ctx: Context,
+  installEntries: LedgerEntry[],
+  confirmedEntries: LedgerEntry[],
+): void {
+  const confirmedNames = new Set(confirmedEntries.map((entry) => entry.target));
+  const presentSkillDirectories = (name: string) =>
+    [CLAUDE_SKILLS_DIRECTORY, CANONICAL_SKILLS_DIRECTORY]
+      .map((directory) => `${directory}/${name}`)
+      .filter((directory) => existsSync(join(ctx.cwd, directory)));
+  const keptNames = [
+    ...new Set(
+      installEntries
+        .map((entry) => entry.target)
+        .filter(
+          (name) =>
+            !confirmedNames.has(name) &&
+            isPlainSkillName(name) &&
+            presentSkillDirectories(name).length > 0,
+        ),
+    ),
+  ];
+  if (keptNames.length === 0) {
+    return;
+  }
+  const directories = keptNames.flatMap(presentSkillDirectories);
+  ctx.ui.info(
+    `${ctx.dryRun ? "Would keep" : "Keeping"} skills that agemon has no record of installing in this repository on this machine: ${keptNames.join(", ")}. If you don't need them, delete ${directories.join(", ")}.`,
+  );
+}
+
+function recordedInstallFingerprints(
+  confirmedInstallEntries: LedgerEntry[],
+  skillName: string,
+): string[] {
+  return confirmedInstallEntries
+    .filter((action) => action.target === skillName)
+    .map((action) => action.fingerprintAfter)
+    .filter((fingerprint) => fingerprint !== null);
 }
 
 async function revertSkills(
   ctx: Context,
   entries: LedgerEntry[],
 ): Promise<void> {
-  const managedActions = entries.filter(
+  const installEntries = entries.filter(
     (action) =>
       action.type === ACTION_TYPE_INSTALLED_SKILL &&
       action.preExisting === false,
   );
-  const shouldRemoveManagedSkillsLock = entries.some(
-    (action) =>
-      action.type === ACTION_TYPE_GENERATED_SKILLS_LOCK &&
-      action.target === SKILLS_LOCK_FILE &&
-      action.preExisting === false,
+  const managedActions = installEntries.filter((action) =>
+    ctx.manifest.isConfirmed(action),
   );
-
-  if (ctx.dryRun) {
-    if (managedActions.length === 0) {
-      if (shouldRemoveManagedSkillsLock) {
-        ctx.ui.info(`Would remove ${SKILLS_LOCK_FILE}`);
-      } else {
-        ctx.ui.info("Would keep pre-existing skills untouched");
-      }
-      return;
-    }
-    for (const action of managedActions) {
-      ctx.ui.info(`Would remove skill ${printable(action.target)}`);
-    }
-    if (shouldRemoveManagedSkillsLock) {
-      ctx.ui.info(`Would remove ${SKILLS_LOCK_FILE}`);
-    }
-    return;
+  const lockEntries = entries.filter(isManagedSkillsLockEntry);
+  const shouldRemoveManagedSkillsLock = lockEntries.some((action) =>
+    ctx.manifest.isConfirmed(action),
+  );
+  reportUnconfirmedSkills(ctx, installEntries, managedActions);
+  if (lockEntries.length > 0 && !shouldRemoveManagedSkillsLock) {
+    ctx.ui.info(
+      `${ctx.dryRun ? "Would keep" : "Keeping"} ${SKILLS_LOCK_FILE}: agemon has no record on this machine that it created it.`,
+    );
   }
 
-  const installedSkillNames = await listInstalledSkillNames(ctx);
-  const skillNamesToRemove = managedActions
-    .map((action) => action.target)
-    .filter((skillName) => installedSkillNames.has(skillName));
-  await assertSkillsCliTargetsStayInRepo(ctx.cwd, skillNamesToRemove, {
-    create: false,
-  });
-  for (const skillName of skillNamesToRemove) {
-    const removeResult = await runSkillsCli(
-      ctx,
-      ["remove", skillName, "--agent", "claude-code", "--yes"],
-      SKILLS_REMOVE_TIMEOUT_MS,
+  const managedSkillNames = new Set(
+    managedActions.map((action) => action.target),
+  );
+  const forgedName = [...managedSkillNames].find(
+    (skillName) => !isPlainSkillName(skillName),
+  );
+  if (forgedName !== undefined) {
+    throw new RefusedPathError(
+      `Refusing to remove the skill '${printable(forgedName)}': it is not a plain skill name. The ledger in .agemon/state.json may have been edited; check it before running agemon again.`,
     );
-    if (removeResult.code !== 0) {
-      throw new Error(
-        removeResult.stderr ||
-          `skills remove failed for ${printable(skillName)}`,
+  }
+
+  const removedNames: string[] = [];
+  const failures: string[] = [];
+  for (const skillName of managedSkillNames) {
+    const entry = flattenSkills(getAvailableGroups(ctx)).find(
+      (candidate) => candidate.skillName === skillName,
+    );
+    const agemonFingerprints = await fingerprintsAgemonInstalled(
+      skillName,
+      entry,
+      recordedInstallFingerprints(managedActions, skillName),
+    );
+    const removal = await removeAgemonSkillCopy(ctx, skillName, (fingerprint) =>
+      agemonFingerprints.has(fingerprint),
+    );
+    if (removal.kind === "failed") {
+      failures.push(removal.detail);
+      continue;
+    }
+    if (removal.kind === "removed" || removal.kind === "gone") {
+      removedNames.push(skillName);
+      const shipped = new Set(shippedFingerprints(skillName));
+      await reportLeftCanonicalCopy(ctx, skillName, (fingerprint) =>
+        shipped.has(fingerprint),
       );
     }
-    await removeLeftoverCanonicalSkill(ctx.cwd, skillName);
   }
-
-  if (shouldRemoveManagedSkillsLock) {
-    await rm(getSkillsLockPath(ctx.cwd), { force: true });
+  await removeSkillsFromLock(ctx, removedNames, shouldRemoveManagedSkillsLock);
+  if (failures.length > 0) {
+    throw new Error(
+      `Could not remove skill copies — ${failures.join("; ")}. Fix the cause and run 'agemon nuke' again.`,
+    );
   }
 }
 
 async function uninstallSkills(ctx: Context): Promise<void> {
   await revertSkills(ctx, skillsLedgerEntries(ctx));
+}
+
+async function describeKeptUpdates(
+  ctx: Context,
+  operations: ProposedOperation[],
+): Promise<string[]> {
+  const lines: string[] = [];
+  for (const update of operations.flatMap(
+    (operation) => operation.updates ?? [],
+  )) {
+    const installed = await installedSkillFingerprint(ctx, update.name);
+    if (
+      installed === update.currentFingerprint &&
+      installed !== update.installedFingerprint
+    ) {
+      lines.push(`updated skill ${update.name} (agemon's newer version)`);
+    }
+  }
+  return lines;
 }
 
 export const skillsPlugin: AgemonPlugin = {
@@ -762,8 +1203,8 @@ export const skillsPlugin: AgemonPlugin = {
   describeState: describeSkillsState,
   plan: planSkills,
   apply: applySkills,
-  install: installSkills,
   verify: verifySkills,
   revert: revertSkills,
+  describeKeptAfterRollback: describeKeptUpdates,
   uninstall: uninstallSkills,
 };

@@ -310,7 +310,7 @@ describe("releasing a shared resource", () => {
 
     expect(machine.removals).toEqual([]);
     expect(b.infos).toContain(
-      "Keeping agnix: this repository did not install it — run 'npm uninstall --global agnix' yourself if nothing else needs it",
+      "Keeping agnix: agemon has no record on this machine that it installed it from this repository — run 'npm uninstall --global agnix' yourself if nothing else needs it",
     );
     expect(await machine.record()).toBeNull();
   });
@@ -357,6 +357,34 @@ describe("releasing a shared resource", () => {
       "Keeping agnix: this repository is not registered as using it — run 'npm uninstall --global agnix' yourself if nothing else needs it",
     );
     expect(await machine.record()).toBeNull();
+  });
+
+  it("an unregistered release omits the manual-removal hint when the resource is absent", async () => {
+    const machine = await createMachine();
+    const clone = await machine.repository("clone");
+
+    await machine.release(clone.ctx, true);
+
+    expect(clone.infos).toEqual([
+      "Keeping agnix: this repository is not registered as using it",
+    ]);
+  });
+
+  it("an unregistered release prints the hint when the presence check fails", async () => {
+    const machine = await createMachine();
+    const clone = await machine.repository("clone");
+
+    await releaseSharedResource(clone.ctx, RESOURCE, {
+      releasingRepoInstalledIt: true,
+      isPresent: async () => {
+        throw new Error("npm root failed");
+      },
+      async remove() {},
+    });
+
+    expect(clone.infos).toEqual([
+      "Keeping agnix: this repository is not registered as using it — run 'npm uninstall --global agnix' yourself if nothing else needs it",
+    ]);
   });
 
   it("a forged uses-shared-resource entry with no record is a no-op", async () => {

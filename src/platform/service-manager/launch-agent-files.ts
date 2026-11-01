@@ -71,6 +71,35 @@ export function readPlistString(
   return values[0];
 }
 
+const MAX_AGEMON_PLIST_CHARACTERS = 64 * 1024;
+const ENVIRONMENT_DICT =
+  /<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/;
+const STRING_ENTRY = /<key>([^<]*)<\/key>\s*<string>([^<]*)<\/string>/g;
+
+export function readPlistEnvironment(
+  plistContents: string,
+): Record<string, string> | null {
+  if (
+    plistContents.length > MAX_AGEMON_PLIST_CHARACTERS ||
+    plistContents.startsWith(BINARY_PLIST_MAGIC) ||
+    plistContents.includes(CDATA_SECTION_START)
+  ) {
+    return null;
+  }
+  const dictionary = ENVIRONMENT_DICT.exec(
+    plistContents.replace(XML_COMMENTS, ""),
+  )?.[1];
+  if (dictionary === undefined) {
+    return {};
+  }
+  return Object.fromEntries(
+    [...dictionary.matchAll(STRING_ENTRY)].map((entry) => [
+      unescapePlistString(entry[1]),
+      unescapePlistString(entry[2]),
+    ]),
+  );
+}
+
 export interface LaunchAgentFiles {
   plistPathFor(plistFileName: string): string;
   readPlist(plistFileName: string): Promise<string | null>;

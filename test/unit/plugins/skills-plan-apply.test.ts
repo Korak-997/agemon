@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 
 const clack = vi.hoisted(() => ({
   multiselect: vi.fn(),
@@ -36,7 +37,12 @@ import {
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
-import type { ProposedOperation } from "../../../src/plugins/types.js";
+import type {
+  PluginApplyReport,
+  ProposedOperation,
+} from "../../../src/plugins/types.js";
+import { seedInstalledSkills } from "../installed-skills.js";
+import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -62,6 +68,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -95,13 +104,12 @@ async function createTestContext(
   const sandboxDirectory = await createSandbox();
   process.env.AGEMON_DEV = "1";
   process.env.AGEMON_FAKE_SUBPROCESS = "1";
-  process.env.AGEMON_FAKE_PREINSTALLED_SKILLS = (
-    options.preinstalledSkills ?? []
-  ).join(",");
   resetFakeSubprocessState();
+  await seedInstalledSkills(sandboxDirectory, options.preinstalledSkills ?? []);
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -134,7 +142,7 @@ function planSkills(ctx: Context): Promise<ProposedOperation[]> {
 function applySkills(
   ctx: Context,
   operations: ProposedOperation[],
-): Promise<void> {
+): Promise<PluginApplyReport | undefined> {
   return (skillsPlugin.apply as NonNullable<typeof skillsPlugin.apply>)(
     ctx,
     operations,
@@ -387,7 +395,7 @@ describe("the skills CLI only writes inside the repository", () => {
     await expect(readFile(outsideFile, "utf8")).resolves.toBe("keep me\n");
   });
 
-  it("removes only through the claude-code agent and cleans the canonical copy, leaving other agents' directories alone", async () => {
+  it("nuke removes only .claude/skills copies, never .agents/skills or other agents' directories, without the CLI", async () => {
     const ctx = await createTestContext();
     await installEssentials(ctx);
     const [skillName] = skillNamesOf("essentials");
@@ -402,19 +410,22 @@ describe("the skills CLI only writes inside the repository", () => {
 
     await skillsPlugin.uninstall(ctx);
 
-    const removals = skillCliCalls.filter((args) => args[0] === "remove");
-    expect(removals.length).toBe(skillNamesOf("essentials").length);
-    for (const args of removals) {
-      expect(args.slice(2)).toEqual(["--agent", "claude-code", "--yes"]);
+    expect(skillCliCalls).toEqual([]);
+    for (const name of skillNamesOf("essentials")) {
+      expect(existsSync(join(ctx.cwd, ".claude/skills", name))).toBe(false);
     }
-    expect(existsSync(join(ctx.cwd, ".agents/skills", skillName))).toBe(false);
+    expect(existsSync(join(ctx.cwd, ".agents/skills", skillName))).toBe(true);
     expect(existsSync(join(outside, skillName))).toBe(true);
   });
 
-  it("refuses a forged ledger skill name that would leave .agents/skills, before running the CLI", async () => {
+  it("refuses a forged ledger skill name that would leave .claude/skills, before touching anything", async () => {
     const forgedName = "../../..";
-    const ctx = await createTestContext({ preinstalledSkills: [forgedName] });
-    await mkdir(join(ctx.cwd, ".agents/skills"), { recursive: true });
+    const ctx = await createTestContext();
+    await mkdir(join(ctx.cwd, ".agents/skills/planted"), { recursive: true });
+    await writeFile(
+      join(ctx.cwd, ".agents/skills/planted/SKILL.md"),
+      `---\nname: ${forgedName}\n---\n`,
+    );
     const sibling = join(ctx.cwd, "..", `${basename(ctx.cwd)}-precious.txt`);
     await writeFile(sibling, "keep\n");
     createdTempDirectories.push(sibling);
@@ -427,17 +438,127 @@ describe("the skills CLI only writes inside the repository", () => {
     const skillCliCalls = recordSkillCliCalls(ctx);
 
     await expect(skillsPlugin.uninstall(ctx)).rejects.toThrow(
-      "Refusing to run the skills CLI: the skill name '../../..' is not a plain skill name. The ledger in .agemon/state.json may have been edited",
+      "Refusing to remove the skill '../../..': it is not a plain skill name. The ledger in .agemon/state.json may have been edited",
     );
 
     expect(skillCliCalls.filter((args) => args[0] === "remove")).toEqual([]);
     await expect(readFile(sibling, "utf8")).resolves.toBe("keep\n");
   });
 
-  it("creates no agent directories when nuke finds none", async () => {
+  it("nuke keeps skills and skills-lock.json named only by unconfirmed entries and says what to delete", async () => {
+    const [first, second] = skillNamesOf("essentials");
+    const gone = "retired-skill";
     const ctx = await createTestContext({
-      preinstalledSkills: skillNamesOf("essentials"),
+      preinstalledSkills: [first, second],
     });
+    await writeFile(join(ctx.cwd, "skills-lock.json"), "{}\n");
+    await mkdir(join(ctx.cwd, ".claude/skills", first), { recursive: true });
+    await mkdir(join(ctx.cwd, ".agents/skills", first), { recursive: true });
+    await mkdir(join(ctx.cwd, ".agents/skills", second), { recursive: true });
+    await appendLedgerClaims(ctx, [
+      {
+        plugin: "skills",
+        type: "installed-skill",
+        target: gone,
+        preExisting: false,
+      },
+      {
+        plugin: "skills",
+        type: "installed-skill",
+        target: first,
+        preExisting: false,
+      },
+      {
+        plugin: "skills",
+        type: "installed-skill",
+        target: second,
+        preExisting: false,
+      },
+      {
+        plugin: "skills",
+        type: "generated-skills-lock",
+        target: "skills-lock.json",
+        preExisting: false,
+      },
+    ]);
+    const infos: string[] = [];
+    ctx.ui = { ...ctx.ui, info: (line: string) => infos.push(line) };
+    const skillCliCalls = recordSkillCliCalls(ctx);
+
+    await skillsPlugin.uninstall(ctx);
+
+    expect(skillCliCalls.filter((args) => args[0] === "remove")).toEqual([]);
+    expect(existsSync(join(ctx.cwd, "skills-lock.json"))).toBe(true);
+    expect(infos).toEqual([
+      `Keeping skills that agemon has no record of installing in this repository on this machine: ${first}, ${second}. If you don't need them, delete .claude/skills/${first}, .agents/skills/${first}, .claude/skills/${second}, .agents/skills/${second}.`,
+      "Keeping skills-lock.json: agemon has no record on this machine that it created it.",
+    ]);
+  });
+
+  it("an unconfirmed entry still makes its built-in group recorded, so a missing skill is repaired", async () => {
+    const [first] = skillNamesOf("security");
+    const ctx = await createTestContext({ skillGroupsOption: "none" });
+    await appendLedgerClaims(ctx, [
+      {
+        plugin: "skills",
+        type: "installed-skill",
+        target: first,
+        preExisting: false,
+      },
+    ]);
+
+    const operations = await planSkills({ ...ctx, yes: true });
+
+    expect(
+      operations
+        .filter((operation) => operation.resourceId === "skill-group:security")
+        .map((operation) => operation.action),
+    ).toEqual(["install-package"]);
+  });
+
+  it("an install that creates skills-lock.json over an unconfirmed lock entry leaves one confirmed entry", async () => {
+    const ctx = await createTestContext();
+    await appendLedgerClaims(ctx, [
+      {
+        plugin: "skills",
+        type: "generated-skills-lock",
+        target: "skills-lock.json",
+        preExisting: false,
+      },
+    ]);
+    const run = ctx.run;
+    ctx.run = async (command, args, options) => {
+      const result = await run(command, args, options);
+      if (command === process.execPath && args[1] === "add") {
+        await writeFile(join(ctx.cwd, "skills-lock.json"), "{}\n");
+      }
+      return result;
+    };
+
+    await installEssentials(ctx);
+
+    const lockEntries = ctx.manifest
+      .getActions()
+      .filter((entry) => entry.type === "generated-skills-lock");
+    expect(lockEntries).toHaveLength(1);
+    expect(ctx.manifest.isConfirmed(lockEntries[0])).toBe(true);
+  });
+
+  it("nuke still removes skills this machine recorded", async () => {
+    const ctx = await createTestContext();
+    await installEssentials(ctx);
+    const skillCliCalls = recordSkillCliCalls(ctx);
+
+    await skillsPlugin.uninstall(ctx);
+
+    expect(skillCliCalls).toEqual([]);
+    for (const name of skillNamesOf("essentials")) {
+      expect(existsSync(join(ctx.cwd, ".claude/skills", name))).toBe(false);
+    }
+  });
+
+  it("creates no agent directories when nuke finds none", async () => {
+    const ctx = await createTestContext();
     await recordInstalledGroups(ctx, ["essentials"]);
 
     await skillsPlugin.uninstall(ctx);

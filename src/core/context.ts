@@ -14,6 +14,7 @@ import {
   resolveConsent,
 } from "./consent.js";
 import { assertFakeBackendsAreDevOnly } from "./dev-mode.js";
+import { createGitConfigGuard } from "./git-config-guard.js";
 import { createConfirmer, isInteractiveTerminal } from "./prompt.js";
 import { clackPrompts } from "./prompt-clack.js";
 import { StateManifest } from "./state-manifest.js";
@@ -27,6 +28,7 @@ import {
   type RunSubprocess,
   traceSubprocessCalls,
 } from "./subprocess-trace.js";
+import type { GitConfigGuard } from "./untrusted-git-config.js";
 import {
   createVerifiedBinaryInstaller,
   type VerifiedBinaryInstaller,
@@ -69,6 +71,7 @@ export interface Context {
   skillGroupsOption?: string;
   customSkillGroups?: CustomSkillGroupConfig[];
   removeSharedTools?: ReadonlySet<string>;
+  gitConfigGuard: GitConfigGuard;
 }
 
 export interface CreateContextInput {
@@ -134,6 +137,7 @@ export async function createContext(
     skillGroupsOption: input.skillGroups,
     customSkillGroups: input.customSkillGroups,
     removeSharedTools: input.removeSharedTools,
+    gitConfigGuard: createGitConfigGuard(input.repoRoot),
     log: console,
     ui: input.ui,
     progress: input.progress,

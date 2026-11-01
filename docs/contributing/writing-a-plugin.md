@@ -26,7 +26,11 @@ A normal `agemon` run goes through these steps (`src/core/orchestrator.ts`,
 4. **Apply.** agemon snapshots every target file, writes a journal, then for each capability
    with approved operations calls `apply(ctx, operations, staged)`, or, when the plugin has
    no `apply`, `detect` and then `install` if it is not present. Then it calls `verify(ctx)`.
-   A thrown error or `verify` returning `ok: false` rolls back the whole run.
+   A thrown error or `verify` returning `ok: false` rolls back the whole run. `apply` may
+   return `{ skipped: [{ operationId, reason }] }` for approved operations it deliberately
+   left alone; those are reported as skipped and not counted as applied. An `apply` that
+   never skips is declared `Promise<undefined>` (not `Promise<void>`), so it matches the
+   interface's return type.
 5. **Rollback.** Snapshots are restored, and for ledger entries this run added,
    `revert(ctx, entries)` is called on the plugin that owns them.
 6. **Nuke.** `agemon nuke` previews and then calls `uninstall(ctx)` on every capability with
@@ -51,10 +55,11 @@ As defined in `src/plugins/types.ts`:
 | `describeState(ctx)` | no | Rows for `status`/`inspect`: one per resource, with a `CapabilityState`. |
 | `plan(ctx, plannedSoFar?)` | no | Proposed operations (step 1). Without it, the plugin is never part of a plan. |
 | `materialize(ctx, operations)` | no | Staged files for approved operations (step 3). |
-| `apply(ctx, operations, staged?)` | no | Makes the approved changes (step 4). |
-| `install(ctx)` | yes | Used by apply when the plugin has no `apply`. |
+| `apply(ctx, operations, staged?)` | no | Makes the approved changes (step 4). May return `{ skipped }` (step 4). |
+| `install(ctx)` | no | Used by apply when the plugin has no `apply`. A plugin with `plan` and `apply` must not expose an `install` that plans and applies by itself: that would skip consent. Every plugin needs `apply` or `install`. |
 | `verify(ctx)` | yes | Returns `{ ok, detail?, attention? }`. `attention` is shown and makes `status` exit 2. |
 | `revert(ctx, entries)` | no | Undoes the given ledger entries during a rollback (step 5). |
+| `describeKeptAfterRollback(ctx, operations)` | no | After a rollback or `agemon recover`, names the changes this plugin deliberately did not undo (the skills plugin's forward-only updates), e.g. `updated skill x (agemon's newer version)`. agemon shows each as "Kept …" and lists "keep …" in the recover preview. |
 | `uninstall(ctx)` | yes | Removes what the ledger says this plugin installed (step 6). |
 
 ### Operations
@@ -102,9 +107,9 @@ the user sees in the gate: a diff for file changes, a one-line note otherwise.
 
 ## A minimal plugin
 
-`src/plugins/test-plugin.ts` is the smallest valid plugin. It is registered only when
-`AGEMON_DEV=1`, and its `plan` returns no operations, so it never takes part in a real run; it shows the
-required members and how a plugin records and checks a ledger entry:
+`src/plugins/test-plugin.ts` is the smallest valid plugin. It is not registered, so it never
+takes part in a run; tests that need it add it themselves. It shows the required members and how
+a plugin records and checks a ledger entry:
 
 ```ts
 import type { AgemonPlugin } from "./types.js";

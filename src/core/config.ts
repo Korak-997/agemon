@@ -1,26 +1,24 @@
 import { join, relative } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse, stringify, TomlError } from "smol-toml";
-import { replaceStaleBackup } from "./backups.js";
+import { BackupPathOccupiedError, writeBackupOnce } from "./backups.js";
 import {
   RefusedFileError,
   readRegularFileIfExists,
   writeFileAtomic,
 } from "./files.js";
+import { sha256Hex } from "./fingerprint.js";
 import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 const CONFIG_FILE_NAME = "agemon.toml";
-const CONFIG_KEYS: readonly string[] = [
-  "capabilities",
-  "skill_groups",
-  "custom_skill_groups",
-  "conflict_decisions",
-  "known_capabilities",
-];
+const CONFIG_BACKUP_RESOURCE_PREFIX = "config:agemon.toml";
+const CONFIG_BACKUP_CONTENT_HASH_LENGTH = 16;
 
-const CONFIG_BACKUP_RESOURCE_ID = "config:agemon.toml";
-
-const CUSTOM_GROUP_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/u;
+const MAX_CUSTOM_GROUP_ID_CHARACTERS = 40;
+const CUSTOM_GROUP_ID_PATTERN = new RegExp(
+  `^[a-z0-9][a-z0-9-]{0,${MAX_CUSTOM_GROUP_ID_CHARACTERS - 1}}$`,
+  "u",
+);
 const RESERVED_GROUP_IDS: readonly string[] = ["all", "none"];
 const MAX_CUSTOM_GROUP_LABEL_CHARACTERS = 80;
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
@@ -33,7 +31,124 @@ const MAX_CUSTOM_GROUPS = 20;
 const MAX_SKILLS_PER_CUSTOM_GROUP = 50;
 const MAX_REMOTE_REPOSITORIES = 10;
 
-export type ConflictDecision = "keep" | "replace" | "skip";
+export const CONFLICT_DECISIONS = ["keep", "replace", "skip"] as const;
+export type ConflictDecision = (typeof CONFLICT_DECISIONS)[number];
+
+export const SKILL_GROUPS_WHEN_ABSENT =
+  "interactive prompt per group, or essentials-only when non-interactive";
+
+export interface ConfigKey {
+  name: string;
+  type: string;
+  whenAbsent: string | null;
+  summary: string;
+  githubSourceOnly?: true;
+}
+
+interface ConfigTable {
+  heading: string;
+  keys: readonly ConfigKey[];
+}
+
+export const AGEMON_TOML_TABLES: Readonly<{
+  topLevel: ConfigTable;
+  customSkillGroup: ConfigTable;
+  customSkill: ConfigTable;
+}> = {
+  topLevel: {
+    heading: "Top-level keys",
+    keys: [
+      {
+        name: "capabilities",
+        type: "array of capability ids",
+        whenAbsent: null,
+        summary:
+          "The capabilities agemon reconciles in this repository. An empty list or an unknown id is an error.",
+      },
+      {
+        name: "skill_groups",
+        type: "string: comma-separated group ids, or all or none",
+        whenAbsent: SKILL_GROUPS_WHEN_ABSENT,
+        summary:
+          "The skill groups to install, as with --skill-groups; the flag wins when both are given.",
+      },
+      {
+        name: "custom_skill_groups",
+        type: "table of group id to custom group table",
+        whenAbsent: "no project-defined groups",
+        summary: `Project-defined skill groups. A group id is lower-case letters, digits and '-' (at most ${MAX_CUSTOM_GROUP_ID_CHARACTERS} characters), not all or none, and not a built-in group id.`,
+      },
+      {
+        name: "conflict_decisions",
+        type: "table of resource id to decision",
+        whenAbsent: "every conflict needs a decision in the run",
+        summary:
+          "What to do with a rule file that holds your own rules where agemon would write a pointer.",
+      },
+      {
+        name: "known_capabilities",
+        type: "array of capability ids",
+        whenAbsent: "the capabilities agemon had before this key existed",
+        summary:
+          "The capabilities the agemon that wrote the file knew about, so a capability added in a later release is offered once.",
+      },
+    ],
+  },
+  customSkillGroup: {
+    heading: "Custom skill group tables",
+    keys: [
+      {
+        name: "label",
+        type: `string, one line, at most ${MAX_CUSTOM_GROUP_LABEL_CHARACTERS} characters`,
+        whenAbsent: null,
+        summary: "The name shown when agemon asks which groups to install.",
+      },
+      {
+        name: "skills",
+        type: `array of 1 to ${MAX_SKILLS_PER_CUSTOM_GROUP} skill entries`,
+        whenAbsent: null,
+        summary: "The skills in the group, each a local or a GitHub source.",
+      },
+    ],
+  },
+  customSkill: {
+    heading: "Custom skill entries",
+    keys: [
+      {
+        name: "source",
+        type: 'string: "./<path>" or "github:<owner>/<repository>"',
+        whenAbsent: null,
+        summary:
+          "A directory in this repository (the skill's name is the directory name), or a GitHub repository.",
+      },
+      {
+        name: "ref",
+        type: "string: a full 40-character commit sha",
+        whenAbsent: null,
+        summary:
+          "The commit to fetch; branches, tags and short shas are refused. Only for GitHub sources.",
+        githubSourceOnly: true,
+      },
+      {
+        name: "skill",
+        type: "string: a skill name",
+        whenAbsent: null,
+        summary:
+          "The skill to take from skills/<skill>/ in the repository. Only for GitHub sources.",
+        githubSourceOnly: true,
+      },
+    ],
+  },
+};
+
+const keyNames = (keys: readonly ConfigKey[]): readonly string[] =>
+  keys.map((key) => key.name);
+const TOP_LEVEL_KEYS = keyNames(AGEMON_TOML_TABLES.topLevel.keys);
+const CUSTOM_GROUP_KEYS = keyNames(AGEMON_TOML_TABLES.customSkillGroup.keys);
+const GITHUB_SKILL_KEYS = keyNames(AGEMON_TOML_TABLES.customSkill.keys);
+const LOCAL_SKILL_KEYS = keyNames(
+  AGEMON_TOML_TABLES.customSkill.keys.filter((key) => !key.githubSourceOnly),
+);
 
 export type CustomSkillSource =
   | { kind: "local"; path: string; skillName: string }
@@ -103,10 +218,12 @@ function validateKnownCapabilities(value: unknown): string[] | null {
 
 function validateKnownKeys(record: Record<string, unknown>): void {
   const unknownKey = Object.keys(record).find(
-    (key) => !CONFIG_KEYS.includes(key),
+    (key) => !TOP_LEVEL_KEYS.includes(key),
   );
   if (unknownKey !== undefined) {
-    fail(`unknown key '${unknownKey}'. Valid keys: ${CONFIG_KEYS.join(", ")}.`);
+    fail(
+      `unknown key '${unknownKey}'. Valid keys: ${TOP_LEVEL_KEYS.join(", ")}.`,
+    );
   }
 }
 
@@ -184,11 +301,11 @@ function validateCustomSkill(value: unknown, field: string): CustomSkillSource {
     fail(`'${field}.source' must be a string`);
   }
   if (!skill.source.startsWith("github:")) {
-    assertOnlyKeys(skill, ["source"], field);
+    assertOnlyKeys(skill, LOCAL_SKILL_KEYS, field);
     return validateLocalSource(skill.source, `${field}.source`);
   }
 
-  assertOnlyKeys(skill, ["source", "ref", "skill"], field);
+  assertOnlyKeys(skill, GITHUB_SKILL_KEYS, field);
   const match = GITHUB_SOURCE_PATTERN.exec(skill.source);
   if (match === null) {
     fail(`'${field}.source' must be "github:<owner>/<repository>"`);
@@ -214,11 +331,11 @@ function validateCustomSkillGroup(
   const field = `custom_skill_groups.${id}`;
   if (!CUSTOM_GROUP_ID_PATTERN.test(id) || RESERVED_GROUP_IDS.includes(id)) {
     fail(
-      `'${field}': a group id is lower-case letters, digits and '-' (at most 40 characters), and not ${RESERVED_GROUP_IDS.join(" or ")}`,
+      `'${field}': a group id is lower-case letters, digits and '-' (at most ${MAX_CUSTOM_GROUP_ID_CHARACTERS} characters), and not ${RESERVED_GROUP_IDS.join(" or ")}`,
     );
   }
   const group = asTable(value, field);
-  assertOnlyKeys(group, ["label", "skills"], field);
+  assertOnlyKeys(group, CUSTOM_GROUP_KEYS, field);
   if (
     typeof group.label !== "string" ||
     group.label.trim().length === 0 ||
@@ -287,6 +404,15 @@ function validateCustomSkillGroups(value: unknown): CustomSkillGroupConfig[] {
   return groups;
 }
 
+const quotedDecisions = CONFLICT_DECISIONS.map((decision) =>
+  JSON.stringify(decision),
+);
+const CONFLICT_DECISION_CHOICES = `${quotedDecisions.slice(0, -1).join(", ")}, or ${quotedDecisions.at(-1)}`;
+
+function isConflictDecision(value: unknown): value is ConflictDecision {
+  return CONFLICT_DECISIONS.some((decision) => decision === value);
+}
+
 function validateConflictDecisions(
   value: unknown,
 ): Record<string, ConflictDecision> {
@@ -300,9 +426,9 @@ function validateConflictDecisions(
   for (const [resourceId, decision] of Object.entries(
     value as Record<string, unknown>,
   )) {
-    if (decision !== "keep" && decision !== "replace" && decision !== "skip") {
+    if (!isConflictDecision(decision)) {
       fail(
-        `'conflict_decisions.${resourceId}' must be "keep", "replace", or "skip", got ${JSON.stringify(decision)}`,
+        `'conflict_decisions.${resourceId}' must be ${CONFLICT_DECISION_CHOICES}, got ${JSON.stringify(decision)}`,
       );
     }
     decisions[resourceId] = decision;
@@ -335,7 +461,7 @@ function parseConfigRecord(text: string): Record<string, unknown> {
   }
 }
 
-function validateConfigText(text: string): AgemonConfig {
+export function validateConfigText(text: string): AgemonConfig {
   const record = parseConfigRecord(text);
   validateKnownKeys(record);
   return {
@@ -354,6 +480,17 @@ export type ConfigCapabilityUpdate =
 
 function serializeConfigRecord(record: Record<string, unknown>): string {
   return `${stringify(record)}\n`;
+}
+
+function configBackupResourceId(
+  addedCapabilityIds: string[],
+  originalText: string,
+): string {
+  const contentHash = sha256Hex(originalText).slice(
+    0,
+    CONFIG_BACKUP_CONTENT_HASH_LENGTH,
+  );
+  return `${CONFIG_BACKUP_RESOURCE_PREFIX}:${addedCapabilityIds.join(",")}:${contentHash}`;
 }
 
 export async function rewriteConfigCapabilities(
@@ -379,7 +516,14 @@ export async function rewriteConfigCapabilities(
     ],
   };
   const nextText = serializeConfigRecord(nextRecord);
-  if (!isDeepStrictEqual(parseConfigRecord(nextText), nextRecord)) {
+  // smol-toml ≥1.9 parses tables into null-prototype objects; structuredClone
+  // gives plain objects, so the comparison sees values only.
+  if (
+    !isDeepStrictEqual(
+      structuredClone(parseConfigRecord(nextText)),
+      structuredClone(nextRecord),
+    )
+  ) {
     return {
       kind: "not-written",
       reason: "rewriting it would change values agemon did not mean to change",
@@ -389,9 +533,27 @@ export async function rewriteConfigCapabilities(
 
   const losesCommentsOrLayout =
     serializeConfigRecord(currentRecord) !== currentText;
-  const backup = losesCommentsOrLayout
-    ? await replaceStaleBackup(cwd, CONFIG_BACKUP_RESOURCE_ID, currentText)
-    : null;
+  let backup: { path: string } | null = null;
+  if (losesCommentsOrLayout) {
+    const addedIds = update.capabilities.filter(
+      (id) => !config.capabilities.includes(id),
+    );
+    try {
+      backup = await writeBackupOnce(
+        cwd,
+        configBackupResourceId(addedIds, currentText),
+        currentText,
+      );
+    } catch (error) {
+      if (!(error instanceof BackupPathOccupiedError)) {
+        throw error;
+      }
+      return {
+        kind: "not-written",
+        reason: `agemon's backup path ${relative(cwd, error.backupPath)} holds something else; move it aside and run agemon again`,
+      };
+    }
+  }
   await writeFileAtomic(configPath, nextText);
   return {
     kind: "written",

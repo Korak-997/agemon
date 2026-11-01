@@ -8,7 +8,7 @@ const BELL = String.fromCharCode(7);
 
 function rollbackCausedBy(cause: unknown): ApplyRollbackError {
   return new ApplyRollbackError(
-    { message: "x", restored: [], reverted: [], manualCleanup: [] },
+    { message: "x", restored: [], reverted: [], kept: [], manualCleanup: [] },
     cause,
   );
 }
@@ -49,5 +49,13 @@ describe("renderCliError", () => {
 
     expect(rendered).toContain("replace the .gitignore symlink");
     expect(rendered).toContain("--allow-unignored-state.");
+  });
+
+  it("points at a git failure as a cause of the isolation refusal", () => {
+    const rendered = renderCliError(
+      "Refusing to write .agemon/ state: /.agemon/ is not git-ignored. Re-run interactively (or with --yes) so agemon can add it, or pass --allow-unignored-state to override.",
+    );
+
+    expect(rendered).toContain("fix that git error first");
   });
 });

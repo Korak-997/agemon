@@ -8,6 +8,8 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { getRegisteredPlugins } from "../../../src/plugins/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import { testPlugin } from "../../../src/plugins/test-plugin.js";
+import { applyAllPlanned } from "../apply-all-planned.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -33,6 +35,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -62,6 +67,7 @@ async function createTestContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -108,7 +114,7 @@ describe("capability plan()", () => {
       freshPlan?.every((operation) => operation.expectedFingerprint === null),
     ).toBe(true);
 
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     const settledPlan = await masterPromptPlugin.plan?.(context);
     expect(settledPlan).toEqual([]);

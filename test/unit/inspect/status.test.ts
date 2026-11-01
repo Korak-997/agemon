@@ -24,6 +24,8 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
 import { renderStatusReport } from "../../../src/ui/status-view.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -52,6 +54,9 @@ function createNoOpServiceManager(): ServiceManager {
     async readUnitWorkingDirectory() {
       return null;
     },
+    async readUnitEnvironment() {
+      return null;
+    },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
     async isLingerEnabled() {
       return false;
@@ -70,6 +75,7 @@ async function createStatusContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -494,6 +500,21 @@ describe("discoverRepository git tracking check", () => {
     expect(renderStatusReport(report)).not.toContain(
       ".agemon/ is not tracked by git",
     );
+    expect(discovery.isolation.status).toBe("no-gitignore-file");
+  });
+
+  it("with /.agemon/ listed, a broken .git also reports that git could not confirm the ignore", async () => {
+    const context = await createStatusContext();
+    await mkdir(join(context.cwd, ".git"));
+    await writeFile(join(context.cwd, ".gitignore"), "/.agemon/\n", "utf8");
+
+    const discovery = await discoverRepository(context);
+
+    expect(discovery.isolation.status).toBe("not-ignored");
+    expect(discovery.isolation.trackingCheckError).toMatch(
+      /^could not ask git whether \.agemon\/ is ignored: .*; could not check whether \.agemon\/ is tracked by git: /,
+    );
+    expect((await buildStatusReport(context, [])).healthy).toBe(true);
   });
 
   it("does not warn outside a git repository", async () => {
@@ -541,6 +562,32 @@ describe("status with agemon state", () => {
 
     expect(report.healthy).toBe(false);
     expect(report.hasAgemonState).toBe(false);
+  });
+
+  it("counts ledger entries this machine did not write and says what agemon won't act on", async () => {
+    const context = await createStatusContext();
+    await recordManagedRuleFile(context, "AGENTS.md", "rules\n");
+    await appendLedgerClaims(context, [
+      {
+        plugin: "skills",
+        type: "installed-skill",
+        target: "geo-audit",
+        preExisting: false,
+      },
+      {
+        plugin: "crg",
+        type: "installed-binary",
+        target: "code-review-graph (pipx)",
+        preExisting: false,
+      },
+    ]);
+
+    const report = await buildStatusReport(context, []);
+
+    expect(report.unconfirmedLedgerEntries).toBe(2);
+    expect(renderStatusReport(report).replace(/[\s│]+/g, " ")).toContain(
+      "2 ledger entries were not written by agemon on this machine; agemon won't remove, replace or repair the skills, subagents, shared tools, daemon units or code graph they name.",
+    );
   });
 
   it("reports agemon state once the ledger has entries", async () => {

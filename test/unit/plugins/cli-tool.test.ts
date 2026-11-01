@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +14,7 @@ import {
   createFakeVerifiedBinaryInstaller,
   resetFakeSubprocessState,
 } from "../../../src/core/fake-subprocess.js";
+import { directoryIdentity } from "../../../src/core/machine-ledger.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { resolveAgemonStateDirectory } from "../../../src/core/state-root.js";
@@ -28,6 +36,8 @@ import {
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
 } from "../../../src/plugins/pins.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -53,6 +63,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -144,6 +157,7 @@ async function createTestContext(
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -371,6 +385,31 @@ describe("cli-tool plugin", () => {
     expect((await cliToolPlugin.verify(context)).ok).toBe(false);
   });
 
+  it("bounds an uninstall failure message to the last 10 lines of stderr", async () => {
+    const context = await createTestContext();
+    const run = context.run;
+    const stderr = Array.from({ length: 5_000 }, (_, i) => `npm ${i}`).join(
+      "\n",
+    );
+    context.run = async (command, args, options) =>
+      args[0] === "uninstall"
+        ? { code: 1, stdout: "", stderr }
+        : run(command, args, options);
+    context.verifiedBinaryInstaller = {
+      async install() {
+        throw new Error("install failed");
+      },
+      inspect: async () => ({ kind: "absent" }),
+    };
+
+    const failure = (await cliToolPlugin
+      .install(context)
+      .catch((error: unknown) => error)) as Error;
+
+    expect(failure.message.split("\n").length).toBeLessThanOrEqual(11);
+    expect(failure.message).toContain("npm 4999");
+  });
+
   it("names the manual cleanup when removing a partly installed package fails", async () => {
     const context = await createTestContext();
     const run = context.run;
@@ -386,7 +425,7 @@ describe("cli-tool plugin", () => {
     };
 
     await expect(cliToolPlugin.install(context)).rejects.toThrow(
-      "No pinned agnix 0.58.0 build runs on this host. Removing the partly installed agnix also failed (EACCES); run: npm uninstall --global agnix",
+      "No pinned agnix 0.58.0 build runs on this host. Removing the partly installed agnix also failed (npm global uninstall failed for agnix: EACCES); run: npm uninstall --global agnix",
     );
     expect(context.manifest.getActions()).toEqual([]);
   });
@@ -512,6 +551,67 @@ describe("cli-tool plugin", () => {
         .filter((action) => action.plugin === "cli-tool"),
     ).toEqual([]);
     expect(commands.some((command) => command[1] === "uninstall")).toBe(false);
+  });
+
+  it("an unconfirmed install claim makes agnix pre-existing, so nuke --remove-shared uninstalls nothing", async () => {
+    const context = await createTestContext("agnix");
+    await appendLedgerClaims(context, [
+      {
+        plugin: "cli-tool",
+        type: "installed-cli-tool",
+        target: "agnix",
+        preExisting: false,
+      },
+    ]);
+    const commands = recordCommands(context);
+
+    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+    expect(operations.map((operation) => operation.preview.text)).toEqual([
+      "record that this repository uses agnix",
+    ]);
+    await cliToolPlugin.apply?.(context, operations);
+    await uninstallPlugins(
+      { ...context, yes: true, removeSharedTools: new Set(["agnix"]) },
+      [cliToolPlugin],
+      {},
+    );
+
+    expect(commands.some((command) => command[1] === "uninstall")).toBe(false);
+  });
+
+  it("an installed record naming this repository is kept on nuke when its install entry is unconfirmed", async () => {
+    const context = await createTestContext("agnix");
+    const repository = await realpath(context.cwd);
+    await writeMachineLedger({
+      "npm-global:agnix": {
+        origin: "installed",
+        installedBy: repository,
+        ownerDirectoryId: await directoryIdentity(repository),
+        holders: [repository],
+      },
+    });
+    await appendLedgerClaims(context, [
+      {
+        plugin: "cli-tool",
+        type: "installed-cli-tool",
+        target: "agnix",
+        preExisting: false,
+      },
+    ]);
+    const infos: string[] = [];
+    context.ui = { ...context.ui, info: (line: string) => infos.push(line) };
+    const commands = recordCommands(context);
+
+    await uninstallPlugins(
+      { ...context, yes: true, removeSharedTools: new Set(["agnix"]) },
+      [cliToolPlugin],
+      {},
+    );
+
+    expect(commands.some((command) => command[1] === "uninstall")).toBe(false);
+    expect(infos).toContain(
+      "Keeping agnix: the shared-tools ledger names this repository as its installer, but this repository's ledger entry for that install is not confirmed (written before ledger receipts, or not on this machine) — run 'npm uninstall --global agnix' yourself if nothing else needs it",
+    );
   });
 
   it("an existing global npm agnix off PATH is refused, not overwritten or uninstalled", async () => {

@@ -19,6 +19,7 @@ const CAPABILITY_STATE_TONE: Record<
 > = {
   "present-managed": "ok",
   "present-adopted": "warn",
+  "present-modified": "warn",
   absent: "neutral",
   declined: "neutral",
   unknown: "warn",
@@ -27,6 +28,7 @@ const CAPABILITY_STATE_TONE: Record<
 const CAPABILITY_STATE_LABEL: Record<CapabilityState, string> = {
   "present-managed": "present · managed",
   "present-adopted": "present · adopted",
+  "present-modified": "present · changed",
   absent: "absent",
   declined: "absent · declined",
   unknown: "unknown",
@@ -47,7 +49,7 @@ function managedResourceRow(resource: ManagedResourceStatus): string[] {
     resource.target,
     resource.ownershipMode ?? "",
     healthBadge(resource.health),
-    resource.detail ?? "",
+    printable(resource.detail ?? ""),
   ];
 }
 
@@ -100,7 +102,7 @@ function capabilityRow(row: CapabilityStatusRow): string[] {
       : !row.health.ok
         ? row.health.detail
         : (row.detail ?? "");
-  return [row.capabilityId, state, health, detail];
+  return [row.capabilityId, state, health, printable(detail)];
 }
 
 export function renderStatusReport(report: StatusReport): string {
@@ -199,6 +201,15 @@ export function renderStatusReport(report: StatusReport): string {
     lines.push(
       `  ${theme.warn(`${symbol("warn")} ${report.trackedAgemonPaths.length} .agemon/ path(s) are tracked by git`)}`,
       `  ${symbol("arrow")} git rm -r --cached .agemon`,
+    );
+  }
+  if (report.unconfirmedLedgerEntries > 0) {
+    const entries =
+      report.unconfirmedLedgerEntries === 1
+        ? "1 ledger entry was"
+        : `${report.unconfirmedLedgerEntries} ledger entries were`;
+    lines.push(
+      `  ${theme.warn(`${symbol("warn")} ${entries} not written by agemon on this machine; agemon won't remove, replace or repair the skills, subagents, shared tools, daemon units or code graph they name.`)}`,
     );
   }
 

@@ -38,6 +38,29 @@ export const PROPOSED_OPERATION_ACTIONS = [
 export type ProposedOperationAction =
   (typeof PROPOSED_OPERATION_ACTIONS)[number];
 
+export const UNREADABLE_GIT_CONFIG_CATEGORIES = [
+  "git-failed",
+  "truncated",
+  "malformed",
+  "cap-reached",
+  "not-a-regular-file",
+] as const;
+
+export type UnreadableGitConfigCategory =
+  (typeof UNREADABLE_GIT_CONFIG_CATEGORIES)[number];
+
+export type UntrustedGitConfig =
+  | { kind: "pairs"; pairs: string[]; fingerprint: string }
+  | { kind: "tooMany"; count: number; fingerprint: string }
+  | { kind: "unshowable"; fingerprint: string }
+  | { kind: "unreadable"; category: UnreadableGitConfigCategory };
+
+export interface SkillUpdate {
+  name: string;
+  installedFingerprint: string;
+  currentFingerprint: string;
+}
+
 export interface ProposedOperation {
   id: string;
   capabilityId: string;
@@ -48,6 +71,8 @@ export interface ProposedOperation {
   requiresConsent: boolean;
   expectedFingerprint: string | null;
   preview: { kind: "diff" | "note"; text: string };
+  untrustedGitConfig?: UntrustedGitConfig;
+  updates?: SkillUpdate[];
 }
 
 export type StagedFileKind = "markdown" | "json" | "yaml" | "text";
@@ -61,6 +86,7 @@ export interface StagedFile {
 export type CapabilityState =
   | "present-managed"
   | "present-adopted"
+  | "present-modified"
   | "absent"
   | "declined"
   | "unknown";
@@ -79,6 +105,15 @@ export interface SharedResourceDeclaration {
   manualRemoveCommand: string;
   removalVerb: "uninstall" | "disable";
   migratesFromRepoLedgers: boolean;
+}
+
+export interface SkippedPluginOperation {
+  operationId: string;
+  reason: string;
+}
+
+export interface PluginApplyReport {
+  skipped: SkippedPluginOperation[];
 }
 
 export interface AgemonPlugin {
@@ -101,9 +136,16 @@ export interface AgemonPlugin {
     ctx: Context,
     operations: ProposedOperation[],
     staged?: StagedFile[],
-  ): Promise<void>;
-  install(ctx: Context): Promise<void>;
+  ): Promise<PluginApplyReport | undefined>;
+  install?(ctx: Context): Promise<void>;
   verify(ctx: Context): Promise<PluginVerificationResult>;
   revert?(ctx: Context, entries: LedgerEntry[]): Promise<void>;
+  describeKeptAfterRollback?(
+    ctx: Context,
+    operations: ProposedOperation[],
+  ): Promise<string[]>;
   uninstall(ctx: Context): Promise<void>;
 }
+
+export type PluginWithInstall = AgemonPlugin &
+  Required<Pick<AgemonPlugin, "install">>;

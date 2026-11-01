@@ -26,6 +26,8 @@ import {
 } from "./plan-store.js";
 import { isInteractiveTerminal } from "./prompt.js";
 import { checkAgemonStateDirectoryBeforeRun } from "./state-root.js";
+import { MAX_RAW_OUTPUT_LINE_CHARACTERS } from "./subprocess-runner.js";
+import { skipUnapprovableGitConfigOperations } from "./untrusted-git-config.js";
 import { printable } from "./untrusted-text.js";
 
 type ConflictDecisionMap = Record<string, "keep" | "replace" | "skip">;
@@ -57,6 +59,10 @@ export type UninstallOutcome = Extract<
 const MAX_PREVIEW_LINES_PER_PLUGIN = 20;
 const MAX_PREVIEW_LINE_CHARACTERS = 300;
 const MAX_FAILURE_DETAIL_CHARACTERS = 200;
+const NOTHING_TO_DO_MESSAGE =
+  "Nothing to do — every managed resource already matches the desired state.";
+const NOTHING_APPLIED_MESSAGE =
+  "Nothing was applied; see the skipped items above.";
 
 function singleLine(untrusted: string, maxCharacters: number): string {
   const line = printable(untrusted).replace(/[\n\t]/g, " ");
@@ -69,7 +75,7 @@ function describeFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const [firstLine = ""] = message.trim().split(/\r?\n/);
   return singleLine(
-    redactSecretsInText(firstLine),
+    redactSecretsInText(firstLine.slice(0, MAX_RAW_OUTPUT_LINE_CHARACTERS)),
     MAX_FAILURE_DETAIL_CHARACTERS,
   );
 }
@@ -85,6 +91,7 @@ export interface ReconcileOptions {
   only?: string[];
   agemonVersion: string;
   allowUnignoredState: boolean;
+  trustRepoGitConfig?: boolean;
   plan?: Plan;
   conflictDecisions?: ConflictDecisionMap;
   persistConfig?: boolean;
@@ -340,6 +347,20 @@ function describePlanMismatch(stored: Plan, rebuilt: Plan): string {
   if (stored.inputs.skillGroups !== rebuilt.inputs.skillGroups) {
     return `Plan ${stored.id} was made with ${describeSkillGroupsInput(stored.inputs.skillGroups)} skill groups; this run has ${describeSkillGroupsInput(rebuilt.inputs.skillGroups)}.`;
   }
+  const rebuiltById = new Map(
+    rebuilt.operations.map((operation) => [operation.id, operation]),
+  );
+  const gitConfigChanged = stored.operations.some((operation) => {
+    const counterpart = rebuiltById.get(operation.id);
+    return (
+      counterpart !== undefined &&
+      JSON.stringify(counterpart.untrustedGitConfig ?? null) !==
+        JSON.stringify(operation.untrustedGitConfig ?? null)
+    );
+  });
+  if (gitConfigChanged) {
+    return `Plan ${stored.id} no longer matches what agemon would do now: this repository's git config changed since the plan.`;
+  }
   return `Plan ${stored.id} no longer matches what agemon would do now: the repository changed since it was made, or the plan file was edited.`;
 }
 
@@ -366,12 +387,32 @@ function isSettledConflict(skip: SkippedOperation): boolean {
   return skip.operation.action === "conflict" && !skip.consentMissing;
 }
 
+async function reportInstalledCapabilityAttention(
+  ctx: Context,
+  plugins: AgemonPlugin[],
+): Promise<void> {
+  const recordedPluginIds = new Set(
+    ctx.manifest.getActions().map((action) => action.plugin),
+  );
+  for (const plugin of plugins) {
+    if (!recordedPluginIds.has(plugin.id)) {
+      continue;
+    }
+    const { attention } = await plugin.verify(ctx);
+    if (attention) {
+      ctx.ui.info(`${plugin.id}: ${printable(attention)}`);
+    }
+  }
+}
+
 async function finishWithNothingToApply(
   ctx: Context,
   plugins: AgemonPlugin[],
   options: ReconcileOptions,
   conflictResolutions: ConflictResolution[],
+  successMessage = NOTHING_TO_DO_MESSAGE,
 ): Promise<RunOutcome> {
+  await reportInstalledCapabilityAttention(ctx, plugins);
   const driftProblems = await verifyManagedState(ctx, plugins);
   if (driftProblems.length > 0) {
     ctx.ui.fail("Nothing to apply, but the environment has drifted:");
@@ -381,9 +422,7 @@ async function finishWithNothingToApply(
   if (options.persistConfig) {
     await persistDesiredStateConfig(ctx, plugins, options, conflictResolutions);
   }
-  ctx.ui.succeed(
-    "Nothing to do — every managed resource already matches the desired state.",
-  );
+  ctx.ui.succeed(successMessage);
   return "nothing-to-do";
 }
 
@@ -437,9 +476,13 @@ export async function reconcile(
     return finishWithNothingToApply(ctx, plugins, options, []);
   }
 
+  const { approvable, skipped: untrustedGitConfigSkips } =
+    skipUnapprovableGitConfigOperations(plan.operations);
+  const consentablePlan = { ...plan, operations: approvable };
   const gates = buildConsentGates({
-    plan,
+    plan: consentablePlan,
     isolationStatus: isolation.status,
+    trustRepoGitConfig: options.trustRepoGitConfig === true,
   });
   const approval = await ctx.consent(gates, {
     conflictDecisions: options.conflictDecisions,
@@ -448,8 +491,9 @@ export async function reconcile(
     isolation.status === "ignored" ||
     approval.workspaceIsolationApproved === true ||
     options.allowUnignoredState;
-  const sharedOperations = useSharedOperations(plan);
+  const sharedOperations = useSharedOperations(consentablePlan);
   const skipped: SkippedOperation[] = [
+    ...untrustedGitConfigSkips,
     ...approval.skipped,
     ...(stateCanBeWritten
       ? []
@@ -474,6 +518,7 @@ export async function reconcile(
         approval.conflictResolutions,
       );
     }
+    await reportInstalledCapabilityAttention(ctx, plugins);
     ctx.log.log(
       renderRunSummary({
         kind: "declined",
@@ -502,7 +547,17 @@ export async function reconcile(
     throw error;
   }
 
-  reportSkippedOperations(ctx, skipped);
+  reportSkippedOperations(ctx, [...skipped, ...result.skipped]);
+  if (result.applied.length === 0) {
+    const outcome = await finishWithNothingToApply(
+      ctx,
+      plugins,
+      options,
+      approval.conflictResolutions,
+      NOTHING_APPLIED_MESSAGE,
+    );
+    return consentMissing && outcome === "nothing-to-do" ? "drift" : outcome;
+  }
 
   const appliedCapabilityIds = new Set(
     result.applied.map((operation) => operation.capabilityId),
@@ -620,6 +675,8 @@ function previewContext(
       unregisterAutostart: refuseCommand,
       readUnitWorkingDirectory: (unitName) =>
         ctx.serviceManager.readUnitWorkingDirectory(unitName),
+      readUnitEnvironment: (unitName) =>
+        ctx.serviceManager.readUnitEnvironment(unitName),
       unitPathFor: (unitName) => ctx.serviceManager.unitPathFor(unitName),
       isLingerEnabled: refuseCommand,
       enableLinger: refuseCommand,

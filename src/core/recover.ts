@@ -9,6 +9,7 @@ import type { Context } from "./context.js";
 import {
   type ClassifiedSnapshot,
   classifySnapshots,
+  describeKeptSubjects,
   partitionNewEntries,
   rollBackApply,
 } from "./rollback.js";
@@ -125,18 +126,27 @@ export async function recoverInterruptedApply(
 
   const classified = await classifySnapshots(ctx, journal);
   const steps = buildRecoverySteps(ctx, journal, pluginById, classified);
+  const keptSubjects = await describeKeptSubjects(ctx, pluginById, journal);
   if (steps.length === 0) {
     if (!options.dryRun) {
       await deleteJournal(journalPath);
     }
     ctx.log.log(
-      `Nothing to recover: the files and the ledger already match their state before plan ${journal.planId}.\n${RECOVER_LIMIT_NOTE}`,
+      keptSubjects.length === 0
+        ? `Nothing to recover: the files and the ledger already match their state before plan ${journal.planId}.\n${RECOVER_LIMIT_NOTE}`
+        : `Nothing to undo for plan ${journal.planId}; agemon keeps what it already finished:\n${keptSubjects
+            .map((subject) => `  - Kept ${printable(subject)}`)
+            .join("\n")}\n${RECOVER_LIMIT_NOTE}`,
     );
     return;
   }
 
+  const plannedSteps = [
+    ...steps,
+    ...keptSubjects.map((subject) => `keep ${printable(subject)}`),
+  ];
   ctx.log.log(
-    `The apply of plan ${journal.planId} (started ${journal.startedAt}) was interrupted. Recovering it will:\n${steps
+    `The apply of plan ${journal.planId} (started ${journal.startedAt}) was interrupted. Recovering it will:\n${plannedSteps
       .map((step) => `  - ${step}`)
       .join("\n")}\n${RECOVER_LIMIT_NOTE}`,
   );
@@ -160,6 +170,9 @@ export async function recoverInterruptedApply(
   }
   for (const capabilityId of outcome.reverted) {
     ctx.ui.succeed(`reverted ${capabilityId}`);
+  }
+  for (const line of outcome.kept) {
+    ctx.ui.info(printable(line));
   }
   for (const detail of outcome.manualCleanup) {
     ctx.ui.fail(`manual cleanup needed: ${detail}`);

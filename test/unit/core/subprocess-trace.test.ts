@@ -62,11 +62,27 @@ describe("traceSubprocessCalls", () => {
     expect(printed.slice(2)).toEqual(lines.slice(5).map((line) => `│ ${line}`));
   });
 
-  it("redacts a secret before truncation can split it", async () => {
+  it("redacts a PEM block whose BEGIN line the 20-line tail cut off", async () => {
     const pem = [
       "-----BEGIN PRIVATE KEY-----",
       ...Array.from({ length: 30 }, () => "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
       "ab=",
+      "-----END PRIVATE KEY-----",
+    ].join("\n");
+    const { run, printed } = tracedRun({ code: 0, stdout: pem, stderr: "" });
+
+    await run("cat", ["key.pem"]);
+
+    expect(printed.slice(1)).toEqual([
+      "│ … 13 earlier lines",
+      "│ <redacted:pem>",
+    ]);
+  });
+
+  it("redacts a whole PEM block that fits in the tail", async () => {
+    const pem = [
+      "-----BEGIN PRIVATE KEY-----",
+      "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
       "-----END PRIVATE KEY-----",
     ].join("\n");
     const { run, printed } = tracedRun({ code: 0, stdout: pem, stderr: "" });

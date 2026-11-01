@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,8 @@ import {
 } from "../../../src/plugins/pins.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
+import { applyAllPlanned } from "../apply-all-planned.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -40,6 +43,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -77,10 +83,10 @@ async function createTestContext(skillGroupsOption?: string): Promise<Context> {
 
   process.env.AGEMON_DEV = "1";
   process.env.AGEMON_FAKE_SUBPROCESS = "1";
-  delete process.env.AGEMON_FAKE_PREINSTALLED_SKILLS;
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -113,7 +119,7 @@ describe("skills plugin", () => {
     const detectedBeforeInstall = await skillsPlugin.detect(context);
     expect(detectedBeforeInstall.present).toBe(false);
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     const verificationAfterInstall = await skillsPlugin.verify(context);
     expect(verificationAfterInstall.ok).toBe(true);
@@ -163,7 +169,7 @@ describe("skills plugin", () => {
     );
     await held;
 
-    const install = skillsPlugin.install(context);
+    const install = applyAllPlanned(skillsPlugin, context);
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(gitCalls).toEqual([]);
     releaseOtherRun();
@@ -186,7 +192,7 @@ describe("skills plugin", () => {
       return result;
     };
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     const lockRecords = context.manifest
       .getActions()
@@ -202,11 +208,54 @@ describe("skills plugin", () => {
     expect(gitignoreLines).toContain("/skills-lock.json");
   });
 
+  it("bounds a skills add failure message to the last 10 lines of stderr", async () => {
+    resetFakeSubprocessState();
+    const context = await createTestContext();
+    const run = context.run;
+    const stderr = Array.from({ length: 5_000 }, (_, i) => `npx ${i}`).join(
+      "\n",
+    );
+    context.run = async (command, args, options) =>
+      command === process.execPath && args[1] === "add"
+        ? { code: 1, stdout: "", stderr }
+        : run(command, args, options);
+
+    const failure = (await applyAllPlanned(skillsPlugin, context).catch(
+      (error: unknown) => error,
+    )) as Error;
+
+    expect(failure.message).toMatch(/^skills add failed for /);
+    expect(failure.message.split("\n").length).toBeLessThanOrEqual(11);
+    expect(failure.message).toContain("npx 4999");
+  });
+
+  it("uninstalls without running any subprocess when no skill was installed, still removing agemon's skills-lock.json", async () => {
+    const context = await createTestContext();
+    const lockPath = join(context.cwd, "skills-lock.json");
+    await writeFile(lockPath, '{"version":1,"skills":{}}\n', "utf8");
+    await context.manifest.recordAction({
+      plugin: "skills",
+      type: "generated-skills-lock",
+      target: "skills-lock.json",
+      preExisting: false,
+    });
+    const commands: string[][] = [];
+    context.run = async (command, args) => {
+      commands.push([command, ...args]);
+      return { code: 1, stdout: "", stderr: "offline" };
+    };
+
+    await skillsPlugin.uninstall(context);
+
+    expect(commands).toEqual([]);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   it("does not touch .gitignore when a skills-lock.json already existed", async () => {
     const context = await createTestContext();
     await writeFile(join(context.cwd, "skills-lock.json"), "{}\n", "utf8");
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     const lockRecords = context.manifest
       .getActions()
@@ -223,7 +272,7 @@ describe("skills plugin", () => {
   it("installs only the default group in a non-interactive session", async () => {
     const context = await createTestContext();
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     const installedSkillNames = context.manifest
       .getActions()
@@ -239,7 +288,7 @@ describe("skills plugin", () => {
   it("installs an explicitly requested group on top of the defaults", async () => {
     const context = await createTestContext("architecture");
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     const installedSkillNames = context.manifest
       .getActions()
@@ -258,7 +307,7 @@ describe("skills plugin", () => {
   it("installs every group with --skill-groups all", async () => {
     const context = await createTestContext("all");
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     const installedSkillNames = new Set(
       context.manifest
@@ -282,7 +331,7 @@ describe("skills plugin", () => {
       return runAndRecord(command, args, options);
     };
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     const skillsCliCalls = calls.filter(
       ([command]) => command === process.execPath,
@@ -325,7 +374,7 @@ describe("skills plugin", () => {
     ]);
   });
 
-  it("adds and removes every geo-seo skill through the pinned CLI with --skill-groups geo-seo", async () => {
+  it("adds every geo-seo skill through the pinned CLI with --skill-groups geo-seo, and nuke removes them without it", async () => {
     const context = await createTestContext("geo-seo");
     const skillsCliArgs: string[][] = [];
     const runAndRecord = context.run;
@@ -335,7 +384,7 @@ describe("skills plugin", () => {
     };
     const geoSeoSkills = findSkillGroup("geo-seo")?.skills ?? [];
 
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
 
     for (const skill of geoSeoSkills) {
       expect(skillsCliArgs).toContainEqual([
@@ -350,13 +399,14 @@ describe("skills plugin", () => {
       ]);
     }
 
+    const callsBeforeNuke = skillsCliArgs.length;
     await uninstallPlugins({ ...context, yes: true }, [skillsPlugin], {});
 
-    const removedSkillNames = skillsCliArgs
-      .filter((args) => args[1] === "remove")
-      .flatMap((args) => args.slice(2));
+    expect(skillsCliArgs).toHaveLength(callsBeforeNuke);
     for (const skill of geoSeoSkills) {
-      expect(removedSkillNames).toContain(skill.skillName);
+      expect(
+        existsSync(join(context.cwd, ".claude/skills", skill.skillName)),
+      ).toBe(false);
     }
     expect(
       context.manifest
@@ -368,14 +418,14 @@ describe("skills plugin", () => {
   it("rejects an unknown skill group id", async () => {
     const context = await createTestContext("not-a-real-group");
 
-    await expect(skillsPlugin.install(context)).rejects.toThrow(
+    await expect(applyAllPlanned(skillsPlugin, context)).rejects.toThrow(
       "Unknown skill group id(s): not-a-real-group",
     );
   });
 
   it("verification does not require groups outside the ones actually installed", async () => {
     const context = await createTestContext("architecture");
-    await skillsPlugin.install(context);
+    await applyAllPlanned(skillsPlugin, context);
     const verification = await skillsPlugin.verify(context);
     expect(verification.ok).toBe(true);
     expect(verification.detail).toContain("2 skill group(s)");

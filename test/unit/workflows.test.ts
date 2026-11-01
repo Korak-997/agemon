@@ -10,6 +10,7 @@ const THIRD_PARTY_COMMAND_PATTERN = /\b(npm|npx|node|tsx|docker)\b/;
 const CREDENTIAL_EXPRESSION_PATTERN = /\$\{\{\s*(github\.token|secrets\.)/;
 
 interface WorkflowStep {
+  name?: string;
   uses?: string;
   run?: string;
   with?: Record<string, unknown>;
@@ -533,5 +534,38 @@ describe("the website workflow", () => {
     );
     expect(stepRunning(ciWebsite, /^npm run website:build$/u)).toBeDefined();
     expect(stepRunning(ciWebsite, /npm audit --prefix website/u)).toBeDefined();
+  });
+});
+
+describe("dependabot", () => {
+  it("waits 7 days before proposing a new version in every entry", () => {
+    const config = parse(readFileSync(".github/dependabot.yml", "utf8")) as {
+      updates: Array<{
+        directory: string;
+        cooldown?: { "default-days"?: number };
+      }>;
+    };
+
+    expect(config.updates.length).toBeGreaterThan(0);
+    for (const entry of config.updates) {
+      expect(entry.cooldown?.["default-days"], entry.directory).toBe(7);
+    }
+  });
+});
+
+describe("runtime dependency audit", () => {
+  it("fails CI on a runtime advisory of any severity", () => {
+    const ci = workflows.get("ci.yml") as Workflow;
+    const auditSteps = Object.values(ci.jobs).flatMap((job) =>
+      (job.steps ?? []).filter((step) =>
+        /npm audit --omit=dev/u.test(step.run ?? ""),
+      ),
+    );
+
+    expect(auditSteps.length).toBeGreaterThan(0);
+    for (const step of auditSteps) {
+      expect(step.name).toBe("Audit runtime dependencies");
+      expect(step.run).toBe("npm audit --omit=dev");
+    }
   });
 });

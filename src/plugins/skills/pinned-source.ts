@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context, SubprocessResult } from "../../core/context.js";
 import { resolveStateRoot } from "../../core/state-root.js";
+import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
 import { printable } from "../../core/untrusted-text.js";
 
 const SOURCE_DIRECTORY_MODE = 0o700;
@@ -25,6 +27,52 @@ type PinnedSourceContext = Pick<Context, "run">;
 
 export function resolvePinnedSkillsSourceDirectory(commit: string): string {
   return join(resolveStateRoot(), "agemon", "skills-src", commit);
+}
+
+async function localGitOutput(
+  ctx: PinnedSourceContext,
+  sourceDirectory: string,
+  subcommandArgs: string[],
+): Promise<string | null> {
+  const result = await ctx.run(
+    "git",
+    [...GIT_WITHOUT_HOOKS_ARGS, ...subcommandArgs],
+    {
+      cwd: sourceDirectory,
+      timeoutMs: GIT_STEP_TIMEOUT_MS,
+      env: isolatedGitEnvironment(sourceDirectory),
+    },
+  );
+  return result.code === 0 ? result.stdout : null;
+}
+
+export async function isPristinePinnedCheckout(
+  ctx: PinnedSourceContext,
+  repository: PinnedSkillsRepository,
+): Promise<boolean> {
+  const sourceDirectory = resolvePinnedSkillsSourceDirectory(repository.commit);
+  if (!existsSync(join(sourceDirectory, ".git"))) {
+    return false;
+  }
+  try {
+    const head = await localGitOutput(ctx, sourceDirectory, [
+      "rev-parse",
+      "--verify",
+      "--end-of-options",
+      "HEAD^{commit}",
+    ]);
+    if (head?.trim() !== repository.commit) {
+      return false;
+    }
+    const status = await localGitOutput(ctx, sourceDirectory, [
+      "status",
+      "--porcelain",
+      "--ignored",
+    ]);
+    return status !== null && status.trim() === "";
+  } catch {
+    return false;
+  }
 }
 
 export function skillPathInRepository(skillName: string): string {
@@ -78,9 +126,7 @@ async function runGitStep(
   );
   if (result.code !== 0) {
     throw new Error(
-      `git ${subcommandArgs[0]} failed while fetching pinned skills: ${
-        result.stderr.trim() || `exit ${result.code}`
-      }`,
+      `git ${subcommandArgs[0]} failed while fetching pinned skills: ${describeSubprocessFailure(result, "git")}`,
     );
   }
   return result;

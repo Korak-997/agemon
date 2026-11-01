@@ -6,11 +6,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Heading, RootContent } from "mdast";
+import type { Command } from "commander";
+import type { RootContent } from "mdast";
 import { GITHUB_REPOSITORY } from "../../src/core/github-release.js";
 import type { SkillGroup } from "../../src/plugins/skills/catalog.js";
+import { groupChangelogReleases } from "./changelog.js";
+import { COMMANDS_ROUTE, commandsPage } from "./commands.js";
+import { configurationPageBody } from "./configuration.js";
 import { SiteContentError } from "./error.js";
-import { collectCliHelp, type HelpRunner } from "./help.js";
 import { checksumInstallScript } from "./install-script.js";
 import {
   assertPublishable,
@@ -25,7 +28,7 @@ import {
   visit,
   withoutLeadingTitle,
 } from "./markdown.js";
-import { type GeneratedPage, renderPage } from "./page.js";
+import { type GeneratedPage, pagePathFromRoute, renderPage } from "./page.js";
 import {
   RECORDED_LEDGER_PATH,
   summarizeRecordedLedger,
@@ -40,7 +43,6 @@ const DOCS_DIRECTORY = "src/content/docs";
 const GENERATED_DOCS_DIRECTORIES = ["start", "reference", "skills", "project"];
 const SITE_DATA_PATH = "src/generated/site-data.json";
 const SERVED_INSTALL_SCRIPT_PATH = "public/install.sh";
-const COMMANDS_ROUTE = "/reference/commands/";
 const SAFETY_POST_ROUTE = "/posts/safety-model/";
 const INSTALL_HEADING = "Install";
 const SKILL_INDEX_PLACES = 10;
@@ -61,6 +63,8 @@ interface ReadmePage {
   description: string;
   sidebarOrder: number;
   headings: string[];
+  generatedFrom?: string;
+  compose?: (readmeBody: RootContent[]) => RootContent[];
 }
 
 const README_PAGES: ReadmePage[] = [
@@ -79,6 +83,8 @@ const README_PAGES: ReadmePage[] = [
     description: "The agemon.toml reference and agemon's exit codes.",
     sidebarOrder: 2,
     headings: ["agemon.toml", "Exit codes"],
+    generatedFrom: "src/core/config.ts and README.md",
+    compose: configurationPageBody,
   },
 ];
 
@@ -89,6 +95,7 @@ interface FilePage {
   title: string;
   description: string;
   sidebarOrder: number;
+  compose?: (body: RootContent[]) => RootContent[];
 }
 
 const FILE_PAGES: FilePage[] = [
@@ -145,6 +152,7 @@ const FILE_PAGES: FilePage[] = [
     title: "Changelog",
     description: "What changed in each agemon release.",
     sidebarOrder: 7,
+    compose: groupChangelogReleases,
   },
 ];
 
@@ -153,15 +161,11 @@ export interface SiteContentOptions {
   websiteRoot: string;
   skillGroups: readonly SkillGroup[];
   skillsRoot: string;
-  runHelp: HelpRunner;
+  program: Command;
   installScriptPath: string;
   sha256SumsPath?: string;
   releaseTag?: string;
   repositoryRef: string;
-}
-
-function pagePathFromRoute(route: string): string {
-  return `${route.slice(1, -1)}.md`;
 }
 
 function readmePages(
@@ -200,8 +204,8 @@ function readmePages(
       title: page.title,
       description: page.description,
       sidebarOrder: page.sidebarOrder,
-      provenance: { generatedFrom: "README.md" },
-      body,
+      provenance: { generatedFrom: page.generatedFrom ?? "README.md" },
+      body: page.compose?.(body) ?? body,
     };
   });
 }
@@ -230,45 +234,9 @@ function filePages(
       description: page.description,
       sidebarOrder: page.sidebarOrder,
       provenance: { generatedFrom: page.source },
-      body,
+      body: page.compose?.(body) ?? body,
     };
   });
-}
-
-function commandsPage(runHelp: HelpRunner, version: string): GeneratedPage {
-  const help = collectCliHelp(runHelp);
-  const helpBlock = (heading: string, output: string): RootContent[] => [
-    {
-      type: "heading",
-      depth: 2,
-      children: [{ type: "inlineCode", value: heading }],
-    } satisfies Heading,
-    { type: "code", lang: "text", value: output },
-  ];
-  return {
-    path: pagePathFromRoute(COMMANDS_ROUTE),
-    title: "Commands",
-    description: "Every agemon command and option, from agemon --help.",
-    sidebarOrder: 1,
-    provenance: { generatedFrom: "agemon --help" },
-    body: [
-      {
-        type: "paragraph",
-        children: [
-          { type: "text", value: "The output of " },
-          { type: "inlineCode", value: "agemon --help" },
-          {
-            type: "text",
-            value: ` for every command, from agemon ${version}.`,
-          },
-        ],
-      },
-      ...helpBlock("agemon", help.root),
-      ...help.commands.flatMap((command) =>
-        helpBlock(`agemon ${command.name}`, command.help),
-      ),
-    ],
-  };
 }
 
 function assertSkillIndexFits(skillGroups: readonly SkillGroup[]): void {
@@ -367,7 +335,7 @@ export function generateSiteContent(options: SiteContentOptions): void {
   const pages = [
     ...readmePages(options, routeForFile),
     ...filePages(options, routeForFile),
-    commandsPage(options.runHelp, version),
+    commandsPage(options.program, version),
     ...skillLibraryPages(options.skillGroups, options.skillsRoot),
   ];
   const installScript = readFileSync(options.installScriptPath);

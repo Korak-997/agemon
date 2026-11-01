@@ -134,7 +134,7 @@ describe("redactSecretsInText", () => {
       "fetch <redacted:url-credentials>",
     ],
     ["key=value", "api_key=short123", "api_key=<redacted:credential-key>"],
-    ["a quoted key=value", "token='abc'", "token=<redacted:credential-key>"],
+    ["a quoted key=value", "token='abc'", "token='<redacted:credential-key>'"],
     ["key: value", "password: hunter2", "password: <redacted:credential-key>"],
     [
       "an Authorization header",
@@ -189,7 +189,7 @@ describe("redactSecretsInText", () => {
     [
       "a compact JSON key",
       '{"token":"hunter2"}',
-      '{"token":<redacted:credential-key>',
+      '{"token":"<redacted:credential-key>"}',
     ],
     [
       "a colon-joined key",
@@ -229,5 +229,184 @@ describe("redactSecretsInText", () => {
       "added 3 packages in 2s\n  installed  code-review-graph==2.1.0\n\tdone";
 
     expect(redactSecretsInText(output)).toBe(output);
+  });
+
+  it("redacts lowercase PEM blocks", () => {
+    expect(
+      redactSecretsInText(
+        "a\n-----begin rsa private key-----\nMIIE\n-----end rsa private key-----\nb",
+      ),
+    ).toBe("a\n<redacted:pem>\nb");
+  });
+
+  it("redacts SSH2 key blocks with four dashes and spaces", () => {
+    expect(
+      redactSecretsInText(
+        "---- BEGIN SSH2 PUBLIC KEY ----\nAAAAB3Nza\n---- END SSH2 PUBLIC KEY ----",
+      ),
+    ).toBe("<redacted:pem>");
+  });
+
+  it("redacts a PEM tail that has no BEGIN line", () => {
+    expect(
+      redactSecretsInText(
+        "MIIEowIBAAKCAQEA\nq2x9Zs=\n-----END RSA PRIVATE KEY-----\nnext",
+      ),
+    ).toBe("<redacted:pem>\nnext");
+  });
+
+  it("keeps 'Token' and redacts its value after an Authorization key", () => {
+    expect(redactSecretsInText("Authorization: Token abc123")).toBe(
+      "Authorization: Token <redacted:credential-key>",
+    );
+  });
+
+  it("leaves the word token in prose alone", () => {
+    expect(redactSecretsInText("invalid token supplied")).toBe(
+      "invalid token supplied",
+    );
+  });
+
+  it("keeps a non-credential key and redacts only the credential URL", () => {
+    expect(redactSecretsInText("url=https://user:pass@host/x")).toBe(
+      "url=<redacted:url-credentials>",
+    );
+  });
+
+  it("redacts camelCase credential keys in text", () => {
+    expect(redactSecretsInText("secretKey=abc apiToken: xyz")).toBe(
+      "secretKey=<redacted:credential-key> apiToken: <redacted:credential-key>",
+    );
+  });
+});
+
+describe("redactJsonValue — key classification and nesting", () => {
+  it("redacts camelCase credential keys", () => {
+    const { value } = redactJsonValue({
+      accessToken: "abc123short",
+      githubToken: "ghp_short1",
+      secretKey: "s",
+      clientSecret: "c",
+      privateKey: "p",
+    });
+
+    expect(Object.values(value as Record<string, string>)).toEqual(
+      Array(5).fill("<redacted:credential-key>"),
+    );
+  });
+
+  it("leaves tokenizer, authorName and keyboard alone", () => {
+    const input = { tokenizer: "bpe", authorName: "me", keyboard: "us" };
+
+    expect(redactJsonValue(input).value).toEqual(input);
+  });
+
+  it("redacts strings in objects nested under a credential key", () => {
+    const { value, redactedPaths } = redactJsonValue({
+      tokens: [{ value: "v" }],
+      credentials: { user: "u", pass: "p" },
+      auth: { type: "bearer", retries: 3, enabled: true },
+    });
+
+    expect(value).toEqual({
+      tokens: [{ value: "<redacted:credential-key>" }],
+      credentials: {
+        user: "<redacted:credential-key>",
+        pass: "<redacted:credential-key>",
+      },
+      auth: { type: "<redacted:credential-key>", retries: 3, enabled: true },
+    });
+    expect(redactedPaths).toEqual([
+      "tokens[0].value",
+      "credentials.user",
+      "credentials.pass",
+      "auth.type",
+    ]);
+  });
+
+  it("flags a lowercase PEM header in a value", () => {
+    expect(
+      redactJsonValue({ cert: "-----begin certificate-----\nabc" }).value,
+    ).toEqual({ cert: "<redacted:pem>" });
+  });
+});
+
+describe("isDenylistedPath — more credential files", () => {
+  it("covers kube config, pgpass, ppk, jks, keystore, credentials.json and other CLI token files", () => {
+    for (const path of [
+      ".kube/config",
+      "home/.kube/config",
+      ".pgpass",
+      "keys/server.ppk",
+      "keys/app.jks",
+      "keys/app.KEYSTORE",
+      "credentials.json",
+      "gcp/credentials.json",
+      ".config/gh/hosts.yml",
+      ".vault-token",
+      "credentials.tfrc.json",
+      "application_default_credentials.json",
+      ".azure/accessTokens.json",
+      "vault.kdbx",
+    ]) {
+      expect(isDenylistedPath(path), path).toBe(true);
+    }
+  });
+
+  it("does not match lookalike documentation files", () => {
+    for (const path of [
+      "kubeconfig.md",
+      "my-credentials.json.md",
+      "docs/pgpass.md",
+    ]) {
+      expect(isDenylistedPath(path), path).toBe(false);
+    }
+  });
+
+  it("covers gcloud, GnuPG, Terraform CLI and service-account key files", () => {
+    for (const path of [
+      ".config/gcloud/credentials.db",
+      ".gnupg/private-keys-v1.d/key.key",
+      ".terraformrc",
+      "keys/prod-service-account.json",
+      "my_service_account_key.json",
+    ]) {
+      expect(isDenylistedPath(path), path).toBe(true);
+    }
+  });
+});
+
+describe("redaction — result-gate follow-ups", () => {
+  it("keeps the all-lowercase suffix rule in text and JSON", () => {
+    expect(redactSecretsInText("accesstoken=short1")).toBe(
+      "accesstoken=<redacted:credential-key>",
+    );
+    expect(redactJsonValue({ myapikey: "x" }).value).toEqual({
+      myapikey: "<redacted:credential-key>",
+    });
+  });
+
+  it("redacts a PEM tail with CRLF line ends", () => {
+    expect(
+      redactSecretsInText(
+        "MIIEowIBAAK\r\nq2x9Zs=\r\n-----END RSA PRIVATE KEY-----",
+      ),
+    ).toBe("<redacted:pem>");
+  });
+
+  it("redacts 300 KB of raw single-token text in bounded time", () => {
+    const startedAt = Date.now();
+
+    redactSecretsInText("b".repeat(300 * 1024));
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  it("classifies a 300 KB JSON string in bounded time", () => {
+    const startedAt = Date.now();
+
+    redactJsonValue({ note: "a.".repeat(150 * 1024) });
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
   });
 });

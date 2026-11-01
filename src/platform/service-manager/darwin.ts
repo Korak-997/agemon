@@ -18,6 +18,7 @@ import type {
 import {
   createLaunchAgentFiles,
   launchAgentLabelOf,
+  readPlistEnvironment,
   readPlistString,
 } from "./launch-agent-files.js";
 import {
@@ -355,6 +356,20 @@ export function createLaunchdServiceManager(
     );
   };
 
+  const readUnitEnvironment = async (
+    unitName: string,
+  ): Promise<Record<string, string> | null> => {
+    try {
+      const contents = await readOwnPlist(unitName);
+      return contents === null ? null : readPlistEnvironment(contents);
+    } catch (error) {
+      if (error instanceof RefusedFileError) {
+        return null;
+      }
+      throw error;
+    }
+  };
+
   const refuseLinger = () =>
     Promise.reject(new Error("launchd has no user linger."));
 
@@ -364,6 +379,7 @@ export function createLaunchdServiceManager(
     registerAutostart,
     unregisterAutostart,
     readUnitWorkingDirectory,
+    readUnitEnvironment,
     unitPathFor: files.plistPathFor,
     isLingerEnabled: refuseLinger,
     enableLinger: refuseLinger,

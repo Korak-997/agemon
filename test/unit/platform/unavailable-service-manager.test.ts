@@ -11,6 +11,7 @@ const UNIT_NAME = "agemon-crg-repo-0123abcd.service";
 const serviceManager = createUnavailableServiceManager({
   unitPathFor: (unitName) => `/home/user/.config/systemd/user/${unitName}`,
   readUnitWorkingDirectory: async () => "/home/user/repo",
+  readUnitEnvironment: async () => ({ CRG_HOME: "/home/user/x" }),
   findAgemonDaemonUnit: async () => UNIT_NAME,
 });
 
@@ -23,6 +24,10 @@ describe("createUnavailableServiceManager", () => {
       "/home/user/repo",
     );
     expect(await serviceManager.findAgemonDaemonUnit()).toBe(UNIT_NAME);
+  });
+
+  it("reports no unit environment, so a daemon it cannot run gets no stale-unit attention", async () => {
+    expect(await serviceManager.readUnitEnvironment(UNIT_NAME)).toBeNull();
   });
 
   it("refuses to remove a unit, naming its path and the way out", async () => {

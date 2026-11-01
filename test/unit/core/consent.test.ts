@@ -6,7 +6,164 @@ import {
   useSharedOperations,
 } from "../../../src/core/consent.js";
 import type { Plan } from "../../../src/core/plan-store.js";
-import type { ProposedOperation } from "../../../src/plugins/types.js";
+import type {
+  ProposedOperation,
+  UntrustedGitConfig,
+} from "../../../src/plugins/types.js";
+
+const UNTRUSTED_PAIRS: UntrustedGitConfig = {
+  kind: "pairs",
+  pairs: [
+    ".git/config: diff.x.command=/tmp/differ",
+    ".git/config: alias.st=status",
+  ],
+  fingerprint: "a".repeat(64),
+};
+
+function crgInstall(
+  untrustedGitConfig?: UntrustedGitConfig,
+): ProposedOperation {
+  return operation({
+    id: "crg:package:code-review-graph:install-package",
+    capabilityId: "crg",
+    resourceId: "package:code-review-graph",
+    targetPath: "code-review-graph",
+    action: "install-package",
+    riskClass: "executes",
+    preview: { kind: "note", text: "pipx install code-review-graph" },
+    ...(untrustedGitConfig === undefined ? {} : { untrustedGitConfig }),
+  });
+}
+
+describe("trust-repository-git-config gate", () => {
+  it("holds a carrying operation instead of its normal gate", () => {
+    const gates = buildConsentGates({
+      plan: planWith([crgInstall(UNTRUSTED_PAIRS)]),
+      isolationStatus: "ignored",
+    });
+
+    expect(gates.map((gate) => gate.id)).toEqual([
+      "trust-repository-git-config",
+    ]);
+  });
+
+  it("shows the normal gate's text and every pair, previews and announces them", () => {
+    const [normalGate] = buildConsentGates({
+      plan: planWith([crgInstall()]),
+      isolationStatus: "ignored",
+    });
+    const [trustGate] = buildConsentGates({
+      plan: planWith([crgInstall(UNTRUSTED_PAIRS)]),
+      isolationStatus: "ignored",
+    });
+
+    expect(trustGate.summary).toContain(
+      normalGate.summary.replace(/ Proceed\?$/, ""),
+    );
+    for (const pair of (UNTRUSTED_PAIRS as { pairs: string[] }).pairs) {
+      expect(trustGate.summary).toContain(pair);
+      expect(trustGate.announcementWithYes).toContain(pair);
+    }
+    expect(trustGate.forcesDiff).toBe(true);
+  });
+
+  it("is satisfiable with --yes only when --trust-repo-git-config was given", () => {
+    const gateWith = (trustRepoGitConfig: boolean) =>
+      buildConsentGates({
+        plan: planWith([crgInstall(UNTRUSTED_PAIRS)]),
+        isolationStatus: "ignored",
+        trustRepoGitConfig,
+      })[0];
+
+    expect(gateWith(false).satisfiableWithYes).toBe(false);
+    expect(gateWith(true).satisfiableWithYes).toBe(true);
+  });
+
+  it("leaves a carrying use-shared operation out of the shared list", () => {
+    expect(
+      useSharedOperations(
+        planWith([
+          operation({
+            action: "use-shared",
+            riskClass: "inert",
+            requiresConsent: false,
+            untrustedGitConfig: UNTRUSTED_PAIRS,
+          }),
+        ]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("under --yes without the flag, skips non-interactively as consent missing, with the flag named", async () => {
+    const gates = buildConsentGates({
+      plan: planWith([crgInstall(UNTRUSTED_PAIRS)]),
+      isolationStatus: "ignored",
+    });
+
+    const result = await resolveConsent({
+      gates,
+      yes: true,
+      interactive: false,
+      prompts: alwaysDecline,
+      log: silentLog,
+    });
+
+    expect(result.approved).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        operation: crgInstall(UNTRUSTED_PAIRS),
+        reason:
+          "untrusted repository git config (approve interactively or pass --yes --trust-repo-git-config): .git/config: diff.x.command=/tmp/differ; .git/config: alias.st=status",
+        consentMissing: true,
+      },
+    ]);
+  });
+
+  it("under --yes with the flag, approves and prints the preview and every pair", async () => {
+    const gates = buildConsentGates({
+      plan: planWith([crgInstall(UNTRUSTED_PAIRS)]),
+      isolationStatus: "ignored",
+      trustRepoGitConfig: true,
+    });
+    const printed: string[] = [];
+
+    const result = await resolveConsent({
+      gates,
+      yes: true,
+      interactive: false,
+      prompts: alwaysDecline,
+      log: { log: (line: string) => printed.push(line) },
+    });
+
+    expect(result.approved).toEqual([crgInstall(UNTRUSTED_PAIRS)]);
+    const output = printed.join("\n");
+    expect(output).toContain("pipx install code-review-graph");
+    for (const pair of (UNTRUSTED_PAIRS as { pairs: string[] }).pairs) {
+      expect(output).toContain(pair);
+    }
+  });
+
+  it("an interactive decline is a real decline, not missing consent", async () => {
+    const gates = buildConsentGates({
+      plan: planWith([crgInstall(UNTRUSTED_PAIRS)]),
+      isolationStatus: "ignored",
+    });
+
+    const result = await resolveConsent({
+      gates,
+      yes: false,
+      interactive: true,
+      prompts: alwaysDecline,
+      log: silentLog,
+    });
+
+    expect(result.skipped[0]).toMatchObject({
+      reason:
+        "declined: untrusted repository git config: .git/config: diff.x.command=/tmp/differ; .git/config: alias.st=status",
+      consentMissing: false,
+    });
+  });
+});
 
 function operation(
   overrides: Partial<ProposedOperation> = {},
@@ -134,6 +291,38 @@ describe("buildConsentGates", () => {
     expect(gates.map((gate) => gate.id)).toEqual(["install-tooling"]);
     expect(gates[0].summary).toBe(
       "Install 1 package(s) (skill-group:essentials). Uses pipx / npm, and record 1 declined skill group(s) (skill-group:design). Proceed?",
+    );
+  });
+
+  it("install-tooling summary mentions skill group updates", () => {
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([
+        operation({
+          action: "install-package",
+          targetPath: "",
+          resourceId: "skill-group:essentials",
+          riskClass: "executes",
+        }),
+        operation({
+          id: "skills:skill-group:commit:install-package",
+          action: "install-package",
+          targetPath: "",
+          resourceId: "skill-group:commit",
+          riskClass: "executes",
+          updates: [
+            {
+              name: "agemon-commit",
+              installedFingerprint: "a".repeat(64),
+              currentFingerprint: "b".repeat(64),
+            },
+          ],
+        }),
+      ]),
+    });
+
+    expect(gates[0].summary).toBe(
+      "Install 1 package(s) (skill-group:essentials). Uses pipx / npm, and update or repair 1 skill group(s) to the version bundled with this agemon (skill-group:commit updates agemon-commit). Proceed?",
     );
   });
 
@@ -586,5 +775,96 @@ describe("resolveConsent", () => {
       },
     ]);
     expect(result.conflictResolutions).toEqual([]);
+  });
+});
+
+describe("agent conflicts that resolve to replace", () => {
+  const agentConflict = operation({
+    action: "conflict",
+    capabilityId: "agents",
+    resourceId: "agent-file:geo-audit-schema",
+    targetPath: ".claude/agents/geo-audit-schema.md",
+    expectedFingerprint: "sha256:theirs",
+    preview: {
+      kind: "diff",
+      text: [
+        "--- .claude/agents/geo-audit-schema.md",
+        "+++ .claude/agents/geo-audit-schema.md",
+        "-mine",
+        "+---",
+        "+name: geo-audit-schema",
+        "+tools: Read, WebFetch",
+        "+---",
+      ].join("\n"),
+    },
+  });
+
+  function collectingLog(): { lines: string[]; log: (line: string) => void } {
+    const lines: string[] = [];
+    return { lines, log: (line: string) => lines.push(line) };
+  }
+
+  it("a recorded replace for an agent conflict under --yes prints the subagent tools line", async () => {
+    const output = collectingLog();
+
+    const result = await resolveConsent({
+      gates: buildConsentGates({
+        isolationStatus: "ignored",
+        plan: planWith([agentConflict]),
+      }),
+      yes: true,
+      interactive: false,
+      prompts: alwaysDecline,
+      log: output,
+      conflictDecisions: { [agentConflict.resourceId]: "replace" },
+    });
+
+    expect(result.approved).toEqual([{ ...agentConflict, action: "replace" }]);
+    expect(output.lines).toContain(
+      "Installing 1 Claude Code subagent definition(s) into .claude/agents: geo-audit-schema [tools: Read, WebFetch]. Each agent can use only the tools listed.",
+    );
+  });
+
+  it("an interactive replace of an agent conflict prints the tools line", async () => {
+    const output = collectingLog();
+
+    await resolveConsent({
+      gates: buildConsentGates({
+        isolationStatus: "ignored",
+        plan: planWith([agentConflict]),
+      }),
+      yes: false,
+      interactive: true,
+      prompts: {
+        ...alwaysDecline,
+        async conflict() {
+          return "replace";
+        },
+      },
+      log: output,
+    });
+
+    expect(output.lines).toContainEqual(
+      expect.stringContaining("geo-audit-schema [tools: Read, WebFetch]"),
+    );
+  });
+
+  it("a recorded replace for a rule-file conflict prints no subagent line", async () => {
+    const ruleConflict = conflictOn("CLAUDE.md");
+    const output = collectingLog();
+
+    await resolveConsent({
+      gates: buildConsentGates({
+        isolationStatus: "ignored",
+        plan: planWith([ruleConflict]),
+      }),
+      yes: true,
+      interactive: false,
+      prompts: alwaysDecline,
+      log: output,
+      conflictDecisions: { [ruleConflict.resourceId]: "replace" },
+    });
+
+    expect(output.lines.join("\n")).not.toContain("subagent");
   });
 });

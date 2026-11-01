@@ -10,6 +10,7 @@ import type {
   UnregisterAutostartInput,
 } from "./index.js";
 import {
+  environmentOfUnit,
   isAgemonDaemonUnitFile,
   workingDirectoryOfUnit,
 } from "./unit-files.js";
@@ -104,6 +105,13 @@ export function createFakeServiceManager(
     return marker === null ? null : workingDirectoryOfUnit(marker.unitContents);
   };
 
+  const readUnitEnvironment = async (
+    unitName: string,
+  ): Promise<Record<string, string> | null> => {
+    const marker = await readMarker(homeDir, unitName);
+    return marker === null ? null : environmentOfUnit(marker.unitContents);
+  };
+
   const findAgemonDaemonUnit = async (): Promise<string | null> => {
     const markers = await readdir(
       join(homeDir, ".agemon", "fake-services"),
@@ -121,6 +129,7 @@ export function createFakeServiceManager(
     registerAutostart,
     unregisterAutostart,
     readUnitWorkingDirectory,
+    readUnitEnvironment,
     unitPathFor: (unitName) => markerPath(homeDir, unitName),
     isLingerEnabled: async () => existsSync(lingerMarkerPath(homeDir)),
     async enableLinger() {

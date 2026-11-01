@@ -1,20 +1,20 @@
-import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
-import { promisify } from "node:util";
 import type { Context } from "../core/context.js";
 import { RefusedFileError, readRegularFileIfExists } from "../core/files.js";
+import {
+  gitIgnoresAgemonState,
+  gitignoreListsAgemonState,
+} from "../core/gitignore.js";
 import {
   hasGitEntry,
   resolveInsideRepo,
   resolveRepoDirectory,
 } from "../core/repo-paths.js";
-import { agemonSubprocessEnvironment } from "../core/subprocess-runner.js";
+import { runRepositoryGit } from "../core/repository-git.js";
+import { TRUNCATION_MARKER } from "../core/subprocess-runner.js";
 import { printable } from "../core/untrusted-text.js";
 import { isDenylistedPath } from "./redact.js";
 
-const execFileAsync = promisify(execFile);
-const GIT_LS_FILES_TIMEOUT_MS = 5_000;
-const GIT_LS_FILES_MAX_OUTPUT_BYTES = 1024 * 1024;
 const GIT_ERROR_MAX_CHARACTERS = 200;
 
 export const ROOT_RULE_FILES = [
@@ -206,21 +206,39 @@ async function discoverCopilotInstructions(
   return instructions;
 }
 
+interface IsolationCheck {
+  status: IsolationStatus;
+  gitCheckError: string | null;
+}
+
+async function checkIsolation(cwd: string): Promise<IsolationCheck> {
+  const { exists, contents } = await readRepoFile(cwd, ".gitignore");
+  if (!exists) {
+    return { status: "no-gitignore-file", gitCheckError: null };
+  }
+  if (contents === null || !gitignoreListsAgemonState(contents)) {
+    return { status: "not-ignored", gitCheckError: null };
+  }
+  const verdict = await gitIgnoresAgemonState(cwd);
+  if (verdict.kind === "failed") {
+    return {
+      status: "not-ignored",
+      gitCheckError: `could not ask git whether .agemon/ is ignored: ${describeGitFailure(verdict.detail)}`,
+    };
+  }
+  return {
+    status:
+      verdict.kind === "ignored" || verdict.kind === "not-a-repository"
+        ? "ignored"
+        : "not-ignored",
+    gitCheckError: null,
+  };
+}
+
 export async function readIsolationStatus(
   cwd: string,
 ): Promise<IsolationStatus> {
-  const { exists, contents } = await readRepoFile(cwd, ".gitignore");
-  if (!exists) {
-    return "no-gitignore-file";
-  }
-  if (contents === null) {
-    return "not-ignored";
-  }
-
-  const normalizedEntries = contents
-    .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^\//, "").replace(/\/$/, ""));
-  return normalizedEntries.includes(".agemon") ? "ignored" : "not-ignored";
+  return (await checkIsolation(cwd)).status;
 }
 
 interface TrackedAgemonPaths {
@@ -229,50 +247,40 @@ interface TrackedAgemonPaths {
 }
 
 function describeGitFailure(text: string): string {
-  const firstLine = text.trim().split(/\r?\n/)[0] ?? "";
-  return printable(firstLine).slice(0, GIT_ERROR_MAX_CHARACTERS);
+  const lastLine = text.trim().split(/\r?\n/).at(-1) ?? "";
+  return printable(lastLine).slice(0, GIT_ERROR_MAX_CHARACTERS);
 }
 
 async function listTrackedAgemonPaths(
   cwd: string,
 ): Promise<TrackedAgemonPaths> {
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      [
-        "-c",
-        "core.fsmonitor=false",
-        "-c",
-        "core.hooksPath=/dev/null",
-        "-C",
-        cwd,
-        "ls-files",
-        "--",
-        ".agemon",
-      ],
-      {
-        encoding: "utf8",
-        timeout: GIT_LS_FILES_TIMEOUT_MS,
-        maxBuffer: GIT_LS_FILES_MAX_OUTPUT_BYTES,
-        env: agemonSubprocessEnvironment(),
-      },
-    );
-    return {
-      trackedAgemonPaths: stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0),
-      trackingCheckError: null,
-    };
-  } catch (error) {
-    const failure = error as { stderr?: string; message?: string };
+  const result = await runRepositoryGit(cwd, ["ls-files", "--", ".agemon"]);
+  const failure =
+    result.code !== 0
+      ? describeGitFailure(result.stderr || "git failed")
+      : result.stdout.endsWith(TRUNCATION_MARKER)
+        ? "git ls-files output exceeded the capture limit"
+        : null;
+  if (failure !== null) {
     return {
       trackedAgemonPaths: [],
       trackingCheckError: (await hasGitEntry(cwd))
-        ? `could not check whether .agemon/ is tracked by git: ${describeGitFailure(failure.stderr || failure.message || "git failed")}`
+        ? `could not check whether .agemon/ is tracked by git: ${failure}`
         : null,
     };
   }
+  return {
+    trackedAgemonPaths: result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+    trackingCheckError: null,
+  };
+}
+
+function joinGitCheckErrors(...errors: Array<string | null>): string | null {
+  const reported = errors.filter((error): error is string => error !== null);
+  return reported.length === 0 ? null : reported.join("; ");
 }
 
 export async function discoverRepository(
@@ -296,6 +304,8 @@ export async function discoverRepository(
     ),
   );
 
+  const isolationCheck = await checkIsolation(ctx.cwd);
+  const tracked = await listTrackedAgemonPaths(ctx.cwd);
   return {
     ruleFiles,
     copilotInstructions: await discoverCopilotInstructions(ctx.cwd),
@@ -306,8 +316,12 @@ export async function discoverRepository(
       present: binary.present,
     })),
     isolation: {
-      status: await readIsolationStatus(ctx.cwd),
-      ...(await listTrackedAgemonPaths(ctx.cwd)),
+      status: isolationCheck.status,
+      trackedAgemonPaths: tracked.trackedAgemonPaths,
+      trackingCheckError: joinGitCheckErrors(
+        isolationCheck.gitCheckError,
+        tracked.trackingCheckError,
+      ),
     },
   };
 }

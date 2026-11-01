@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { createProgram } from "../src/cli/index.js";
 import { errorMessage } from "../src/core/error-message.js";
 import { SKILL_GROUPS } from "../src/plugins/skills/catalog.js";
 import { generateSiteContent } from "./site-content/generate.js";
-import { createHelpRunner } from "./site-content/help.js";
 
 const RELEASE_TAG_PATTERN = /^v\d+\.\d+\.\d+$/u;
 
@@ -42,7 +42,7 @@ try {
     websiteRoot: join(repositoryRoot, "website"),
     skillGroups: SKILL_GROUPS,
     skillsRoot: join(repositoryRoot, "assets", "skills"),
-    runHelp: createHelpRunner([join(repositoryRoot, "bin", "agemon.js")]),
+    program: createProgram(() => {}),
     installScriptPath: resolve(values["install-sh"]),
     sha256SumsPath: values.sha256sums && resolve(values.sha256sums),
     releaseTag,

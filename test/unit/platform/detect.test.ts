@@ -1,7 +1,16 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAX_READ_FILE_BYTES } from "../../../src/core/files.js";
 import { agemonSubprocessEnvironment } from "../../../src/core/subprocess-runner.js";
 import {
   assertPlatformSupportsChanges,
@@ -102,6 +111,85 @@ describe("detectPlatformCapabilities", () => {
     expect(platform.unsupportedReason).toBe(
       `agemon could not identify this Linux distribution: reading ${osReleasePath} failed (ENOENT). Read-only commands (inspect, status, plan) still work here.`,
     );
+  });
+
+  it("refuses a FIFO os-release without blocking", async () => {
+    const root = await createTempDirectory();
+    const osReleasePath = join(root, "os-release");
+    execFileSync("mkfifo", [osReleasePath]);
+
+    const platform = await detectPlatformCapabilities({
+      osReleasePath,
+      hostPlatform: "linux",
+    });
+
+    expect(platform.unsupportedReason).toMatch(
+      /could not identify this Linux distribution: .*not a regular file/,
+    );
+  });
+
+  it("refuses a character device os-release", async () => {
+    const platform = await detectPlatformCapabilities({
+      osReleasePath: "/dev/zero",
+      hostPlatform: "linux",
+    });
+
+    expect(platform.unsupportedReason).toMatch(
+      /could not identify this Linux distribution: .*not a regular file/,
+    );
+  });
+
+  it("treats an os-release over the read cap as unidentified", async () => {
+    const root = await createTempDirectory();
+    const osReleasePath = join(root, "os-release");
+    await writeFile(
+      osReleasePath,
+      `ID=ubuntu\n${"#".repeat(MAX_READ_FILE_BYTES)}\n`,
+    );
+
+    const platform = await detectPlatformCapabilities({
+      osReleasePath,
+      hostPlatform: "linux",
+    });
+
+    expect(platform.unsupportedReason).toMatch(
+      /could not identify this Linux distribution: .*larger than/,
+    );
+  });
+
+  it("reads a symlinked os-release, as distributions ship it", async () => {
+    const root = await createTempDirectory();
+    await writeFile(join(root, "real-os-release"), "ID=debian\n");
+    const osReleasePath = join(root, "os-release");
+    await symlink(join(root, "real-os-release"), osReleasePath);
+
+    const platform = await detectPlatformCapabilities({
+      osReleasePath,
+      hostPlatform: "linux",
+      systemdRuntimeDirectory: join(root, "no-systemd"),
+    });
+
+    expect(platform.unsupportedReason).toBeNull();
+  });
+
+  it("ignores AGEMON_OS_RELEASE_PATH outside dev mode", async () => {
+    const root = await createTempDirectory();
+    const fakeOsRelease = join(root, "os-release");
+    await writeFile(fakeOsRelease, "ID=fedora\n");
+    vi.stubEnv("AGEMON_DEV", "");
+    vi.stubEnv("AGEMON_OS_RELEASE_PATH", fakeOsRelease);
+
+    const platform = await detectPlatformCapabilities({
+      hostPlatform: "linux",
+    });
+
+    expect(platform.unsupportedReason ?? "").not.toContain(fakeOsRelease);
+
+    vi.stubEnv("AGEMON_DEV", "1");
+    const devPlatform = await detectPlatformCapabilities({
+      hostPlatform: "linux",
+    });
+    expect(devPlatform.unsupportedReason).toContain(fakeOsRelease);
   });
 
   it("treats darwin as a supported family with launchd", async () => {

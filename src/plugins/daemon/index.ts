@@ -9,7 +9,14 @@ import type {
   LedgerEntry,
   RecordManifestActionInput,
 } from "../../core/state-manifest.js";
-import { printable } from "../../core/untrusted-text.js";
+import { resolveStateRoot } from "../../core/state-root.js";
+import {
+  assertGitConfigMatchesPlan,
+  joinAttention,
+  markUntrustedGitConfig,
+  verifyRepositoryGitConfig,
+} from "../../core/untrusted-git-config.js";
+import { printable, quoteForShlex } from "../../core/untrusted-text.js";
 import {
   containsHomeDirectory,
   isUsableAbsolutePath,
@@ -20,7 +27,11 @@ import {
   launchAgentLabelOf,
 } from "../../platform/service-manager/launch-agent-files.js";
 import { AGEMON_DAEMON_UNIT_PATTERN } from "../../platform/service-manager/unit-files.js";
-import { crgUnitEnvironment, resolveCrgHome } from "../crg/environment.js";
+import {
+  crgUnitEnvironment,
+  crgUnitGitSafetyEnvironment,
+  resolveCrgHome,
+} from "../crg/environment.js";
 import { BROKEN_PIPX_VENV_HINT, locateCodeReviewGraph } from "../crg/locate.js";
 import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../pins.js";
 import { describeOperation } from "../proposed-operation.js";
@@ -33,10 +44,10 @@ import {
   repoLedgerUsesSharedResource,
 } from "../shared-resource.js";
 import type {
-  AgemonPlugin,
   CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
+  PluginWithInstall,
   ProposedOperation,
   SharedResourceDeclaration,
 } from "../types.js";
@@ -45,6 +56,10 @@ import { buildLaunchAgentPlist } from "./launchd-plist.js";
 const PLUGIN_ID = "daemon";
 const CRG_COMMAND = "code-review-graph";
 const UNIT_NAME_PREFIX = "agemon-crg-daemon";
+const STALE_UNIT_ATTENTION =
+  "the daemon unit predates agemon's git safeguards: until it is re-registered it runs this repository's hooks and fsmonitor program and can fetch lazily; run 'agemon nuke --only daemon', then 'agemon --only daemon'";
+const UNTRUSTED_GIT_CONFIG_ATTENTION =
+  "the daemon runs git here with repository settings agemon does not trust by default (listed for crg); stop it with 'agemon nuke --only daemon' if you do not trust them";
 const LAUNCH_AGENT_LABEL_PREFIX = "dev.agemon.crg";
 const LAUNCHD_HARDENING_LABEL = "launchd";
 const UNIT_NAME_MAX_SLUG_LENGTH = 40;
@@ -167,7 +182,8 @@ async function existingDirectoryRealpath(path: string): Promise<string | null> {
 type UnitOwnership =
   | { kind: "no-unit-file" }
   | { kind: "this-repo" }
-  | { kind: "other"; owner: string };
+  | { kind: "other"; owner: string }
+  | { kind: "unresolved"; workingDirectory: string };
 
 const HASHED_UNIT_NAME_SUFFIX = /-[0-9a-f]{8}\.(?:service|plist)$/;
 
@@ -197,7 +213,9 @@ async function classifyRecordedUnit(
     };
   }
 
-  const ownsSubdirectories = !HASHED_UNIT_NAME_SUFFIX.test(unit.unitName);
+  const isHashedName = HASHED_UNIT_NAME_SUFFIX.test(unit.unitName);
+  const isThisRepositorysOldName =
+    unit.unitName === oldSchemeUnitNameFor(repoRoot);
   const candidates = new Set([
     workingDirectory,
     workingDirectory.replaceAll("%%", "%"),
@@ -208,23 +226,74 @@ async function classifyRecordedUnit(
     if (real === null) {
       continue;
     }
-    const owned = ownsSubdirectories
-      ? isSameOrInside(real, repoRoot)
-      : real === repoRoot;
+    const owned = isHashedName
+      ? real === repoRoot
+      : isThisRepositorysOldName && isSameOrInside(real, repoRoot);
     if (owned) {
       return { kind: "this-repo" };
     }
     foreignDirectory = real;
   }
   return foreignDirectory === null
-    ? { kind: "this-repo" }
+    ? { kind: "unresolved", workingDirectory }
     : { kind: "other", owner: foreignDirectory };
 }
 
-function describeKeptUnit(ctx: Context, unitName: string, owner: string): void {
-  ctx.ui.info(
-    `${ctx.dryRun ? "Would keep" : "Keeping"} user service ${unitName}: it now runs for ${printable(owner)}`,
-  );
+function oldSchemeUnitNameFor(repoRoot: string): string {
+  return `${UNIT_NAME_PREFIX}-${slugifyForUnitName(basename(repoRoot))}.service`;
+}
+
+function manualUnitRemoval(ctx: Context, unitName: string): string {
+  const removeUnitFile = `rm ${quoteForShlex(ctx.serviceManager.unitPathFor(unitName))}`;
+  return runsUnderLaunchd(ctx)
+    ? `launchctl bootout "gui/$(id -u)/${launchAgentLabelOf(unitName)}"; ${removeUnitFile}`
+    : `systemctl --user disable --now ${quoteForShlex(unitName)}; ${removeUnitFile}; systemctl --user daemon-reload`;
+}
+
+interface RecordedUnitDecision {
+  unregister: boolean;
+  keptBecause: string | null;
+}
+
+function decideRecordedUnit(
+  ctx: Context,
+  { entry, unitName }: RecordedUnit,
+  ownership: UnitOwnership,
+): RecordedUnitDecision {
+  const recordedByThisMachine = ctx.manifest.isConfirmed(entry);
+  const keeping = `${ctx.dryRun ? "Would keep" : "Keeping"} user service ${unitName}`;
+  switch (ownership.kind) {
+    case "this-repo":
+      return { unregister: true, keptBecause: null };
+    case "no-unit-file":
+      return { unregister: recordedByThisMachine, keptBecause: null };
+    case "other":
+      return {
+        unregister: false,
+        keptBecause: `${keeping}: it now runs for ${printable(ownership.owner)}`,
+      };
+    case "unresolved":
+      return recordedByThisMachine
+        ? { unregister: true, keptBecause: null }
+        : {
+            unregister: false,
+            keptBecause: printable(
+              `${keeping}: its WorkingDirectory ${ownership.workingDirectory} does not exist now, so agemon can't tell which repository it serves. If nothing needs it, remove it yourself: ${manualUnitRemoval(ctx, unitName)}`,
+            ),
+          };
+  }
+}
+
+function reportedUnitDecision(
+  ctx: Context,
+  unit: RecordedUnit,
+  ownership: UnitOwnership,
+): RecordedUnitDecision {
+  const decision = decideRecordedUnit(ctx, unit, ownership);
+  if (decision.keptBecause !== null) {
+    ctx.ui.info(decision.keptBecause);
+  }
+  return decision;
 }
 
 async function migrateStaleUnit(
@@ -233,9 +302,7 @@ async function migrateStaleUnit(
   repoRoot: string,
 ): Promise<void> {
   const ownership = await classifyRecordedUnit(ctx, staleUnit, repoRoot);
-  if (ownership.kind === "other") {
-    describeKeptUnit(ctx, staleUnit.unitName, ownership.owner);
-  } else {
+  if (reportedUnitDecision(ctx, staleUnit, ownership).unregister) {
     await ctx.serviceManager.unregisterAutostart({
       unitName: staleUnit.unitName,
     });
@@ -249,6 +316,7 @@ interface UnitPaths {
   repoRoot: string;
   crgBinaryPath: string;
   crgHome: string;
+  agemonState: string;
 }
 
 interface HardeningChoice {
@@ -320,10 +388,12 @@ async function resolveUnitPaths(ctx: Context): Promise<UnitPaths> {
     repoRoot: await realpath(ctx.cwd),
     crgBinaryPath: await resolveCrgBinaryPath(ctx),
     crgHome: resolveCrgHome(),
+    agemonState: join(resolveStateRoot(), "agemon"),
   };
   assertUsableInUnit("repository path", paths.repoRoot);
   assertUsableInUnit("code-review-graph path", paths.crgBinaryPath);
   assertUsableInUnit("code-review-graph home", paths.crgHome);
+  assertUsableInUnit("agemon state directory", paths.agemonState);
   await assertGraphIsARealDirectory(paths.repoRoot);
   return paths;
 }
@@ -387,7 +457,17 @@ function getHardeningDirectives(
     "PrivateTmp=yes",
     `ReadWritePaths=${quoteUnitValue(paths.repoRoot)} ${quoteUnitValue(`-${paths.crgHome}`)}`,
     `ReadOnlyPaths=${quoteUnitValue(`-${join(paths.repoRoot, ".git")}`)}`,
+    ...hideAgemonStateDirective(paths),
   ];
+}
+
+function hideAgemonStateDirective(paths: UnitPaths): string[] {
+  const crgNeedsIt = [paths.repoRoot, paths.crgBinaryPath, paths.crgHome].some(
+    (path) => isSameOrInside(path, paths.agemonState),
+  );
+  return crgNeedsIt
+    ? []
+    : [`InaccessiblePaths=${quoteUnitValue(`-${paths.agemonState}`)}`];
 }
 
 function buildUnitContents(
@@ -407,7 +487,7 @@ function buildUnitContents(
     ...Object.entries(environment.set).map(
       ([name, value]) => `Environment=${quoteUnitValue(`${name}=${value}`)}`,
     ),
-    `UnsetEnvironment=${environment.unset.join(" ")}`,
+    `UnsetEnvironment=${[...environment.unset, ...environment.removedRepositoryLocal].join(" ")}`,
     ...getHardeningDirectives(profile, paths),
     "Restart=always",
     "RestartSec=3",
@@ -517,6 +597,15 @@ async function needsLingerUseShared(ctx: Context): Promise<boolean> {
 }
 
 async function planDaemon(ctx: Context): Promise<ProposedOperation[]> {
+  return markUntrustedGitConfig(ctx, await planDaemonOperations(ctx), {
+    runsGit: (operation) => operation.action === "register-service",
+    reportsUnreadableConfig: false,
+  });
+}
+
+async function planDaemonOperations(
+  ctx: Context,
+): Promise<ProposedOperation[]> {
   const unitName = await resolveUnitName(ctx);
   const status = await ctx.serviceManager.isActive(unitName);
   const staleUnitNames = findStaleRecordedUnits(ctx, unitName).map(
@@ -556,7 +645,10 @@ function reportOtherOsUnits(ctx: Context): void {
   }
 }
 
-async function installDaemon(ctx: Context): Promise<void> {
+async function installDaemon(
+  ctx: Context,
+  operation?: ProposedOperation,
+): Promise<void> {
   const unitName = await resolveUnitName(ctx);
   reportOtherOsUnits(ctx);
 
@@ -578,7 +670,7 @@ async function installDaemon(ctx: Context): Promise<void> {
       (unit) => unit.unitName === unitName,
     ) && (await ctx.serviceManager.isActive(unitName)).active;
   if (!alreadyRegistered) {
-    await registerDaemon(ctx, unitName);
+    await registerDaemon(ctx, unitName, operation);
   }
   const repoRoot = await realpath(ctx.cwd);
   for (const staleUnit of staleUnits) {
@@ -658,8 +750,13 @@ async function registerLaunchAgent(
   return registration;
 }
 
-async function registerDaemon(ctx: Context, unitName: string): Promise<void> {
+async function registerDaemon(
+  ctx: Context,
+  unitName: string,
+  operation: ProposedOperation | undefined,
+): Promise<void> {
   const paths = await resolveUnitPaths(ctx);
+  await assertGitConfigMatchesPlan(ctx.gitConfigGuard, operation);
   const supersededIds = getPluginActions(ctx)
     .filter(
       (action) =>
@@ -707,7 +804,35 @@ async function verifyDaemon(ctx: Context): Promise<PluginVerificationResult> {
     return { ok: false, detail: `${unitName} is not active` };
   }
 
-  return { ok: true, detail: `${unitName} active` };
+  const gitConfig = await verifyRepositoryGitConfig(ctx.gitConfigGuard);
+  if (gitConfig.kind === "unreadable") {
+    return { ok: false, detail: gitConfig.detail };
+  }
+  return {
+    ok: true,
+    detail: `${unitName} active`,
+    ...joinAttention(
+      (await unitPredatesGitSafeguards(ctx, unitName))
+        ? STALE_UNIT_ATTENTION
+        : undefined,
+      gitConfig.kind === "untrusted"
+        ? UNTRUSTED_GIT_CONFIG_ATTENTION
+        : undefined,
+    ),
+  };
+}
+
+async function unitPredatesGitSafeguards(
+  ctx: Context,
+  unitName: string,
+): Promise<boolean> {
+  const environment = await ctx.serviceManager.readUnitEnvironment(unitName);
+  if (environment === null) {
+    return false;
+  }
+  return Object.entries(crgUnitGitSafetyEnvironment()).some(
+    ([name, value]) => environment[name] !== value,
+  );
 }
 
 function entriesEnabledLingerByAgemon(entries: LedgerEntry[]): boolean {
@@ -761,9 +886,7 @@ async function revertDaemon(
   const removableUnits: RecordedUnit[] = [];
   for (const unit of units) {
     const ownership = await classifyRecordedUnit(ctx, unit, repoRoot);
-    if (ownership.kind === "other") {
-      describeKeptUnit(ctx, unit.unitName, ownership.owner);
-    } else {
+    if (reportedUnitDecision(ctx, unit, ownership).unregister) {
       removableUnits.push(unit);
     }
   }
@@ -818,12 +941,12 @@ async function useLinger(ctx: Context): Promise<void> {
 async function applyDaemon(
   ctx: Context,
   operations: ProposedOperation[],
-): Promise<void> {
+): Promise<undefined> {
   for (const operation of operations) {
     if (operation.action === "use-shared") {
       await useLinger(ctx);
     } else if (operation.action === "register-service") {
-      await installDaemon(ctx);
+      await installDaemon(ctx, operation);
     }
   }
 }
@@ -832,7 +955,7 @@ async function uninstallDaemon(ctx: Context): Promise<void> {
   await revertDaemon(ctx, getPluginActions(ctx));
 }
 
-export const daemonPlugin: AgemonPlugin = {
+export const daemonPlugin: PluginWithInstall = {
   id: PLUGIN_ID,
   dependsOn: ["crg"],
   riskClass: "executes",

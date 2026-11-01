@@ -9,15 +9,17 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { Command, Option } from "commander";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { groupChangelogReleases } from "../../../scripts/site-content/changelog.js";
+import {
+  commandsPage,
+  describeCommands,
+} from "../../../scripts/site-content/commands.js";
+import { configurationPageBody } from "../../../scripts/site-content/configuration.js";
 import { SiteContentError } from "../../../scripts/site-content/error.js";
 import { generateSiteContent } from "../../../scripts/site-content/generate.js";
-import {
-  collectCliHelp,
-  createHelpRunner,
-  type HelpRunner,
-} from "../../../scripts/site-content/help.js";
 import { checksumInstallScript } from "../../../scripts/site-content/install-script.js";
 import {
   assertPublishable,
@@ -25,10 +27,16 @@ import {
   headingSlugs,
   type LinkTargets,
   parseMarkdown,
+  plainText,
   rewriteLinks,
+  serializeMarkdown,
 } from "../../../scripts/site-content/markdown.js";
 import { renderPage } from "../../../scripts/site-content/page.js";
 import { parseNotice } from "../../../scripts/skill-provenance.js";
+import { createProgram } from "../../../src/cli/index.js";
+import { AGEMON_TOML_TABLES } from "../../../src/core/config.js";
+import { RECOVER_LIMIT_NOTE } from "../../../src/core/recover.js";
+import { CORE_CAPABILITY_IDS } from "../../../src/plugins/index.js";
 import {
   SKILL_GROUPS,
   type SkillBundleEntry,
@@ -38,20 +46,6 @@ import {
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "../../..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "assets", "skills");
 const REF = "0123456789abcdef0123456789abcdef01234567";
-
-const FAKE_ROOT_HELP = [
-  "Usage: agemon [options] [command]",
-  "",
-  "Commands:",
-  "  inspect [options]   Read-only inventory",
-  "                      + duplication report",
-  "  nuke [options]      Reverse agemon-managed changes",
-  "",
-].join("\n");
-const fakeHelp: HelpRunner = (commandArguments) =>
-  commandArguments.length === 0
-    ? FAKE_ROOT_HELP
-    : `banner\nUsage: agemon ${commandArguments[0]} [options]\n`;
 
 const SAFETY_POST_PATH = "src/content/docs/posts/safety-model.mdx";
 const RECORDED_LEDGER_PATH = "src/data/recorded-ledger.json";
@@ -160,7 +154,7 @@ function generate(
     websiteRoot,
     skillGroups: SKILL_GROUPS,
     skillsRoot: SKILLS_ROOT,
-    runHelp: fakeHelp,
+    program: createProgram(() => {}),
     installScriptPath: join(REPOSITORY_ROOT, "install.sh"),
     repositoryRef: REF,
     ...overrides,
@@ -324,33 +318,252 @@ describe("imported markdown", () => {
   });
 });
 
+const collapseWhitespace = (value: string): string =>
+  value.replace(/\s+/gu, " ").trim();
+
+function cliCommands(program: Command): Command[] {
+  return [program, ...program.createHelp().visibleCommands(program)];
+}
+
 describe("commands page", () => {
-  it("includes the root help and one section per command listed in it", () => {
-    const help = collectCliHelp(
-      createHelpRunner([
-        "--import",
-        import.meta.resolve("tsx"),
-        join(REPOSITORY_ROOT, "src/cli/index.ts"),
-      ]),
+  it("has one section per visible command with its usage, arguments and every visible option, as --help prints them", () => {
+    const program = createProgram(() => {});
+    const references = describeCommands(program);
+    const commands = cliCommands(program);
+
+    expect(references.map((reference) => reference.title)).toEqual(
+      commands.map((command) =>
+        command === program ? "agemon" : `agemon ${command.name()}`,
+      ),
     );
-    const listed = help.root
-      .slice(help.root.indexOf("Commands:"))
-      .split("\n")
-      .filter((line) => /^ {2}[a-z]/u.test(line))
-      .map((line) => line.trim().split(" ")[0]);
-    expect(listed.length).toBeGreaterThan(0);
-    expect(help.commands.map((command) => command.name)).toEqual(listed);
-    for (const command of help.commands) {
-      expect(command.help.startsWith(`Usage: agemon ${command.name}`)).toBe(
-        true,
+    for (const [index, command] of commands.entries()) {
+      const help = collapseWhitespace(command.helpInformation());
+      const reference = references[index];
+      const shown = [reference.usage, reference.summary];
+      for (const item of [...reference.arguments, ...reference.options]) {
+        shown.push(item.term, item.description);
+      }
+      for (const text of shown) {
+        expect(help, `${reference.title}: ${text}`).toContain(
+          collapseWhitespace(text),
+        );
+      }
+      expect(reference.options.map((option) => option.term)).toEqual(
+        expect.arrayContaining(["-h, --help"]),
       );
     }
-    expect(help.root).toContain("Exit codes:");
+    const upgrade = references.find(
+      (reference) => reference.title === "agemon upgrade",
+    );
+    expect(upgrade?.arguments.map((argument) => argument.term)).toEqual([
+      "version",
+    ]);
   });
 
-  it("refuses an unexpected command name", () => {
-    expect(() => collectCliHelp(() => "Commands:\n  $(evil)   x\n")).toThrow(
-      /unexpected command name/u,
+  it("shows a default only where commander's help shows one, and hides hidden options", () => {
+    const program = new Command("demo")
+      .option("--level <n>", "how loud", "3")
+      .option("--plain", "no colours")
+      .addOption(new Option("--secret", "internal").hideHelp());
+    const [reference] = describeCommands(program);
+
+    expect(reference.options).toEqual(
+      expect.arrayContaining([
+        { term: "--level <n>", description: 'how loud (default: "3")' },
+        { term: "--plain", description: "no colours" },
+      ]),
+    );
+    expect(reference.options.map((option) => option.term)).not.toContain(
+      "--secret",
+    );
+  });
+
+  it("keeps the notes added to --help, drops the banner and restores the program's output", () => {
+    const program = createProgram(() => {});
+    const outputBefore = { ...program.configureOutput() };
+    const references = describeCommands(program);
+    expect(program.configureOutput()).toEqual(outputBefore);
+    const notesOf = (title: string) =>
+      references.find((reference) => reference.title === title)?.notes ?? "";
+
+    expect(notesOf("agemon")).toMatch(/^Exit codes:/u);
+    expect(notesOf("agemon")).not.toContain("Bootstraps");
+    expect(collapseWhitespace(notesOf("agemon recover"))).toBe(
+      RECOVER_LIMIT_NOTE,
+    );
+    expect(notesOf("agemon status")).toBe("");
+  });
+
+  it("renders |, <, backticks and newlines in a description as text, not structure", () => {
+    const description = "a | b <script>alert(1)</script> `x`\nnext line";
+    const program = new Command("demo").option("--odd", description);
+    const rendered = parseMarkdown(
+      serializeMarkdown({
+        type: "root",
+        children: commandsPage(program, "1.0.0").body,
+      }),
+    );
+
+    expect(() => assertPublishable(rendered.children, "demo")).not.toThrow();
+    const cells: string[] = [];
+    for (const node of rendered.children) {
+      if (node.type === "table") {
+        for (const row of node.children) {
+          for (const cell of row.children) cells.push(plainText(cell));
+        }
+      }
+    }
+    expect(cells).toContain(collapseWhitespace(description));
+  });
+
+  it("refuses directive syntax in a description", () => {
+    const program = new Command("demo").option("--odd", "x\n:::note\nhi\n:::");
+    expect(() => generate({ program })).toThrow(
+      /looks like a Markdown directive/u,
+    );
+  });
+
+  it("fails when commander's help output no longer contains helpInformation()", () => {
+    const program = new Command("demo");
+    program.outputHelp = () => {
+      program.configureOutput().writeOut?.("something else\n");
+    };
+    expect(() => describeCommands(program)).toThrow(
+      /commander's help layout changed/u,
+    );
+  });
+});
+
+describe("configuration page", () => {
+  it("has one anchored heading per key, with type, default and summary from AGEMON_TOML_TABLES", () => {
+    generate();
+    const page = generatedPage("reference/configuration.md");
+    const body = parseMarkdown(page.split(/^---$/mu)[2]);
+    const slugs = [...headingSlugs(body.children).values()];
+
+    expect(slugs).toContain("skill_groups");
+    const tables = Object.values(AGEMON_TOML_TABLES);
+    for (const table of tables) {
+      for (const key of table.keys) {
+        expect(slugs, key.name).toContain(key.name);
+        expect(collapseWhitespace(plainText(body))).toContain(
+          collapseWhitespace(key.summary),
+        );
+      }
+    }
+    expect(page).toContain(CORE_CAPABILITY_IDS.join(", "));
+    expect(frontmatterOf(page).provenance).toEqual({
+      generatedFrom: "src/core/config.ts and README.md",
+    });
+  });
+
+  it("fails when a published README toml example is refused by the parser, naming README.md", () => {
+    const example = parseMarkdown(
+      '```toml\ncapabilities = ["crg"]\nnope = 1\n```\n',
+    ).children;
+    expect(() => configurationPageBody(example)).toThrow(
+      /README\.md: a toml example is refused by agemon: .*unknown key 'nope'/u,
+    );
+    expect(() =>
+      configurationPageBody(
+        parseMarkdown('```toml\ncapabilities = ["crg"]\n```\n').children,
+      ),
+    ).not.toThrow();
+  });
+});
+
+function groupedChangelog(markdown: string): string {
+  const body = parseMarkdown(markdown).children;
+  assertPublishable(body, "CHANGELOG.md");
+  return serializeMarkdown({
+    type: "root",
+    children: groupChangelogReleases(body),
+  });
+}
+
+describe("changelog page", () => {
+  it("groups a flat release under Added, Changed and Fixed labels, strips feat and fix prefixes, keeps scope and marks breaking changes", () => {
+    const grouped = groupedChangelog(
+      [
+        "## 4.8.0",
+        "",
+        "- fix(skills): name pending groups",
+        "- ci: pin actions",
+        "- feat!: drop Node 20",
+        "- feat: add team-lead skill group (#13)",
+        "- V3 (#5)",
+        "",
+      ].join("\n"),
+    );
+
+    expect(grouped).toBe(
+      [
+        "## 4.8.0",
+        "",
+        "**Added**",
+        "",
+        "* Breaking: drop Node 20",
+        "* add team-lead skill group (#13)",
+        "",
+        "**Changed**",
+        "",
+        "* ci: pin actions",
+        "* V3 (#5)",
+        "",
+        "**Fixed**",
+        "",
+        "* skills: name pending groups",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("renders a release whose list item holds more than one paragraph as written", () => {
+    const release = [
+      "## 0.9.0",
+      "",
+      "* feat: drop npm",
+      "",
+      "  ```bash",
+      "  curl x",
+      "  ```",
+      "",
+    ].join("\n");
+    expect(groupedChangelog(release)).toBe(release);
+  });
+
+  it("renders a release with subsections or prose as written", () => {
+    const release = [
+      "## 1.0.0",
+      "",
+      "### Major Changes",
+      "",
+      "* feat: something",
+      "",
+    ].join("\n");
+    expect(groupedChangelog(release)).toBe(release);
+  });
+
+  it("keeps links, inline code and a scope with < as text inside grouped items", () => {
+    const grouped = groupedChangelog(
+      "## 2.0.0\n\n- fix(x<y): use `x` from [docs](https://example.com/d)\n",
+    );
+    const reparsed = parseMarkdown(grouped);
+
+    expect(() =>
+      assertPublishable(reparsed.children, "changelog"),
+    ).not.toThrow();
+    expect(grouped).toContain("[docs](https://example.com/d)");
+    expect(grouped).toContain("`x`");
+    expect(plainText(reparsed)).toContain("x<y: use x from docs");
+  });
+
+  it("still refuses raw HTML and a scope with directive syntax", () => {
+    expect(() => groupedChangelog("## 2.0.0\n\n- fix: <b>x</b>\n")).toThrow(
+      /raw HTML/u,
+    );
+    expect(() => groupedChangelog("## 2.0.0\n\n- fix(:::note): x\n")).toThrow(
+      /Markdown directive/u,
     );
   });
 });
@@ -569,6 +782,9 @@ describe("site data for the home page", () => {
     expect(
       frontmatterOf(generatedPage("reference/commands.md")).provenance,
     ).toEqual({ generatedFrom: "agemon --help" });
+    expect(
+      frontmatterOf(generatedPage("project/changelog.md")).provenance,
+    ).toEqual({ generatedFrom: "CHANGELOG.md" });
     expect(
       frontmatterOf(generatedPage("project/security.md")).provenance,
     ).toEqual({ generatedFrom: "SECURITY.md" });

@@ -3,15 +3,19 @@ import {
   PROPOSED_OPERATION_ACTIONS,
   type ProposedOperation,
   RISK_CLASSES,
+  type SkillUpdate,
 } from "../plugins/types.js";
+import { isPlainSkillName } from "./config.js";
 import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
 import { fingerprintJson } from "./fingerprint.js";
 import { AGEMON_STATE_DIRECTORY, resolveStateDirectory } from "./repo-paths.js";
+import { validateUntrustedGitConfig } from "./untrusted-git-config.js";
 import { isSafeIdentifier, printable } from "./untrusted-text.js";
 
 export const PLAN_SEGMENTS = ["plans"] as const;
 const PLAN_ID_LENGTH = 16;
 const PLAN_ID_PATTERN = /^[0-9a-f]{16}$/u;
+const SKILL_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
 
 export interface PlanInputs {
   capabilityIds: string[];
@@ -82,6 +86,41 @@ function isCanonicalTargetPath(targetPath: string): boolean {
       !targetPath.startsWith("./") &&
       !targetPath.endsWith("/"))
   );
+}
+
+function validateSkillUpdates(
+  value: unknown,
+  field: string,
+  fail: (detail: string) => never,
+): SkillUpdate[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return fail(`'${field}' must be a non-empty array`);
+  }
+  const seenNames = new Set<string>();
+  return value.map((update: unknown, index) => {
+    const record =
+      typeof update === "object" && update !== null
+        ? (update as Record<string, unknown>)
+        : {};
+    const { name, installedFingerprint, currentFingerprint } = record;
+    if (
+      typeof name !== "string" ||
+      !isPlainSkillName(name) ||
+      typeof installedFingerprint !== "string" ||
+      !SKILL_FINGERPRINT_PATTERN.test(installedFingerprint) ||
+      typeof currentFingerprint !== "string" ||
+      !SKILL_FINGERPRINT_PATTERN.test(currentFingerprint)
+    ) {
+      return fail(
+        `'${field}[${index}]' must name a plain skill and two 64-character hex fingerprints`,
+      );
+    }
+    if (seenNames.has(name)) {
+      return fail(`'${field}[${index}]' names ${name} a second time`);
+    }
+    seenNames.add(name);
+    return { name, installedFingerprint, currentFingerprint };
+  });
 }
 
 function validatePlan(parsed: unknown, planId: string): Plan {
@@ -172,7 +211,21 @@ function validatePlan(parsed: unknown, planId: string): Plan {
         `'operations[${index}]' marks ${action} as needing no consent; re-run 'agemon plan'`,
       );
     }
+    const untrustedGitConfig =
+      operation.untrustedGitConfig === undefined
+        ? undefined
+        : validateUntrustedGitConfig(
+            operation.untrustedGitConfig,
+            field("untrustedGitConfig"),
+            fail,
+          );
+    const updates =
+      operation.updates === undefined
+        ? undefined
+        : validateSkillUpdates(operation.updates, field("updates"), fail);
     return {
+      ...(untrustedGitConfig === undefined ? {} : { untrustedGitConfig }),
+      ...(updates === undefined ? {} : { updates }),
       id: identifier(operation.id, field("id")),
       capabilityId: identifier(operation.capabilityId, field("capabilityId")),
       resourceId: identifier(operation.resourceId, field("resourceId")),

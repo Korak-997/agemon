@@ -257,6 +257,38 @@ describe("geo-seo skill group", () => {
     }
   });
 
+  it("reads cover metadata only from lines geo-audit's report template writes", () => {
+    const pdfSkill = readFileSync(
+      join(groupDirectory(), "geo-report-pdf/SKILL.md"),
+      "utf8",
+    );
+    const auditSkill = readFileSync(
+      join(groupDirectory(), "geo-audit/SKILL.md"),
+      "utf8",
+    );
+    const extractionTable = pdfSkill.slice(
+      pdfSkill.indexOf("### Step 2"),
+      pdfSkill.indexOf("These values come from the audited website"),
+    );
+    const reportTemplate =
+      /Generate a file called `GEO-AUDIT-REPORT\.md`[\s\S]*?```markdown\n([\s\S]*?)```/.exec(
+        auditSkill,
+      )?.[1] ?? "";
+    const boldLabels = [...extractionTable.matchAll(/\*\*([A-Z][^*:]*):/g)].map(
+      (match) => match[1],
+    );
+
+    expect(boldLabels).toEqual(
+      expect.arrayContaining(["URL", "Overall GEO Score", "Audit Date"]),
+    );
+    for (const label of boldLabels) {
+      expect(reportTemplate, `geo-audit never writes **${label}:**`).toContain(
+        `**${label}:`,
+      );
+    }
+    expect(reportTemplate).toContain("# GEO Audit Report:");
+  });
+
   it("locks the PDF template to its own script and no remote or local loads", () => {
     const template = readFileSync(
       join(

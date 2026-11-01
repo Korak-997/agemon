@@ -1,5 +1,5 @@
-import { readFile, rmdir } from "node:fs/promises";
-import { relative } from "node:path";
+import { opendir, readFile, rmdir } from "node:fs/promises";
+import { join, relative } from "node:path";
 import {
   immutableBackupCandidates,
   readFirstExistingBackup,
@@ -17,15 +17,17 @@ import {
 import { fingerprintContent } from "../../core/fingerprint.js";
 import { revertManagedFile } from "../../core/managed-file-revert.js";
 import {
+  readRegularFilePrefix,
   resolveInsideRepo,
   resolveRepoDirectory,
 } from "../../core/repo-paths.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
 import { renderUnifiedDiff } from "../../core/text-diff.js";
-import { printable } from "../../core/untrusted-text.js";
+import { isSafeIdentifier, printable } from "../../core/untrusted-text.js";
 import { describeOperation } from "../proposed-operation.js";
 import {
   type AgentDefinition,
+  RETIRED_AGENT_NAMES,
   SKILL_GROUPS,
   type SkillGroup,
 } from "../skills/catalog.js";
@@ -36,10 +38,14 @@ import {
 } from "../skills/ledger-view.js";
 import type {
   AgemonPlugin,
+  CapabilityState,
+  CapabilityStateRow,
+  PluginApplyReport,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
   ProposedOperationAction,
+  SkippedPluginOperation,
   StagedFile,
 } from "../types.js";
 
@@ -55,6 +61,15 @@ const AGENT_FILE_ACTIONS: readonly ProposedOperationAction[] = [
   "adopt",
   "conflict",
 ];
+const MAX_AGENT_DIRECTORY_ENTRIES = 256;
+const AGENT_FRONTMATTER_PREFIX_BYTES = 4096;
+const AGENT_FRONTMATTER_MAX_LINES = 64;
+const BYTE_ORDER_MARK = "﻿";
+const FRONTMATTER_FENCE = "---";
+const NAME_KEY = "name";
+const UPDATE_AVAILABLE_DETAIL =
+  "agemon has a newer version; run agemon to update it";
+const CLAIM_SUFFIX = " (ledger entry not written by agemon on this machine)";
 
 interface CatalogAgent {
   group: SkillGroup;
@@ -84,6 +99,18 @@ function catalogAgentForTarget(target: string): CatalogAgent | undefined {
   return catalogAgents().find((entry) => entry.agent.name === name);
 }
 
+function retiredAgentNameForTarget(target: string): string | undefined {
+  const name = AGENT_TARGET_PATTERN.exec(target)?.[1];
+  return RETIRED_AGENT_NAMES.find((retiredName) => retiredName === name);
+}
+
+function revertableAgentName(target: string): string | undefined {
+  return (
+    catalogAgentForTarget(target)?.agent.name ??
+    retiredAgentNameForTarget(target)
+  );
+}
+
 export async function renderAgentFile(agent: AgentDefinition): Promise<string> {
   const frontmatter = [
     `name: ${agent.name}`,
@@ -100,11 +127,17 @@ function pluginActions(ctx: Context): LedgerEntry[] {
     .filter((action) => action.plugin === PLUGIN_ID);
 }
 
+function confirmedPluginActions(ctx: Context): LedgerEntry[] {
+  return pluginActions(ctx).filter((action) =>
+    ctx.manifest.isConfirmed(action),
+  );
+}
+
 function ledgerEntryForTarget(
   ctx: Context,
   target: string,
 ): LedgerEntry | undefined {
-  return pluginActions(ctx).find((action) => action.target === target);
+  return confirmedPluginActions(ctx).find((action) => action.target === target);
 }
 
 function assertAgentsPerforms(operation: ProposedOperation): CatalogAgent {
@@ -299,7 +332,7 @@ async function writeAgentFile(
   operation: ProposedOperation,
   name: string,
   contentsAfter: string,
-): Promise<void> {
+): Promise<{ skipReason: string } | null> {
   const target = operation.targetPath;
   await resolveRepoDirectory(ctx.cwd, AGENTS_DIRECTORY, { create: true });
   const targetPath = await resolveInsideRepo(ctx.cwd, target);
@@ -315,7 +348,7 @@ async function writeAgentFile(
     await ctx.manifest.updateResourceEntry(agentResourceId(name), {
       fingerprintAfter: fingerprintContent(contentsAfter),
     });
-    return;
+    return null;
   }
 
   const earlierOriginalPath =
@@ -323,10 +356,9 @@ async function writeAgentFile(
       ? null
       : await differentEarlierOriginalPath(ctx, name, contentsBefore);
   if (earlierOriginalPath !== null) {
-    ctx.ui.info(
-      `skipped ${target}: agemon already keeps an earlier original of it at ${relative(ctx.cwd, earlierOriginalPath)}; keep your version, or delete ${target} and re-run agemon`,
-    );
-    return;
+    return {
+      skipReason: `agemon already keeps an earlier original of it at ${relative(ctx.cwd, earlierOriginalPath)}; keep your version, or delete ${target} and re-run agemon`,
+    };
   }
 
   const backup =
@@ -354,26 +386,29 @@ async function writeAgentFile(
     backup:
       backup === null ? null : { path: backup.path, checksum: backup.checksum },
   });
+  return null;
 }
 
 async function applyAgents(
   ctx: Context,
   operations: ProposedOperation[],
   staged?: StagedFile[],
-): Promise<void> {
+): Promise<PluginApplyReport> {
   const stagedContentsByPath = new Map(
     (staged ?? []).map((file) => [file.targetPath, file.contents] as const),
   );
   const installedGroupIds = recordedBuiltInGroupIds(ctx);
+  const skipped: SkippedPluginOperation[] = [];
   for (const operation of operations) {
     const { group, agent } = assertAgentsPerforms(operation);
     if (operation.action === "conflict") {
       continue;
     }
     if (!installedGroupIds.has(group.id)) {
-      ctx.ui.info(
-        `skipped agent ${agent.name}: its skill group ${group.id} is not installed; approve the skill group install to get it`,
-      );
+      skipped.push({
+        operationId: operation.id,
+        reason: `its skill group ${group.id} is not installed; approve the skill group install to get it`,
+      });
       continue;
     }
     if (operation.action === "adopt") {
@@ -389,14 +424,18 @@ async function applyAgents(
       }
       continue;
     }
-    await writeAgentFile(
+    const refusal = await writeAgentFile(
       ctx,
       operation,
       agent.name,
       stagedContentsByPath.get(operation.targetPath) ??
         (await renderAgentFile(agent)),
     );
+    if (refusal !== null) {
+      skipped.push({ operationId: operation.id, reason: refusal.skipReason });
+    }
   }
+  return { skipped };
 }
 
 async function detectAgents(ctx: Context): Promise<PluginPresence> {
@@ -409,15 +448,318 @@ async function detectAgents(ctx: Context): Promise<PluginPresence> {
   };
 }
 
-async function installAgents(ctx: Context): Promise<void> {
-  const operations = await planAgents(ctx);
-  if (ctx.dryRun) {
-    for (const operation of operations) {
-      ctx.ui.info(`Would ${operation.action} ${operation.targetPath}`);
-    }
-    return;
+interface AgentFileStatus {
+  state: CapabilityState;
+  detail: string;
+  updateAvailable: boolean;
+}
+
+async function agentFileStatus(
+  ctx: Context,
+  { agent }: CatalogAgent,
+): Promise<AgentFileStatus> {
+  const target = agentTarget(agent.name);
+  const file = await readAgentFile(ctx, target);
+  const status = (
+    state: CapabilityState,
+    detail: string,
+    updateAvailable = false,
+  ): AgentFileStatus => ({ state, detail, updateAvailable });
+  if (file.kind === "not-a-regular-file") {
+    return status("unknown", "not a regular file; agemon leaves it alone");
   }
-  await applyAgents(ctx, operations);
+  if (file.contents === null) {
+    return status("absent", "run agemon to create it");
+  }
+
+  const recorded = ledgerEntryForTarget(ctx, target);
+  const claimSuffix =
+    recorded === undefined &&
+    pluginActions(ctx).some((action) => action.target === target)
+      ? CLAIM_SUFFIX
+      : "";
+  const recordedState: CapabilityState =
+    recorded?.type === ACTION_TYPE_MANAGED_AGENT_FILE
+      ? "present-managed"
+      : "present-adopted";
+  if (file.contents === (await renderAgentFile(agent))) {
+    return recordedState === "present-managed"
+      ? status("present-managed", target)
+      : status(
+          "present-adopted",
+          `identical to agemon's version${claimSuffix}`,
+        );
+  }
+  if (
+    recorded !== undefined &&
+    recorded.fingerprintAfter === fingerprintContent(file.contents)
+  ) {
+    return status(recordedState, UPDATE_AVAILABLE_DETAIL, true);
+  }
+  return recorded === undefined
+    ? status(
+        "present-modified",
+        `differs from agemon's version; agemon keeps yours (conflict)${claimSuffix}`,
+      )
+    : status(
+        "present-modified",
+        "changed since agemon wrote it; agemon keeps your version (conflict)",
+      );
+}
+
+interface ShadowScan {
+  shadowingFilesByName: Map<string, string[]>;
+  problems: string[];
+  capReached: boolean;
+}
+
+function comparableAgentName(name: string): string {
+  return name.normalize("NFKC").toLowerCase();
+}
+
+function isQuote(character: string | undefined): boolean {
+  return character === '"' || character === "'";
+}
+
+function withoutTrailingComment(value: string): string {
+  for (let index = 1; index < value.length; index += 1) {
+    if (value[index] === "#" && /\s/u.test(value[index - 1])) {
+      return value.slice(0, index);
+    }
+  }
+  return value;
+}
+
+function unquotedFrontmatterValue(rawValue: string): string {
+  const value = withoutTrailingComment(rawValue).trim();
+  const quote = value[0];
+  const isQuoted = value.length >= 2 && isQuote(quote) && value.endsWith(quote);
+  return isQuoted ? value.slice(1, -1) : value;
+}
+
+function nameValueOf(line: string): string | null {
+  if (/^\s/u.test(line)) {
+    return null;
+  }
+  let rest = line;
+  const openingQuote = isQuote(rest[0]) ? rest[0] : "";
+  rest = rest.slice(openingQuote.length);
+  if (!rest.startsWith(NAME_KEY)) {
+    return null;
+  }
+  rest = rest.slice(NAME_KEY.length);
+  if (openingQuote !== "") {
+    if (!rest.startsWith(openingQuote)) {
+      return null;
+    }
+    rest = rest.slice(1);
+  }
+  rest = rest.trimStart();
+  return rest.startsWith(":") ? unquotedFrontmatterValue(rest.slice(1)) : null;
+}
+
+function frontmatterName(prefix: string): string | null {
+  const text = prefix.startsWith(BYTE_ORDER_MARK) ? prefix.slice(1) : prefix;
+  const lines = text.split("\n", AGENT_FRONTMATTER_MAX_LINES + 1);
+  if (lines[0]?.trim() !== FRONTMATTER_FENCE) {
+    return null;
+  }
+  for (const line of lines.slice(1)) {
+    if (line.trim() === FRONTMATTER_FENCE) {
+      return null;
+    }
+    const value = nameValueOf(line);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+async function readFrontmatterPrefix(path: string): Promise<string | null> {
+  try {
+    return await readRegularFilePrefix(path, AGENT_FRONTMATTER_PREFIX_BYTES);
+  } catch {
+    return null;
+  }
+}
+
+const BMP_LAST_CODE_POINT = 0xffff;
+
+function escapedCodePoint(character: string): string {
+  const codePoint = character.codePointAt(0) ?? 0;
+  return codePoint > BMP_LAST_CODE_POINT
+    ? `\\u{${codePoint.toString(16)}}`
+    : `\\u${codePoint.toString(16).padStart(4, "0")}`;
+}
+
+function escapedUnsafeCharacters(value: string): string {
+  return [...value]
+    .map((character) => {
+      if (character === "\\") {
+        return "\\\\";
+      }
+      return isSafeIdentifier(character)
+        ? character
+        : escapedCodePoint(character);
+    })
+    .join("");
+}
+
+function displayAgentFileName(fileName: string): string {
+  return `${AGENTS_DIRECTORY}/${escapedUnsafeCharacters(fileName)}`;
+}
+
+async function scanAgentDirectory(
+  directory: string,
+  agentNames: string[],
+  scan: ShadowScan,
+): Promise<void> {
+  const agentNameByComparable = new Map(
+    agentNames.map((name) => [comparableAgentName(name), name] as const),
+  );
+  const ownFileNames = new Set(agentNames.map((name) => `${name}.md`));
+  let entriesSeen = 0;
+  for await (const entry of await opendir(directory)) {
+    entriesSeen += 1;
+    if (entriesSeen > MAX_AGENT_DIRECTORY_ENTRIES) {
+      scan.capReached = true;
+      break;
+    }
+    if (
+      !entry.isFile() ||
+      !entry.name.endsWith(".md") ||
+      ownFileNames.has(entry.name)
+    ) {
+      continue;
+    }
+    const prefix = await readFrontmatterPrefix(join(directory, entry.name));
+    const declaredName = prefix === null ? null : frontmatterName(prefix);
+    const shadowedName =
+      declaredName === null
+        ? undefined
+        : agentNameByComparable.get(comparableAgentName(declaredName));
+    if (shadowedName !== undefined) {
+      const files = scan.shadowingFilesByName.get(shadowedName) ?? [];
+      files.push(displayAgentFileName(entry.name));
+      scan.shadowingFilesByName.set(shadowedName, files);
+    }
+  }
+}
+
+async function findShadowingAgentFiles(
+  ctx: Context,
+  agentNames: string[],
+): Promise<ShadowScan> {
+  const scan: ShadowScan = {
+    shadowingFilesByName: new Map(),
+    problems: [],
+    capReached: false,
+  };
+  if (agentNames.length === 0) {
+    return scan;
+  }
+  let directory: string | null;
+  try {
+    directory = await resolveRepoDirectory(ctx.cwd, AGENTS_DIRECTORY, {
+      create: false,
+    });
+  } catch {
+    scan.problems.push(
+      `${AGENTS_DIRECTORY} is not a real directory; agemon can't check it`,
+    );
+    return scan;
+  }
+  if (directory === null) {
+    return scan;
+  }
+  try {
+    await scanAgentDirectory(directory, agentNames, scan);
+  } catch {
+    scan.problems.push(
+      `agemon can't read ${AGENTS_DIRECTORY} to check for same-name agents`,
+    );
+  }
+  return scan;
+}
+
+async function retiredAgentRows(ctx: Context): Promise<CapabilityStateRow[]> {
+  const rows: CapabilityStateRow[] = [];
+  for (const entry of confirmedPluginActions(ctx)) {
+    const name = retiredAgentNameForTarget(entry.target);
+    if (name === undefined || entry.type !== ACTION_TYPE_MANAGED_AGENT_FILE) {
+      continue;
+    }
+    const file = await readAgentFile(ctx, entry.target);
+    if (file.kind === "readable" && file.contents === null) {
+      continue;
+    }
+    rows.push({
+      capabilityId: PLUGIN_ID,
+      resourceId: agentResourceId(name),
+      label: name,
+      state: "present-managed",
+      detail:
+        "agemon no longer ships this agent; 'agemon nuke --only agents' removes it",
+    });
+  }
+  return rows;
+}
+
+async function describeAgentsState(
+  ctx: Context,
+): Promise<CapabilityStateRow[]> {
+  const desired = desiredAgents(ctx, []);
+  const shadowScan = await findShadowingAgentFiles(
+    ctx,
+    desired.map(({ agent }) => agent.name),
+  );
+  const rows: CapabilityStateRow[] = [];
+  for (const entry of desired) {
+    const { state, detail } = await agentFileStatus(ctx, entry);
+    const shadowingFiles =
+      shadowScan.shadowingFilesByName.get(entry.agent.name) ?? [];
+    rows.push({
+      capabilityId: PLUGIN_ID,
+      resourceId: agentResourceId(entry.agent.name),
+      label: entry.agent.name,
+      state,
+      detail:
+        shadowingFiles.length === 0
+          ? detail
+          : `${detail}; shadowed by ${shadowingFiles.join(", ")}`,
+    });
+  }
+  return [...rows, ...(await retiredAgentRows(ctx))];
+}
+
+async function desiredAgentAttention(ctx: Context): Promise<string[]> {
+  const desired = desiredAgents(ctx, []);
+  const attention: string[] = [];
+  for (const entry of desired) {
+    if ((await agentFileStatus(ctx, entry)).updateAvailable) {
+      attention.push(
+        `agemon has a newer version of ${entry.agent.name}; run agemon to update it`,
+      );
+    }
+  }
+  const shadowScan = await findShadowingAgentFiles(
+    ctx,
+    desired.map(({ agent }) => agent.name),
+  );
+  for (const [name, files] of shadowScan.shadowingFilesByName) {
+    for (const file of files) {
+      attention.push(
+        `${file} also declares name: ${name}; Claude Code may load it instead of agemon's agent. Rename or remove it.`,
+      );
+    }
+  }
+  if (shadowScan.capReached) {
+    ctx.ui.info(
+      `agents: checked the first ${MAX_AGENT_DIRECTORY_ENTRIES} files in ${AGENTS_DIRECTORY}; a same-name agent beyond them is not checked`,
+    );
+  }
+  return [...attention, ...shadowScan.problems];
 }
 
 async function verifyAgents(ctx: Context): Promise<PluginVerificationResult> {
@@ -425,7 +767,7 @@ async function verifyAgents(ctx: Context): Promise<PluginVerificationResult> {
     return { ok: true, detail: "dry-run" };
   }
   const problems: string[] = [];
-  const recordedTargets = pluginActions(ctx)
+  const recordedTargets = confirmedPluginActions(ctx)
     .map((action) => action.target)
     .filter((target) => catalogAgentForTarget(target) !== undefined);
   for (const target of recordedTargets) {
@@ -438,6 +780,7 @@ async function verifyAgents(ctx: Context): Promise<PluginVerificationResult> {
       );
     }
   }
+  problems.push(...(await desiredAgentAttention(ctx)));
   return {
     ok: true,
     detail: `${recordedTargets.length} subagent file(s)`,
@@ -455,14 +798,12 @@ class AgentFileRevertError extends Error {
 }
 
 function validatedResourceId(entry: LedgerEntry): string | null {
-  const catalogEntry = catalogAgentForTarget(entry.target);
+  const agentName = revertableAgentName(entry.target);
   const isAgentEntry =
     entry.type === ACTION_TYPE_MANAGED_AGENT_FILE ||
     entry.type === ACTION_TYPE_ADOPTED_AGENT_FILE;
   const resourceId =
-    catalogEntry === undefined
-      ? null
-      : agentResourceId(catalogEntry.agent.name);
+    agentName === undefined ? null : agentResourceId(agentName);
   return isAgentEntry && resourceId !== null && entry.resourceId === resourceId
     ? resourceId
     : null;
@@ -483,6 +824,10 @@ function revertableManagedEntries(
     if (resourceId === null) {
       ctx.ui.info(
         `ignoring ledger entry for ${printable(entry.target)}: the agents capability does not manage that file`,
+      );
+    } else if (!ctx.manifest.isConfirmed(entry)) {
+      ctx.ui.info(
+        `ignoring ledger entry for ${printable(entry.target)}: agemon did not write it on this machine`,
       );
     } else if (entry.type === ACTION_TYPE_MANAGED_AGENT_FILE) {
       revertable.push({ entry, resourceId });
@@ -561,10 +906,10 @@ export const agentsPlugin: AgemonPlugin = {
   dependsOn: [SKILLS_PLUGIN_ID],
   riskClass: "writes-config",
   detect: detectAgents,
+  describeState: describeAgentsState,
   plan: planAgents,
   materialize: materializeAgents,
   apply: applyAgents,
-  install: installAgents,
   verify: verifyAgents,
   revert: revertAgents,
   uninstall: uninstallAgents,

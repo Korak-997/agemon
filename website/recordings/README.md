@@ -1,8 +1,9 @@
 # Website recordings
 
 The home page's "See it run" videos (`website/public/media/*.webm`, with a `.png` poster
-each) and the ledger panel's data (`website/src/data/recorded-ledger.json`) are recorded
-from the real agemon CLI with [vhs](https://github.com/charmbracelet/vhs):
+each), the ledger panel's data (`website/src/data/recorded-ledger.json`) and the README's GIF
+(`docs/demo/agemon.gif`, written by the roundtrip recording) are recorded from the real agemon
+CLI with [vhs](https://github.com/charmbracelet/vhs):
 
 ```bash
 sh website/recordings/record.sh                     # all three recordings
@@ -31,7 +32,9 @@ commit them together with `recordings.sha256`.
   hold (for example, `git status` not empty after `agemon nuke`). Its own media are then not
   copied, but recordings that finished before it already were, and `recordings.sha256` is not
   rewritten, so `npm test` fails until every recording succeeds in one run.
-- Only regular files (no symlinks) with the right WebM/PNG signature are copied out.
+- Only regular files (no symlinks) with the right WebM/PNG/GIF signature and under the size
+  cap (3 MiB per video, 512 KiB per poster, 4 MiB for the GIF, 1 MiB for the ledger) are copied
+  out, and never onto a symlink.
 
 ## Requirements
 

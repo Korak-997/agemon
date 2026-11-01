@@ -1,12 +1,6 @@
 import { readFileSync } from "node:fs";
 import { relative, sep } from "node:path";
-import type {
-  PhrasingContent,
-  RootContent,
-  Table,
-  TableCell,
-  TableRow,
-} from "mdast";
+import type { PhrasingContent, RootContent } from "mdast";
 import { parse } from "yaml";
 import { errorMessage } from "../../src/core/error-message.js";
 import type {
@@ -16,6 +10,7 @@ import type {
 import { skillFrontmatter } from "../../src/plugins/skills/skill-manifest.js";
 import { FIRST_PARTY_SKILLS, parseNotice } from "../skill-provenance.js";
 import { SiteContentError } from "./error.js";
+import { code, heading, paragraph, table, text } from "./markdown.js";
 import type { GeneratedPage, ProvenanceChip } from "./page.js";
 
 const SHORT_COMMIT_LENGTH = 12;
@@ -38,39 +33,11 @@ interface SkillProvenance {
   notice?: string;
 }
 
-const text = (value: string): PhrasingContent => ({ type: "text", value });
-const code = (value: string): PhrasingContent => ({
-  type: "inlineCode",
-  value,
-});
 const link = (url: string, label: string): PhrasingContent => ({
   type: "link",
   url,
   children: [text(label)],
 });
-const paragraph = (...children: PhrasingContent[]): RootContent => ({
-  type: "paragraph",
-  children,
-});
-const heading = (value: string, depth: 2 | 3 = 2): RootContent => ({
-  type: "heading",
-  depth,
-  children: [text(value)],
-});
-
-function table(header: string[], rows: PhrasingContent[][][]): Table {
-  const row = (cells: PhrasingContent[][]): TableRow => ({
-    type: "tableRow",
-    children: cells.map(
-      (children): TableCell => ({ type: "tableCell", children }),
-    ),
-  });
-  return {
-    type: "table",
-    children: [row(header.map((label) => [text(label)])), ...rows.map(row)],
-  };
-}
-
 export const SKILL_LIBRARY_ROUTE = `/${SKILLS_DIRECTORY}/`;
 
 export function skillGroupRoute(group: SkillGroup): string {
@@ -204,7 +171,7 @@ function skillGroupPage(
           : ", or pick it in the interactive prompt.",
       ),
     ),
-    heading("Skills"),
+    heading(text("Skills")),
     table(
       ["Skill", "Description", "Source", "Commit", "License"],
       skills.map(({ skill, provenance, description }) => [
@@ -218,7 +185,7 @@ function skillGroupPage(
   ];
   if (group.agents?.length) {
     body.push(
-      heading("Subagents"),
+      heading(text("Subagents")),
       table(
         ["Agent", "Tools", "Purpose"],
         group.agents.map((agent) => [
@@ -233,12 +200,12 @@ function skillGroupPage(
     provenance.notice === undefined
       ? []
       : [
-          heading(skill.skillName, 3),
+          heading(text(skill.skillName), 3),
           { type: "code", lang: "text", value: provenance.notice },
         ],
   );
   if (notices.length > 0) {
-    body.push(heading("NOTICE"), ...notices);
+    body.push(heading(text("NOTICE")), ...notices);
   }
   return {
     path: `${SKILLS_DIRECTORY}/${group.id}.md`,

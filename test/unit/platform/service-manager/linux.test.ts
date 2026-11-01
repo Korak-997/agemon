@@ -1,3 +1,4 @@
+import { chmodSync } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -11,7 +12,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { quoteForShlex } from "../../../../src/core/untrusted-text.js";
 import type {
   RunCommand,
   RunCommandResult,
@@ -22,6 +24,7 @@ import type { ServiceClock } from "../../../../src/platform/service-manager/read
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
@@ -116,6 +119,49 @@ function callsMatching(calls: CommandCall[], expected: string): number {
 }
 
 describe("linux service manager", () => {
+  it("reads a unit's Environment= lines, unquoting and unescaping them", async () => {
+    const { run } = createSystemdStub("no");
+    const { serviceManager, unitDirectory } = await createManager(run);
+    expect(
+      await serviceManager.readUnitEnvironment("agemon.service"),
+    ).toBeNull();
+
+    await mkdir(unitDirectory, { recursive: true });
+    await writeFile(
+      join(unitDirectory, "agemon.service"),
+      [
+        "[Service]",
+        'Environment="GIT_ALLOW_PROTOCOL="',
+        'Environment="CRG_HOME=/h/100%% \\"q\\" \\\\x"',
+        "Environment=PLAIN=value",
+        "UnsetEnvironment=GIT_DIR",
+        "",
+      ].join("\n"),
+    );
+
+    expect(await serviceManager.readUnitEnvironment("agemon.service")).toEqual({
+      GIT_ALLOW_PROTOCOL: "",
+      CRG_HOME: '/h/100% "q" \\x',
+      PLAIN: "value",
+    });
+  });
+
+  it("reads several assignments on one Environment= line", async () => {
+    const { run } = createSystemdStub("no");
+    const { serviceManager, unitDirectory } = await createManager(run);
+    await mkdir(unitDirectory, { recursive: true });
+    await writeFile(
+      join(unitDirectory, "agemon.service"),
+      '[Service]\nEnvironment="A=1" B=2 "C=x y"\n',
+    );
+
+    expect(await serviceManager.readUnitEnvironment("agemon.service")).toEqual({
+      A: "1",
+      B: "2",
+      C: "x y",
+    });
+  });
+
   it("registers autostart without ever reading or changing linger", async () => {
     const { run, calls } = createSystemdStub("no");
     const { serviceManager } = await createManager(run);
@@ -198,6 +244,63 @@ describe("linux service manager", () => {
       }),
     ).rejects.toThrow(
       "Cleanup also failed; run these yourself: systemctl --user disable --now agemon.service",
+    );
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "quotes a unit path containing ' in the manual cleanup advice",
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), "agemon-o'brien-"));
+      createdTempDirectories.push(homeDir);
+      const unitDirectory = join(homeDir, ".config", "systemd", "user");
+      const { run } = createSystemdStub("no", (call) => {
+        if (call === "systemctl --user enable --now agemon.service") {
+          chmodSync(unitDirectory, 0o500);
+          return FAILURE;
+        }
+        return undefined;
+      });
+      const serviceManager = createLinuxServiceManager({
+        run,
+        homeDir,
+        user: "tester",
+        clock: createFakeClock(),
+      });
+
+      const failure = (await serviceManager
+        .registerAutostart({
+          unitName: "agemon.service",
+          attempts: [STRICT_AND_COMPAT[0]],
+        })
+        .catch((error: unknown) => error)) as Error;
+      chmodSync(unitDirectory, 0o700);
+
+      expect(failure.message).toContain(
+        `rm ${quoteForShlex(join(unitDirectory, "agemon.service"))}`,
+      );
+      expect(failure.message).toContain("o'\\''brien");
+    },
+  );
+
+  it("reads the unit state with USER, LOGNAME and USERNAME unset, and fails only on linger", async () => {
+    vi.stubEnv("USER", "");
+    vi.stubEnv("LOGNAME", "");
+    vi.stubEnv("USERNAME", "");
+    const homeDir = await mkdtemp(join(tmpdir(), "agemon-linux-sm-"));
+    createdTempDirectories.push(homeDir);
+    const { run } = createSystemdStub("no");
+
+    const serviceManager = createLinuxServiceManager({
+      run,
+      homeDir,
+      clock: createFakeClock(),
+    });
+
+    await expect(serviceManager.isActive("agemon.service")).resolves.toEqual({
+      active: true,
+    });
+    await expect(serviceManager.isLingerEnabled()).rejects.toThrow(
+      "Unable to resolve current user for loginctl commands",
     );
   });
 
@@ -375,6 +478,31 @@ describe("linux service manager", () => {
     ).toBe(true);
   });
 
+  it("bounds a daemon-reload failure message from assertSucceeded", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "agemon-linux-service-test-"));
+    createdTempDirectories.push(homeDir);
+    const stderr = Array.from({ length: 5_000 }, (_, i) => `reload ${i}`).join(
+      "\n",
+    );
+    const { run } = createRunStub((command, args) =>
+      command === "systemctl" && args.join(" ") === "--user daemon-reload"
+        ? { code: 1, stdout: "", stderr }
+        : { code: 0, stdout: "", stderr: "" },
+    );
+    const serviceManager = createLinuxServiceManager({
+      run,
+      homeDir,
+      user: "tester",
+    });
+
+    const failure = (await serviceManager
+      .unregisterAutostart({ unitName: "agemon.service" })
+      .catch((error: unknown) => error)) as Error;
+
+    expect(failure.message.split("\n").length).toBeLessThanOrEqual(11);
+    expect(failure.message).toContain("reload 4999");
+  });
+
   it("throws when unregister disable fails for a non-missing error", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "agemon-linux-service-test-"));
     createdTempDirectories.push(homeDir);
@@ -404,6 +532,31 @@ describe("linux service manager", () => {
         unitName: "agemon.service",
       }),
     ).rejects.toThrow("permission denied");
+  });
+
+  it("bounds a systemctl failure message to the last 10 lines of stderr", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "agemon-linux-sm-"));
+    createdTempDirectories.push(homeDir);
+    const stderr = Array.from({ length: 5_000 }, (_, i) => `unit ${i}`).join(
+      "\n",
+    );
+    const { run } = createRunStub((command) =>
+      command === "systemctl"
+        ? { code: 1, stdout: "", stderr }
+        : { code: 0, stdout: "", stderr: "" },
+    );
+    const serviceManager = createLinuxServiceManager({
+      run,
+      homeDir,
+      user: "tester",
+    });
+
+    const failure = (await serviceManager
+      .unregisterAutostart({ unitName: "agemon.service" })
+      .catch((error: unknown) => error)) as Error;
+
+    expect(failure.message.split("\n").length).toBeLessThanOrEqual(11);
+    expect(failure.message).toContain("unit 4999");
   });
 
   it("unregister never touches linger", async () => {

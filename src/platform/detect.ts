@@ -1,7 +1,9 @@
 import { constants } from "node:fs";
-import { access, readFile, stat } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
+import { errorMessage } from "../core/error-message.js";
+import { readRegularFileIfExists } from "../core/files.js";
 
 export const REQUIRED_BINARIES = [
   "python3",
@@ -92,12 +94,17 @@ function isSupportedLinuxDistribution(osReleaseContents: string): boolean {
 async function findLinuxUnsupportedReason(
   osReleasePath: string,
 ): Promise<string | null> {
-  let osReleaseContents: string;
+  let osReleaseContents: string | null;
   try {
-    osReleaseContents = await readFile(osReleasePath, "utf8");
+    osReleaseContents = await readRegularFileIfExists(
+      await realpath(osReleasePath),
+    );
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? "unknown error";
-    return `agemon could not identify this Linux distribution: reading ${osReleasePath} failed (${code}). ${READ_ONLY_COMMANDS_NOTE}`;
+    const reason = (error as NodeJS.ErrnoException).code ?? errorMessage(error);
+    return `agemon could not identify this Linux distribution: reading ${osReleasePath} failed (${reason}). ${READ_ONLY_COMMANDS_NOTE}`;
+  }
+  if (osReleaseContents === null) {
+    return `agemon could not identify this Linux distribution: reading ${osReleasePath} failed (ENOENT). ${READ_ONLY_COMMANDS_NOTE}`;
   }
 
   if (isSupportedLinuxDistribution(osReleaseContents)) {
@@ -137,11 +144,11 @@ function detectDarwinServiceManager(): ServiceManagerKind {
 }
 
 function resolveOsReleasePath(input: DetectPlatformInput): string {
-  return (
-    input.osReleasePath ??
-    process.env.AGEMON_OS_RELEASE_PATH ??
-    "/etc/os-release"
-  );
+  const testOverride =
+    process.env.AGEMON_DEV === "1"
+      ? process.env.AGEMON_OS_RELEASE_PATH
+      : undefined;
+  return input.osReleasePath ?? testOverride ?? "/etc/os-release";
 }
 
 export async function detectPlatformCapabilities(

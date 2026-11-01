@@ -84,7 +84,7 @@ function createRunner(
       return OK;
     },
   );
-  const ctx = { run } as unknown as Pick<Context, "run">;
+  const ctx = { run, cwd: "/repo" } as unknown as Pick<Context, "run" | "cwd">;
   const npmCiCalls = () =>
     (run.mock.calls as RunCall[]).filter(
       ([command, args]) => command === "npm" && args[0] === "ci",
@@ -234,7 +234,7 @@ describe("ensureSkillsCli", () => {
 });
 
 describe("runSkillsCli", () => {
-  it("runs the pinned CLI with this Node binary, in the caller's cwd", async () => {
+  it("runs the pinned CLI with this Node binary, in the repository", async () => {
     const { ctx, run } = createRunner();
 
     await runSkillsCli(ctx, ["list", "--json"], 30_000);
@@ -243,7 +243,7 @@ describe("runSkillsCli", () => {
     expect(run).toHaveBeenLastCalledWith(
       process.execPath,
       [join(toolsDirectory, SKILLS_CLI_PATH_IN_TOOLS_DIR), "list", "--json"],
-      { timeoutMs: 30_000 },
+      { cwd: "/repo", timeoutMs: 30_000 },
     );
   });
 });

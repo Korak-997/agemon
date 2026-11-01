@@ -19,11 +19,23 @@ export function skillsLedgerEntries(ctx: Context): LedgerEntry[] {
     .filter((action) => action.plugin === SKILLS_PLUGIN_ID);
 }
 
-export function recordedSkillNames(ctx: Context): Set<string> {
+function skillNamesIn(entries: LedgerEntry[]): Set<string> {
   return new Set(
-    skillsLedgerEntries(ctx)
+    entries
       .filter((action) => SKILL_RECORD_TYPES.has(action.type))
       .map((action) => action.target),
+  );
+}
+
+export function recordedSkillNames(ctx: Context): Set<string> {
+  return skillNamesIn(skillsLedgerEntries(ctx));
+}
+
+export function confirmedRecordedSkillNames(ctx: Context): Set<string> {
+  return skillNamesIn(
+    skillsLedgerEntries(ctx).filter((action) =>
+      ctx.manifest.isConfirmed(action),
+    ),
   );
 }
 

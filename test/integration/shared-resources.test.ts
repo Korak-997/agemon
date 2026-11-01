@@ -213,6 +213,9 @@ describe("shared tools across repositories", () => {
     expect(nuke.output).toContain(
       "Keeping code-review-graph: this repository is not registered as using it",
     );
+    expect(nuke.output).toContain(
+      "Keeping agnix: this repository is not registered as using it",
+    );
     expect(machine.crgInstalled()).toBe(true);
     expect(await machine.agnixInstalled()).toBe(true);
   }, 60_000);

@@ -14,14 +14,23 @@ import type { CustomSkillGroupConfig } from "../../../src/core/config.js";
 import { buildConsentGates } from "../../../src/core/consent.js";
 import type { Context } from "../../../src/core/context.js";
 import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
-import { StateManifest } from "../../../src/core/state-manifest.js";
+import {
+  type LedgerEntry,
+  StateManifest,
+} from "../../../src/core/state-manifest.js";
 import { resolveStateRoot } from "../../../src/core/state-root.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { buildCustomSkillGroups } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 import { resolvePinnedSkillsSourceDirectory } from "../../../src/plugins/skills/pinned-source.js";
-import type { ProposedOperation } from "../../../src/plugins/types.js";
+import { fingerprintInstalledSkill } from "../../../src/plugins/skills/skill-tree.js";
+import type {
+  PluginApplyReport,
+  ProposedOperation,
+} from "../../../src/plugins/types.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -45,6 +54,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -84,11 +96,11 @@ async function createTestContext(
   const sandboxDirectory = await createSandbox();
   process.env.AGEMON_DEV = "1";
   process.env.AGEMON_FAKE_SUBPROCESS = "1";
-  delete process.env.AGEMON_FAKE_PREINSTALLED_SKILLS;
   resetFakeSubprocessState();
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
@@ -138,7 +150,7 @@ function planSkills(ctx: Context): Promise<ProposedOperation[]> {
 function applySkills(
   ctx: Context,
   operations: ProposedOperation[],
-): Promise<void> {
+): Promise<PluginApplyReport | undefined> {
   return (skillsPlugin.apply as NonNullable<typeof skillsPlugin.apply>)(
     ctx,
     operations,
@@ -223,6 +235,130 @@ describe("custom skill groups: recorded groups", () => {
   });
 });
 
+describe("custom skill groups: unconfirmed ledger entries", () => {
+  function houseRulesEntry() {
+    return {
+      plugin: "skills",
+      type: "installed-skill",
+      target: "house-rules",
+      preExisting: false,
+    };
+  }
+
+  it("an unconfirmed entry naming a custom group's skill does not make it recorded", async () => {
+    const ctx = await createTestContext([HOUSE_STYLE], "essentials");
+    await writeLocalSkill(ctx.cwd);
+    await appendLedgerClaims(ctx, [houseRulesEntry()]);
+
+    const operations = await planSkills({ ...ctx, yes: true });
+
+    expect(operations.map((operation) => operation.resourceId)).not.toContain(
+      "custom-skill-group:house-style",
+    );
+  });
+
+  it("a custom group this machine recorded is still repaired when a skill is missing", async () => {
+    const ctx = await createTestContext([HOUSE_STYLE], "essentials");
+    await writeLocalSkill(ctx.cwd);
+    await ctx.manifest.recordAction(houseRulesEntry());
+
+    const operations = await planSkills({ ...ctx, yes: true });
+
+    expect(operations.map((operation) => operation.resourceId)).toContain(
+      "custom-skill-group:house-style",
+    );
+  });
+});
+
+describe("custom skill groups: removed from agemon.toml", () => {
+  async function orphanRows(ctx: Context) {
+    const rows = (await skillsPlugin.describeState?.(ctx)) ?? [];
+    return rows.filter((row) => row.resourceId === "skill-groups:orphaned");
+  }
+
+  it("status reports skills of a custom group removed from agemon.toml in one orphaned row", async () => {
+    const ctx = await createTestContext([], "essentials");
+    await ctx.manifest.recordAction({
+      plugin: "skills",
+      type: "installed-skill",
+      target: "house-rules",
+      preExisting: false,
+    });
+
+    expect(await orphanRows(ctx)).toEqual([
+      {
+        capabilityId: "skills",
+        resourceId: "skill-groups:orphaned",
+        label: "skills of removed groups",
+        state: "present-managed",
+        detail:
+          "house-rules: their skill group is no longer defined; 'agemon nuke --only skills' removes them",
+      },
+    ]);
+  });
+
+  it("orphaned names recorded only by claims are labelled as kept by nuke", async () => {
+    const ctx = await createTestContext([], "essentials");
+    await appendLedgerClaims(ctx, [
+      {
+        plugin: "skills",
+        type: "installed-skill",
+        target: "house-rules",
+        preExisting: false,
+      },
+    ]);
+
+    expect(await orphanRows(ctx)).toEqual([
+      expect.objectContaining({
+        state: "present-adopted",
+        detail:
+          "house-rules: their skill group is no longer defined; 'agemon nuke --only skills' removes them (1 not recorded on this machine; nuke keeps those)",
+      }),
+    ]);
+  });
+
+  it("a recorded built-in group keeps its own row and only the removed group's skill is orphaned", async () => {
+    const ctx = await createTestContext([], "essentials");
+    for (const target of [
+      "web-design-guidelines",
+      "writing-guidelines",
+      "house-rules",
+    ]) {
+      await ctx.manifest.recordAction({
+        plugin: "skills",
+        type: "installed-skill",
+        target,
+        preExisting: false,
+      });
+    }
+
+    const rows = (await skillsPlugin.describeState?.(ctx)) ?? [];
+
+    expect(rows.map((row) => row.resourceId)).toEqual([
+      "skill-group:essentials",
+      "skill-groups:orphaned",
+    ]);
+    expect(await orphanRows(ctx)).toEqual([
+      expect.objectContaining({
+        detail:
+          "house-rules: their skill group is no longer defined; 'agemon nuke --only skills' removes them",
+      }),
+    ]);
+  });
+
+  it("pre-existing skills are never listed as orphaned", async () => {
+    const ctx = await createTestContext([], "essentials");
+    await ctx.manifest.recordAction({
+      plugin: "skills",
+      type: "preexisting-skill",
+      target: "house-rules",
+      preExisting: true,
+    });
+
+    expect(await orphanRows(ctx)).toEqual([]);
+  });
+});
+
 describe("custom skill groups: local sources", () => {
   it("plans one custom-skill-group operation that names the source and its content hash", async () => {
     const ctx = await createTestContext();
@@ -244,6 +380,19 @@ describe("custom skill groups: local sources", () => {
     const addSources = recordSkillsAddSources(ctx);
 
     await applySkills(ctx, await planSkills(ctx));
+
+    expect(
+      ctx.manifest
+        .getActions()
+        .find(
+          (entry) =>
+            entry.type === "installed-skill" && entry.target === "house-rules",
+        )?.fingerprintAfter,
+    ).toBe(
+      await fingerprintInstalledSkill(
+        join(ctx.cwd, ".claude/skills/house-rules"),
+      ),
+    );
 
     const stagedSource = addSources.find((source) =>
       source.endsWith("/house-rules"),
@@ -467,6 +616,109 @@ describe("custom skill groups: GitHub sources", () => {
         "lint-rules",
       ),
     );
+  });
+
+  function withCheckoutStatus(ctx: Context, porcelainStatus: string): void {
+    const run = ctx.run;
+    ctx.run = async (command, args, options) => {
+      const subcommand = args.slice(6);
+      if (command === "git" && subcommand[0] === "init") {
+        await mkdir(join(options?.cwd ?? "", ".git"), { recursive: true });
+      }
+      const result = await run(command, args, options);
+      return command === "git" && subcommand[0] === "status"
+        ? { ...result, stdout: porcelainStatus }
+        : result;
+    };
+  }
+
+  function lintRulesInstallEntry(ctx: Context): LedgerEntry | undefined {
+    return ctx.manifest
+      .getActions()
+      .find(
+        (entry) =>
+          entry.type === "installed-skill" && entry.target === "lint-rules",
+      );
+  }
+
+  it("records the installed fingerprint when the cached checkout is pristine, and nuke then removes the copy without git", async () => {
+    const ctx = await createTestContext([REMOTE], "acme");
+    const gitCalls = fakeGitCheckout(ctx, "lint-rules");
+    withCheckoutStatus(ctx, "");
+
+    await applySkills(ctx, await planSkills(ctx));
+
+    const copy = join(ctx.cwd, ".claude/skills/lint-rules");
+    const entry = lintRulesInstallEntry(ctx);
+    expect(entry?.fingerprintAfter).toBe(await fingerprintInstalledSkill(copy));
+    expect(entry !== undefined && ctx.manifest.isConfirmed(entry)).toBe(true);
+    expect(gitCalls.filter((args) => args.includes("status"))).toEqual([
+      [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "credential.helper=",
+        "status",
+        "--porcelain",
+        "--ignored",
+      ],
+    ]);
+    const gitCallsBeforeNuke = gitCalls.length;
+
+    await skillsPlugin.uninstall(ctx);
+
+    expect(existsSync(copy)).toBe(false);
+    expect(gitCalls).toHaveLength(gitCallsBeforeNuke);
+  });
+
+  it("records no fingerprint when the cached checkout is not pristine, and nuke keeps the copy", async () => {
+    const ctx = await createTestContext([REMOTE], "acme");
+    fakeGitCheckout(ctx, "lint-rules");
+    withCheckoutStatus(ctx, "?? stray\n");
+
+    await applySkills(ctx, await planSkills(ctx));
+
+    expect(lintRulesInstallEntry(ctx)?.fingerprintAfter).toBeNull();
+    await skillsPlugin.uninstall(ctx);
+    expect(existsSync(join(ctx.cwd, ".claude/skills/lint-rules"))).toBe(true);
+  });
+
+  it("records no fingerprint when the cached checkout is at another commit", async () => {
+    const ctx = await createTestContext([REMOTE], "acme");
+    fakeGitCheckout(ctx, "lint-rules");
+    withCheckoutStatus(ctx, "");
+    const run = ctx.run;
+    ctx.run = async (command, args, options) =>
+      command === "git" && args.includes("--verify")
+        ? { code: 0, stdout: `${"b".repeat(40)}\n`, stderr: "" }
+        : run(command, args, options);
+
+    await applySkills(ctx, await planSkills(ctx));
+
+    expect(lintRulesInstallEntry(ctx)?.fingerprintAfter).toBeNull();
+  });
+
+  it("records no fingerprint when the installed copy differs from the cached checkout", async () => {
+    const ctx = await createTestContext([REMOTE], "acme");
+    fakeGitCheckout(ctx, "lint-rules");
+    withCheckoutStatus(ctx, "");
+    const run = ctx.run;
+    ctx.run = async (command, args, options) => {
+      const result = await run(command, args, options);
+      if (command === process.execPath && args.includes("lint-rules")) {
+        await writeFile(
+          join(ctx.cwd, ".claude/skills/lint-rules/extra.md"),
+          "not from the checkout\n",
+        );
+      }
+      return result;
+    };
+
+    await applySkills(ctx, await planSkills(ctx));
+
+    expect(lintRulesInstallEntry(ctx)?.fingerprintAfter).toBeNull();
   });
 
   it("refuses a fetched skill whose SKILL.md has another name", async () => {

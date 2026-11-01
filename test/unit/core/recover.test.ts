@@ -32,6 +32,7 @@ import type {
   AgemonPlugin,
   ProposedOperation,
 } from "../../../src/plugins/types.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const PLAN_ID = "0123456789abcdef";
@@ -59,6 +60,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -91,6 +95,7 @@ async function createHarness(
     output,
     ctx: {
       cwd: repo,
+      gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
       platform: LINUX_TEST_PLATFORM,
       binaries: [],
       dryRun: false,

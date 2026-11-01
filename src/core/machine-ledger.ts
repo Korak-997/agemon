@@ -1,4 +1,4 @@
-import { lstat, rm } from "node:fs/promises";
+import { lstat, realpath, rm } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { HeldFileLock } from "./file-lock.js";
 import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
@@ -61,6 +61,65 @@ export async function directoryIdentity(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+interface DirectoryTimes {
+  ino: bigint;
+  birthtimeNs: bigint;
+  ctimeNs: bigint;
+}
+
+export interface ReceiptIdentities {
+  signing: string;
+  byBirthTime: string | null;
+  byPath: string;
+  usableBirthTimeMs: number | null;
+}
+
+const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
+const ENTRY_CLOCK_TOLERANCE_MS = 1_000;
+
+export function receiptIdentitiesFromStats(
+  stats: DirectoryTimes,
+  realpathOfDirectory: string,
+): ReceiptIdentities {
+  const byBirthTime =
+    stats.birthtimeNs === 0n ? null : `${stats.ino}:${stats.birthtimeNs}`;
+  const byPath = `${stats.ino}:${realpathOfDirectory}`;
+  const birthTimeIsUsable =
+    byBirthTime !== null && stats.birthtimeNs !== stats.ctimeNs;
+  return {
+    signing: birthTimeIsUsable ? byBirthTime : byPath,
+    byBirthTime,
+    byPath,
+    usableBirthTimeMs: birthTimeIsUsable
+      ? Number(stats.birthtimeNs / NANOSECONDS_PER_MILLISECOND)
+      : null,
+  };
+}
+
+export function identitiesAcceptingEntry(
+  identities: ReceiptIdentities,
+  entryCreatedAt: string,
+): string[] {
+  const createdAtMs = Date.parse(entryCreatedAt);
+  const pathFormIsPlausible =
+    identities.usableBirthTimeMs === null ||
+    createdAtMs >= identities.usableBirthTimeMs - ENTRY_CLOCK_TOLERANCE_MS;
+  return [
+    ...(identities.byBirthTime === null ? [] : [identities.byBirthTime]),
+    ...(pathFormIsPlausible ? [identities.byPath] : []),
+  ];
+}
+
+export async function repositoryReceiptIdentities(
+  repoRoot: string,
+): Promise<ReceiptIdentities> {
+  const realpathOfRepository = await realpath(repoRoot);
+  return receiptIdentitiesFromStats(
+    await lstat(realpathOfRepository, { bigint: true }),
+    realpathOfRepository,
+  );
 }
 
 function hasTrustworthyBirthTime(directoryId: string): boolean {

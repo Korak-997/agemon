@@ -143,7 +143,7 @@ export async function resolveRepoDirectory(
   return resolveRealDirectory(repoRoot, relativeDirectory.split("/"), options);
 }
 
-async function readRegularFilePrefix(
+export async function readRegularFilePrefix(
   path: string,
   maxBytes: number,
 ): Promise<string | null> {

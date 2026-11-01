@@ -28,6 +28,7 @@ export function createUnavailableServiceManager(
       refuseWithoutSystemd(`agemon cannot register ${unitName} here`),
     unregisterAutostart: ({ unitName }) => refuseUnit(unitName),
     readUnitWorkingDirectory: unitFiles.readUnitWorkingDirectory,
+    readUnitEnvironment: async () => null,
     unitPathFor: unitFiles.unitPathFor,
     isLingerEnabled: refuseLinger,
     enableLinger: refuseLinger,

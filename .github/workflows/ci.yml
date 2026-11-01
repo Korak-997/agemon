@@ -44,8 +44,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit (production + high-severity dev advisories)
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev
 
       - name: Audit the pinned skills CLI lockfile
         run: npm audit --prefix assets/tools --audit-level=high
@@ -81,6 +81,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -90,6 +92,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Check bundled skill fingerprints against every release
+        run: npm run skills:fingerprints -- --check
 
       - name: Sandbox dry-run checkpoint
         run: npm run sandbox -- run clean-repo --dry-run

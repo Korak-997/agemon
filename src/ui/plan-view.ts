@@ -1,10 +1,12 @@
 import type { Plan } from "../core/plan-store.js";
 import { styleUnifiedDiff } from "../core/text-diff.js";
+import { describeUntrustedGitConfig } from "../core/untrusted-git-config.js";
 import { printable } from "../core/untrusted-text.js";
 import type {
   ProposedOperation,
   ProposedOperationAction,
   RiskClass,
+  UntrustedGitConfig,
 } from "../plugins/types.js";
 import { type CountPart, countLine, indent, section } from "./format.js";
 import { type SymbolName, symbol } from "./symbols.js";
@@ -69,18 +71,33 @@ function renderPreview(operation: ProposedOperation): string {
   return indent(theme.dim(previewText), 7);
 }
 
+function describeGitConfigInPlan(field: UntrustedGitConfig): string {
+  return field.kind === "pairs"
+    ? `needs approval or --trust-repo-git-config: ${field.pairs.join("; ")}`
+    : `skipped: ${describeUntrustedGitConfig(field)}`;
+}
+
 function renderOperation(operation: ProposedOperation): string {
   const glyph = symbol(ACTION_GLYPH[operation.action]);
   const badgeText = theme.dim(`[${RISK_LABEL[operation.riskClass]}]`);
   const target = operation.targetPath || operation.resourceId;
   const heading = `  ${glyph}  ${target.padEnd(24)} ${badgeText}`;
-  return `${heading}\n${renderPreview(operation)}`;
+  const untrustedGitConfigLine =
+    operation.untrustedGitConfig === undefined
+      ? ""
+      : `\n${indent(theme.warn(printable(describeGitConfigInPlan(operation.untrustedGitConfig))), 7)}`;
+  return `${heading}\n${renderPreview(operation)}${untrustedGitConfigLine}`;
 }
 
 function planFooter(operations: ProposedOperation[]): string {
   const counts = new Map<string, number>();
   for (const operation of operations) {
-    const label = ACTION_LABEL[operation.action];
+    const skippedBeforeConsent =
+      operation.untrustedGitConfig !== undefined &&
+      operation.untrustedGitConfig.kind !== "pairs";
+    const label = skippedBeforeConsent
+      ? ACTION_LABEL.skip
+      : ACTION_LABEL[operation.action];
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   const parts: CountPart[] = [...counts].map(([label, n]) => ({ label, n }));

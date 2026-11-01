@@ -491,6 +491,45 @@ describe("launchd service manager — unregister and state", () => {
     }
   });
 
+  it("reads the launch agent's environment, unescaping values, and nothing from a binary plist", async () => {
+    const { manager, plistPath, homeDir } = await createManager(
+      createFakeLaunchd(),
+    );
+    expect(await manager.readUnitEnvironment(PLIST)).toBeNull();
+
+    await mkdir(join(homeDir, "Library", "LaunchAgents"), { recursive: true });
+    await writeFile(
+      plistPath,
+      plistFor(LABEL, "/repo").replace(
+        "</dict></plist>",
+        "  <key>EnvironmentVariables</key>\n  <dict>\n    <key>GIT_ALLOW_PROTOCOL</key>\n    <string></string>\n    <key>CRG_HOME</key>\n    <string>/h/a &amp; b</string>\n  </dict>\n</dict></plist>",
+      ),
+    );
+    expect(await manager.readUnitEnvironment(PLIST)).toEqual({
+      GIT_ALLOW_PROTOCOL: "",
+      CRG_HOME: "/h/a & b",
+    });
+  });
+
+  it("reads no environment from a binary, CDATA or oversized plist", async () => {
+    const { manager, plistPath, homeDir } = await createManager(
+      createFakeLaunchd(),
+    );
+    await mkdir(join(homeDir, "Library", "LaunchAgents"), { recursive: true });
+
+    for (const contents of [
+      "bplist00binary",
+      `<plist><dict><key>Label</key><string>${LABEL}</string><key>Note</key><string><![CDATA[x]]></string></dict></plist>`,
+      plistFor(LABEL, "/repo").replace(
+        "</dict></plist>",
+        `<key>Padding</key><string>${"x".repeat(70 * 1024)}</string></dict></plist>`,
+      ),
+    ]) {
+      await writeFile(plistPath, contents);
+      expect(await manager.readUnitEnvironment(PLIST)).toBeNull();
+    }
+  });
+
   it("finds a remaining agemon launch agent", async () => {
     const { manager, homeDir } = await createManager(createFakeLaunchd());
     expect(await manager.findAgemonDaemonUnit()).toBeNull();

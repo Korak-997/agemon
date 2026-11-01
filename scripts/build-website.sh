@@ -24,7 +24,6 @@ set -- --install-sh "$install_script"
 [ -z "$sha256sums" ] || set -- "$@" --sha256sums "$sha256sums"
 [ -z "$release_tag" ] || set -- "$@" --release-tag "$release_tag"
 
-npm run build
 npm run website:content -- "$@"
 npm --prefix website run build
 npx tsx scripts/site-csp.ts "$SITE_ORIGIN"

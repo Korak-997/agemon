@@ -1,5 +1,6 @@
 # See README.md.
 Output roundtrip.webm
+Output roundtrip.gif
 Source "/tapes/settings.tape"
 
 Hide

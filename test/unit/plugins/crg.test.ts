@@ -15,17 +15,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "../../../src/core/context.js";
+import {
+  directoryIdentity,
+  readMachineLedger,
+} from "../../../src/core/machine-ledger.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
+import { resolveAgemonStateDirectory } from "../../../src/core/state-root.js";
 import type {
   RunSubprocessOptions,
   SubprocessResult,
 } from "../../../src/core/subprocess-runner.js";
+import type {
+  GitConfigGuard,
+  GitConfigGuardResult,
+} from "../../../src/core/untrusted-git-config.js";
 import { hashLockedPipArgs } from "../../../src/plugins/crg/constraints.js";
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
 import { describeSharedTools } from "../../../src/plugins/shared-resource.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const PINNED_SPEC = `code-review-graph==${CODE_REVIEW_GRAPH_VERSION}`;
@@ -116,6 +127,7 @@ async function createTestContext(options: { dryRun?: boolean } = {}) {
   const infos: string[] = [];
   const context = {
     cwd: repo,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     dryRun: options.dryRun ?? false,
     run,
@@ -210,7 +222,7 @@ describe("crg plugin — install, verify, uninstall", () => {
     expect(calls).toEqual([]);
   });
 
-  it("crg subprocesses get core.fsmonitor and core.hooksPath disabled, after existing GIT_CONFIG pairs", async () => {
+  it("crg subprocesses get fsmonitor, hooks and submodule recursion disabled after existing GIT_CONFIG pairs, and no git transport", async () => {
     const { context, calls, home } = await createTestContext();
     vi.stubEnv("GIT_CONFIG_COUNT", "1");
     vi.stubEnv("GIT_CONFIG_KEY_0", "user.name");
@@ -223,12 +235,20 @@ describe("crg plugin — install, verify, uninstall", () => {
       CRG_HOME: join(home, ".code-review-graph"),
       CRG_DATA_DIR: "",
       GIT_CONFIG_PARAMETERS: "",
-      GIT_CONFIG_COUNT: "3",
+      GIT_CONFIG_COUNT: "4",
       GIT_CONFIG_KEY_1: "core.fsmonitor",
       GIT_CONFIG_VALUE_1: "false",
       GIT_CONFIG_KEY_2: "core.hooksPath",
       GIT_CONFIG_VALUE_2: "/dev/null",
+      GIT_CONFIG_KEY_3: "diff.ignoreSubmodules",
+      GIT_CONFIG_VALUE_3: "all",
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_ALLOW_PROTOCOL: "",
     });
+    expect(buildCall?.[2]?.unsetEnv).toEqual(
+      expect.arrayContaining(["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]),
+    );
+    expect(buildCall?.[2]?.unsetEnv).not.toContain("GIT_CONFIG_COUNT");
   });
 
   it("overwrites a GIT_CONFIG_COUNT that is not a number", async () => {
@@ -239,9 +259,10 @@ describe("crg plugin — install, verify, uninstall", () => {
 
     const buildCall = calls.find(([, args]) => args[0] === "build");
     expect(buildCall?.[2]?.env).toMatchObject({
-      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_COUNT: "3",
       GIT_CONFIG_KEY_0: "core.fsmonitor",
       GIT_CONFIG_KEY_1: "core.hooksPath",
+      GIT_CONFIG_KEY_2: "diff.ignoreSubmodules",
     });
   });
 
@@ -344,6 +365,27 @@ describe("crg plugin — install edge cases", () => {
     expect(existsSync(join(repo, ".code-review-graph"))).toBe(false);
   });
 
+  it("bounds the build failure message to the last 10 lines of stderr", async () => {
+    const { context, run } = await createTestContext();
+    const succeed = run.getMockImplementation();
+    const stderr = Array.from({ length: 5_000 }, (_, i) => `trace ${i}`).join(
+      "\n",
+    );
+    run.mockImplementation(async (command, args, options) => {
+      const result = await succeed?.(command, args, options);
+      return args[0] === "build"
+        ? { code: 1, stdout: "", stderr }
+        : (result ?? { code: 0, stdout: "", stderr: "" });
+    });
+
+    const failure = await crgPlugin.install(context).catch((error) => error);
+
+    expect((failure as Error).message.split("\n").length).toBeLessThanOrEqual(
+      11,
+    );
+    expect((failure as Error).message).toContain("trace 4999");
+  });
+
   it("says the venv is broken when pipx leaves it without an interpreter", async () => {
     const { context, run, pipxHome } = await createTestContext();
     run.mockImplementation(async () => {
@@ -392,7 +434,10 @@ describe("crg plugin — install edge cases", () => {
 
     const verification = await crgPlugin.verify(context);
 
-    expect(verification).toEqual({ ok: false, detail: "bad ?[31mred" });
+    expect(verification).toEqual({
+      ok: false,
+      detail: "code-review-graph status failed: bad red",
+    });
   });
 
   it("nuke stops the daemon before removing the graph", async () => {
@@ -524,6 +569,128 @@ describe("crg plugin — hash-lock attention", () => {
 
     expect(verification.ok).toBe(true);
     expect(verification.attention).toBeUndefined();
+  });
+
+  describe("untrusted repository git config", () => {
+    const UNTRUSTED: GitConfigGuardResult = {
+      kind: "pairs",
+      pairs: [".git/config: diff.x.command=/tmp/differ"],
+      fingerprint: "e".repeat(64),
+    };
+
+    function guardReturning(
+      planned: GitConfigGuardResult,
+      recheck: GitConfigGuardResult = planned,
+    ): GitConfigGuard {
+      return { planned: async () => planned, recheck: async () => recheck };
+    }
+
+    it("marks crg's install operation with the untrusted keys", async () => {
+      const { context } = await createTestContext();
+      context.gitConfigGuard = guardReturning(UNTRUSTED);
+
+      const [operation] = await (crgPlugin.plan?.(context) ?? []);
+
+      expect(operation.untrustedGitConfig).toEqual(UNTRUSTED);
+    });
+
+    it("prints why it could not read the config and marks the operation unreadable", async () => {
+      const { context, infos } = await createTestContext();
+      context.gitConfigGuard = guardReturning({
+        kind: "unreadable",
+        category: "git-failed",
+        detail: "fatal: bad config line 1",
+      });
+
+      const [operation] = await (crgPlugin.plan?.(context) ?? []);
+
+      expect(operation.untrustedGitConfig).toEqual({
+        kind: "unreadable",
+        category: "git-failed",
+      });
+      expect(infos).toContain(
+        "could not read this repository's git config: fatal: bad config line 1",
+      );
+    });
+
+    it("refuses the build when the config changed after a clean plan", async () => {
+      const { context, calls } = await createTestContext();
+      context.gitConfigGuard = guardReturning({ kind: "clean" }, UNTRUSTED);
+      const operations = (await crgPlugin.plan?.(context)) ?? [];
+
+      await expect(crgPlugin.apply?.(context, operations)).rejects.toThrow(
+        "this repository's git config changed since the plan",
+      );
+      expect(calls.some(([, args]) => args[0] === "build")).toBe(false);
+    });
+
+    it("builds when the approved set is unchanged at apply", async () => {
+      const { context, calls } = await createTestContext();
+      context.gitConfigGuard = guardReturning(UNTRUSTED);
+      const operations = (await crgPlugin.plan?.(context)) ?? [];
+
+      await crgPlugin.apply?.(context, operations);
+
+      expect(calls.some(([, args]) => args[0] === "build")).toBe(true);
+    });
+
+    it("refuses the build when the approved set changed between plan and apply", async () => {
+      const { context, calls } = await createTestContext();
+      context.gitConfigGuard = guardReturning(UNTRUSTED, {
+        ...UNTRUSTED,
+        fingerprint: "0".repeat(64),
+      } as GitConfigGuardResult);
+      const operations = (await crgPlugin.plan?.(context)) ?? [];
+
+      await expect(crgPlugin.apply?.(context, operations)).rejects.toThrow(
+        "this repository's git config changed since the plan",
+      );
+      expect(calls.some(([, args]) => args[0] === "build")).toBe(false);
+    });
+
+    it("verifies with attention listing the keys and runs no code-review-graph status", async () => {
+      const { context, calls } = await createTestContext();
+      await crgPlugin.install(context);
+      context.gitConfigGuard = guardReturning(UNTRUSTED);
+      calls.length = 0;
+
+      const verification = await crgPlugin.verify(context);
+
+      expect(verification).toMatchObject({ ok: true });
+      expect(verification.attention).toBe(
+        "this repository's git config has keys agemon does not trust by default: .git/config: diff.x.command=/tmp/differ; code-review-graph runs git here. Remove them, or run 'agemon nuke --only crg' and then 'agemon --only crg' interactively to review them in the trust gate.",
+      );
+      expect(calls.some(([, args]) => args[0] === "status")).toBe(false);
+    });
+
+    it("shows the hash-lock and the git config attention together", async () => {
+      const { context, pipxHome } = await createTestContext();
+      await crgPlugin.install(context);
+      await createPipxVenv(pipxHome, { pipArgs: [] });
+      context.gitConfigGuard = guardReturning(UNTRUSTED);
+
+      const { attention } = await crgPlugin.verify(context);
+
+      expect(attention).toMatch(
+        /not hash-locked.*; this repository's git config has keys/,
+      );
+    });
+
+    it("fails verification when the config cannot be read", async () => {
+      const { context } = await createTestContext();
+      await crgPlugin.install(context);
+      context.gitConfigGuard = guardReturning({
+        kind: "unreadable",
+        category: "truncated",
+        detail: "git config output exceeded the capture limit",
+      });
+
+      expect(await crgPlugin.verify(context)).toEqual({
+        ok: false,
+        detail:
+          "could not read this repository's git config: git config output exceeded the capture limit",
+      });
+    });
   });
 
   it("asks an agemon-installed crg without hash locking to be reinstalled through pipx", async () => {
@@ -874,6 +1041,121 @@ describe("crg plugin — shared with other repositories", () => {
     ).toBe(false);
     expect(infos.at(-1)).toContain(
       "Run 'pipx uninstall code-review-graph' yourself",
+    );
+  });
+
+  it("an unconfirmed install claim in a fresh clone records crg as pre-existing, so --remove-shared removes nothing", async () => {
+    const { context, pipxHome, calls, infos } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    await appendLedgerClaims(context, [
+      {
+        plugin: "crg",
+        type: "installed-binary",
+        target: "code-review-graph (pipx)",
+        preExisting: false,
+      },
+    ]);
+
+    const [operation] = (await crgPlugin.plan?.(context)) ?? [];
+    expect(operation?.preview.text).toBe(
+      "record that this repository uses code-review-graph",
+    );
+    await crgPlugin.apply?.(context, [operation]);
+    expect(
+      (await readMachineLedger()).resources["pipx:code-review-graph"],
+    ).toMatchObject({ origin: "pre-existing" });
+    await crgPlugin.uninstall({
+      ...context,
+      removeSharedTools: new Set(["code-review-graph"]),
+    } as Context);
+
+    expect(
+      calls.some(
+        ([command, args]) => command === "pipx" && args[0] === "uninstall",
+      ),
+    ).toBe(false);
+    expect(infos.at(-1)).toBe(
+      "Keeping code-review-graph: agemon has no record on this machine that it installed it from this repository — run 'pipx uninstall code-review-graph' yourself if nothing else needs it",
+    );
+  });
+
+  it("a migrated record claimed by this repository is kept on nuke --remove-shared when its install entry is unconfirmed", async () => {
+    const { context, repo, pipxHome, calls, infos } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    await writeFile(
+      join((await resolveAgemonStateDirectory("prepare")).path, "machine.json"),
+      JSON.stringify({
+        version: 1,
+        resources: {
+          "pipx:code-review-graph": {
+            origin: "migrated",
+            claimedBy: repo,
+            ownerDirectoryId: await directoryIdentity(repo),
+            holders: [repo],
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    await appendLedgerClaims(context, [
+      {
+        plugin: "crg",
+        type: "installed-binary",
+        target: "code-review-graph (pipx)",
+        preExisting: false,
+      },
+    ]);
+
+    await crgPlugin.uninstall({
+      ...context,
+      removeSharedTools: new Set(["code-review-graph"]),
+    } as Context);
+
+    expect(
+      calls.some(
+        ([command, args]) => command === "pipx" && args[0] === "uninstall",
+      ),
+    ).toBe(false);
+    expect(infos.at(-1)).toBe(
+      "Keeping code-review-graph: the shared-tools ledger names this repository as its installer, but this repository's ledger entry for that install is not confirmed (written before ledger receipts, or not on this machine) — run 'pipx uninstall code-review-graph' yourself if nothing else needs it",
+    );
+  });
+
+  it("verify gives no rebuild advice for a missing graph named only by an unconfirmed entry", async () => {
+    const { context, pipxHome } = await createTestContext();
+    await createPipxVenv(pipxHome);
+    await appendLedgerClaims(context, [
+      {
+        plugin: "crg",
+        type: "graph-built",
+        target: ".code-review-graph",
+        preExisting: false,
+      },
+    ]);
+
+    expect(await crgPlugin.verify(context)).toMatchObject({
+      ok: true,
+      detail: "installed; no graph built in this repository",
+    });
+  });
+
+  it("nuke keeps a .code-review-graph named only by an unconfirmed entry", async () => {
+    const { context, repo, infos } = await createTestContext();
+    await mkdir(join(repo, ".code-review-graph"));
+    await appendLedgerClaims(context, [
+      {
+        plugin: "crg",
+        type: "graph-built",
+        target: ".code-review-graph",
+        preExisting: false,
+      },
+    ]);
+
+    await crgPlugin.uninstall(context);
+
+    expect(existsSync(join(repo, ".code-review-graph"))).toBe(true);
+    expect(infos).toContain(
+      "Keeping .code-review-graph/: agemon has no record on this machine that it built it here",
     );
   });
 

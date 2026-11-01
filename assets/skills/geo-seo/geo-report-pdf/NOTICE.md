@@ -14,6 +14,7 @@
 - Cover metadata is checked against allowed patterns and written to `GEO-REPORT-META.yaml` with the Write tool (`--metadata-file`), never put on a command line.
 - pandoc runs `--sandbox` with raw HTML, raw attributes, attribute blocks and YAML metadata blocks disabled in the reader and no `--css`/`--embed-resources`. `templates/geo-report-style.css` is inlined into the template's `<style>` without its Google Fonts `@import`.
 - The template has a Content-Security-Policy that allows only its own script (by SHA-256), inline styles and `data:` images.
+- Cover metadata is read from the lines `geo-audit` writes: the domain from `**URL:**`, the score and rating from `**Overall GEO Score: X/100 (Rating)**`. The `locations` and `platform` fields were dropped, because `geo-audit` writes no `**Locations:**` or `**CMS:**` line.
 - Chrome keeps its sandbox (`--no-sandbox` removed), blocks DNS with `--host-resolver-rules`, and is found on Linux as well as macOS. Prerequisites and failure handling are stated up front.
 
 Statistics quoted in the text are upstream's claims; agemon has not verified them.

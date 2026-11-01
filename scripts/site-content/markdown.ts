@@ -1,6 +1,15 @@
 import { posix } from "node:path";
 import GithubSlugger from "github-slugger";
-import type { Heading, Nodes, Root, RootContent } from "mdast";
+import type {
+  Heading,
+  Nodes,
+  PhrasingContent,
+  Root,
+  RootContent,
+  Table,
+  TableCell,
+  TableRow,
+} from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown, gfmToMarkdown } from "mdast-util-gfm";
 import { toMarkdown } from "mdast-util-to-markdown";
@@ -17,6 +26,51 @@ const FORBIDDEN_NODE_TYPES: Record<string, string> = {
   image: "an image",
   imageReference: "an image",
 };
+
+export const text = (value: string): PhrasingContent => ({
+  type: "text",
+  value,
+});
+
+export const code = (value: string): PhrasingContent => ({
+  type: "inlineCode",
+  value,
+});
+
+export const paragraph = (...children: PhrasingContent[]): RootContent => ({
+  type: "paragraph",
+  children,
+});
+
+export const heading = (
+  content: PhrasingContent,
+  depth: Heading["depth"] = 2,
+): RootContent => ({
+  type: "heading",
+  depth,
+  children: [content],
+});
+
+export const label = (value: string): RootContent => ({
+  type: "paragraph",
+  children: [{ type: "strong", children: [text(value)] }],
+});
+
+export function table(header: string[], rows: PhrasingContent[][][]): Table {
+  const row = (cells: PhrasingContent[][]): TableRow => ({
+    type: "tableRow",
+    children: cells.map(
+      (children): TableCell => ({ type: "tableCell", children }),
+    ),
+  });
+  return {
+    type: "table",
+    children: [
+      row(header.map((headerText) => [text(headerText)])),
+      ...rows.map(row),
+    ],
+  };
+}
 
 export function parseMarkdown(text: string): Root {
   const root = fromMarkdown(text, {

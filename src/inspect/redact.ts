@@ -12,16 +12,41 @@ const DENYLISTED_FILE_PATTERNS: RegExp[] = [
   /(^|\/)\.netrc$/,
   /(^|\/)\.git-credentials$/,
   /\.local\.json$/,
+  /(^|\/)\.kube\/config$/,
+  /(^|\/)\.pgpass$/,
+  /\.ppk$/i,
+  /\.jks$/i,
+  /\.keystore$/i,
+  /(^|\/)credentials\.json$/,
+  /(^|\/)\.config\/gh\/hosts\.yml$/,
+  /(^|\/)\.vault-token$/,
+  /(^|\/)credentials\.tfrc\.json$/,
+  /(^|\/)application_default_credentials\.json$/,
+  /(^|\/)\.azure\/accessTokens\.json$/,
+  /\.kdbx$/i,
+  /(^|\/)\.config\/gcloud\/credentials\.db$/,
+  /(^|\/)\.gnupg\//,
+  /(^|\/)\.terraformrc$/,
+  /(^|\/)[^/]*service[-_]account[^/]*\.json$/i,
 ];
 
 const CREDENTIAL_KEY_PATTERN =
   /(?:^|[._-])(?:tokens?|secret|password|passwd|pwd|api[._-]?key|access[._-]?key|client[._-]?secret|auth|authorization|credentials?|private[._-]?key)(?:$|[._-])|_key$|^key$/i;
+const CAMEL_CASE_BOUNDARY = /([a-z0-9])([A-Z])/g;
+const CONCATENATED_CREDENTIAL_SUFFIX =
+  /(?:token|secret|password|passwd|apikey)$/i;
 
-const PEM_PATTERN = /-----BEGIN [A-Z0-9 ]+-----/;
+const PEM_DASHES = "-{4,5}";
+const PEM_LABEL = "[A-Z0-9 ]+";
+const PEM_BEGIN = `${PEM_DASHES} ?BEGIN ${PEM_LABEL}${PEM_DASHES}`;
+const PEM_END = `${PEM_DASHES} ?END ${PEM_LABEL}${PEM_DASHES}`;
+const PEM_PATTERN = new RegExp(PEM_BEGIN, "i");
 const JWT_PATTERN =
   /^eyJ[A-Za-z0-9_-]+=*\.eyJ[A-Za-z0-9_-]+=*\.[A-Za-z0-9_-]+=*$/;
 const URL_WITH_CREDENTIALS_PATTERN =
-  /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s:@]+@/i;
+  /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^/\s:@]+:[^/\s:@]+@/i;
+
+export const MAX_REDACTED_LINE_CHARACTERS = 4096;
 
 const HIGH_ENTROPY_MIN_LENGTH = 32;
 const HIGH_ENTROPY_MIN_BITS_PER_CHAR = 3.5;
@@ -65,13 +90,19 @@ function looksHighEntropy(value: string): boolean {
   );
 }
 
-function classifyString(
-  value: string,
-  keyName: string | null,
-): RedactionReason | null {
-  if (keyName !== null && CREDENTIAL_KEY_PATTERN.test(keyName)) {
-    return "credential-key";
-  }
+function stripKeyDecoration(rawKey: string): string {
+  return rawKey.replace(/^[-"']+/, "").replace(/["':]+$/, "");
+}
+
+function namesCredentialKey(rawKey: string): boolean {
+  const key = stripKeyDecoration(rawKey);
+  return (
+    CREDENTIAL_KEY_PATTERN.test(key.replace(CAMEL_CASE_BOUNDARY, "$1_$2")) ||
+    CONCATENATED_CREDENTIAL_SUFFIX.test(key)
+  );
+}
+
+function classifyString(value: string): RedactionReason | null {
   if (PEM_PATTERN.test(value)) {
     return "pem";
   }
@@ -93,20 +124,22 @@ export function redactJsonValue(input: unknown): JsonRedactionResult {
   const walk = (
     value: unknown,
     path: string,
-    keyName: string | null,
+    insideCredentialKey: boolean,
   ): unknown => {
     if (typeof value === "string") {
-      const reason = classifyString(value, keyName);
+      const reason = insideCredentialKey
+        ? "credential-key"
+        : classifyString(value.slice(0, MAX_REDACTED_LINE_CHARACTERS));
       if (reason === null) {
         return value;
       }
       redactedPaths.push(path);
-      return `<redacted:${reason}>`;
+      return redactedMarker(reason);
     }
 
     if (Array.isArray(value)) {
       return value.map((entry, index) =>
-        walk(entry, `${path}[${index}]`, keyName),
+        walk(entry, `${path}[${index}]`, insideCredentialKey),
       );
     }
 
@@ -115,7 +148,11 @@ export function redactJsonValue(input: unknown): JsonRedactionResult {
         Object.entries(value as Record<string, unknown>).map(
           ([key, entryValue]) => [
             key,
-            walk(entryValue, path === "" ? key : `${path}.${key}`, key),
+            walk(
+              entryValue,
+              path === "" ? key : `${path}.${key}`,
+              insideCredentialKey || namesCredentialKey(key),
+            ),
           ],
         ),
       );
@@ -124,29 +161,33 @@ export function redactJsonValue(input: unknown): JsonRedactionResult {
     return value;
   };
 
-  return { value: walk(input, "", null), redactedPaths };
+  return { value: walk(input, "", false), redactedPaths };
 }
 
-const PEM_BLOCK_PATTERN =
-  /-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(?:-----END [A-Z0-9 ]+-----|$)/g;
+const PEM_BLOCK_PATTERN = new RegExp(
+  `${PEM_BEGIN}[\\s\\S]*?(?:${PEM_END}|$)`,
+  "gi",
+);
+const PEM_TAIL_WITHOUT_BEGIN_PATTERN = new RegExp(
+  `^(?:[A-Za-z0-9+/=]+\\r?\\n)*${PEM_END}`,
+  "gim",
+);
 const TOKEN_WRAPPER_PATTERN = /^([("'`[{<]*)(.*?)([)"'`\]}>,;.]*)$/s;
 const KEY_SEPARATOR_PATTERN = /([A-Za-z0-9_.-]+)(["']?[=:])/g;
+const ASSIGNMENT_PATTERN = /^([A-Za-z0-9_.-]+=)(.+)$/s;
 const KEY_PATH_SEPARATOR = /[/:?&]/;
 const STANDALONE_SEPARATORS: ReadonlySet<string> = new Set(["=", ":"]);
-const CAMEL_CASE_CREDENTIAL_SUFFIX =
-  /(?:token|secret|password|passwd|apikey)$/i;
 const AUTH_SCHEME_PATTERN = /^(?:bearer|basic)$/i;
+const AUTHORIZATION_TOKEN_SCHEME = /^token$/i;
 
 function redactedMarker(reason: RedactionReason): string {
   return `<redacted:${reason}>`;
 }
 
-function namesCredentialKey(rawKey: string): boolean {
-  const key = rawKey.replace(/^[-"']+/, "").replace(/["':]+$/, "");
+function announcesSecretInText(rawKey: string): boolean {
   return (
-    CREDENTIAL_KEY_PATTERN.test(key) ||
-    CAMEL_CASE_CREDENTIAL_SUFFIX.test(key) ||
-    AUTH_SCHEME_PATTERN.test(key)
+    namesCredentialKey(rawKey) ||
+    AUTH_SCHEME_PATTERN.test(stripKeyDecoration(rawKey))
   );
 }
 
@@ -157,21 +198,32 @@ interface TokenRedaction {
 
 function redactKeyValue(token: string): TokenRedaction | null {
   for (const match of token.matchAll(KEY_SEPARATOR_PATTERN)) {
-    if (!namesCredentialKey(match[1])) {
+    if (!announcesSecretInText(match[1])) {
       continue;
     }
     const valueStart = (match.index ?? 0) + match[0].length;
     const upToValue = token.slice(0, valueStart);
-    const value = token.slice(valueStart);
+    const [, valuePrefix, value, valueSuffix] = TOKEN_WRAPPER_PATTERN.exec(
+      token.slice(valueStart),
+    ) as RegExpExecArray;
     if (value.length === 0 || AUTH_SCHEME_PATTERN.test(value)) {
       return { text: token, announcesSecret: true };
     }
     return {
-      text: `${upToValue}${redactedMarker("credential-key")}`,
+      text: `${upToValue}${valuePrefix}${redactedMarker("credential-key")}${valueSuffix}`,
       announcesSecret: false,
     };
   }
   return null;
+}
+
+function redactAssignedValue(core: string): string | null {
+  const assignment = ASSIGNMENT_PATTERN.exec(core);
+  if (assignment === null) {
+    return null;
+  }
+  const reason = classifyString(assignment[2]);
+  return reason === null ? null : `${assignment[1]}${redactedMarker(reason)}`;
 }
 
 function redactToken(
@@ -186,6 +238,9 @@ function redactToken(
     return { text: token, announcesSecret: true };
   }
   if (secretWasAnnounced) {
+    if (AUTHORIZATION_TOKEN_SCHEME.test(core)) {
+      return { text: token, announcesSecret: true };
+    }
     return {
       text: `${prefix}${redactedMarker("credential-key")}${suffix}`,
       announcesSecret: false,
@@ -194,7 +249,7 @@ function redactToken(
   if (STANDALONE_SEPARATORS.has(core)) {
     return {
       text: token,
-      announcesSecret: namesCredentialKey(
+      announcesSecret: announcesSecretInText(
         previousToken.split(KEY_PATH_SEPARATOR).at(-1) ?? "",
       ),
     };
@@ -203,10 +258,17 @@ function redactToken(
   if (keyValue !== null) {
     return keyValue;
   }
-  if (core.startsWith("-") && namesCredentialKey(core)) {
+  if (core.startsWith("-") && announcesSecretInText(core)) {
     return { text: token, announcesSecret: true };
   }
-  const reason = classifyString(core, null);
+  const redactedAssignment = redactAssignedValue(core);
+  if (redactedAssignment !== null) {
+    return {
+      text: `${prefix}${redactedAssignment}${suffix}`,
+      announcesSecret: false,
+    };
+  }
+  const reason = classifyString(core);
   return {
     text:
       reason === null ? token : `${prefix}${redactedMarker(reason)}${suffix}`,
@@ -218,7 +280,11 @@ export function redactSecretsInText(text: string): string {
   let previousToken = "";
   let secretWasAnnounced = false;
   return text
+    .split("\n")
+    .map((line) => line.slice(0, MAX_REDACTED_LINE_CHARACTERS))
+    .join("\n")
     .replace(PEM_BLOCK_PATTERN, redactedMarker("pem"))
+    .replace(PEM_TAIL_WITHOUT_BEGIN_PATTERN, redactedMarker("pem"))
     .split(/(\s+)/)
     .map((token) => {
       if (token.length === 0 || /^\s+$/.test(token)) {

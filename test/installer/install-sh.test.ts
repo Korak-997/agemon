@@ -208,6 +208,7 @@ function runInstaller(
       HOME: sandbox.home,
       FAKE_RELEASE_ROOT: sandbox.releaseRoot,
       FAKE_CURL_LOG: sandbox.curlLog,
+      AGEMON_DEV: "1",
       AGEMON_OS_RELEASE_PATH: sandbox.osReleasePath,
       ...env,
     },
@@ -687,6 +688,20 @@ describe.skipIf(!SHA256SUM_AVAILABLE)("install.sh input validation", () => {
     }
   });
 
+  it("restricts every download, including the token-authenticated one, to https and TLS 1.2+", () => {
+    const result = runInstaller({
+      AGEMON_INSTALL_DIR: join(sandbox.root, "agemon"),
+      GITHUB_TOKEN: "ghp_secret_token_value",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const calls = curlCalls().split("argv: ").filter(Boolean);
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    for (const call of calls) {
+      expect(call).toMatch(/^--proto =https --tlsv1\.2 /);
+    }
+  });
+
   it("runs nothing when the piped script is truncated", () => {
     const script = readFileSync(INSTALL_SCRIPT_PATH, "utf8");
     const truncated = script.slice(0, Math.floor(script.length / 2));
@@ -808,6 +823,19 @@ describe.skipIf(!SHA256SUM_AVAILABLE)("install.sh platform gate", () => {
 
     expectRefusedBeforeDownloading(
       `agemon installs only on Ubuntu, Debian and their derivatives. ${sandbox.osReleasePath} reports 'fedora'.`,
+    );
+  });
+
+  it("ignores AGEMON_OS_RELEASE_PATH outside AGEMON_DEV=1", () => {
+    writeFileSync(sandbox.osReleasePath, "ID=fedora\n");
+
+    const result = runInstaller({
+      AGEMON_DEV: "",
+      AGEMON_INSTALL_DIR: join(sandbox.root, "agemon"),
+    });
+
+    expect(`${result.stdout}${result.stderr}`).not.toContain(
+      sandbox.osReleasePath,
     );
   });
 

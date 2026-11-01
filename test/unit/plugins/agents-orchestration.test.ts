@@ -11,6 +11,7 @@ import type {
   AgemonPlugin,
   ProposedOperation,
 } from "../../../src/plugins/types.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
@@ -26,6 +27,7 @@ async function createTestContext(): Promise<Context> {
   createdTempDirectories.push(cwd);
   return {
     cwd,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,

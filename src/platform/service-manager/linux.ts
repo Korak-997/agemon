@@ -2,6 +2,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { errorMessage } from "../../core/error-message.js";
 import { RefusedFileError, writeFileAtomic } from "../../core/files.js";
+import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
+import { quoteForShlex } from "../../core/untrusted-text.js";
 import { resolveHomeDirectory } from "../home.js";
 import type {
   AutostartAttempt,
@@ -66,7 +68,11 @@ async function assertSucceeded(
     timeoutMs: SYSTEM_COMMAND_TIMEOUT_MS,
   });
   if (result.code !== 0) {
-    throw new Error(result.stderr || failureMessage);
+    throw new Error(
+      result.stderr.trim()
+        ? describeSubprocessFailure(result, command)
+        : failureMessage,
+    );
   }
   return { stdout: result.stdout, stderr: result.stderr };
 }
@@ -88,7 +94,7 @@ export function createLinuxServiceManager(
   const unitFiles = createUserUnitFiles(
     input.homeDir ?? resolveHomeDirectory(),
   );
-  const user = resolveUser(input.user);
+  const lingerUser = (): string => resolveUser(input.user);
   const clock = input.clock ?? systemClock;
 
   const isActive = async (unitName: string): Promise<ServiceStatus> => {
@@ -106,7 +112,7 @@ export function createLinuxServiceManager(
     const lingerStatus = await assertSucceeded(
       input.run,
       "loginctl",
-      ["show-user", user, "--property=Linger", "--value"],
+      ["show-user", lingerUser(), "--property=Linger", "--value"],
       "Unable to read linger status.",
     );
     const linger = lingerStatus.stdout.trim();
@@ -198,8 +204,9 @@ export function createLinuxServiceManager(
       !isMissingUnitError(disableResult.stderr || "")
     ) {
       throw new Error(
-        disableResult.stderr ||
-          "Unable to disable/stop the daemon unit during uninstall.",
+        disableResult.stderr.trim()
+          ? describeSubprocessFailure(disableResult, "systemctl")
+          : "Unable to disable/stop the daemon unit during uninstall.",
       );
     }
   };
@@ -217,7 +224,7 @@ export function createLinuxServiceManager(
     try {
       await rm(unitPath, { force: true });
     } catch {
-      manualCleanup.push(`rm '${unitPath}'`);
+      manualCleanup.push(`rm ${quoteForShlex(unitPath)}`);
     }
     try {
       await assertSucceeded(
@@ -285,7 +292,7 @@ export function createLinuxServiceManager(
     await assertSucceeded(
       input.run,
       "loginctl",
-      [enabled ? "enable-linger" : "disable-linger", user],
+      [enabled ? "enable-linger" : "disable-linger", lingerUser()],
       `Unable to ${enabled ? "enable" : "disable"} linger for the current user.`,
     );
   };
@@ -296,6 +303,7 @@ export function createLinuxServiceManager(
     registerAutostart,
     unregisterAutostart,
     readUnitWorkingDirectory: unitFiles.readUnitWorkingDirectory,
+    readUnitEnvironment: unitFiles.readUnitEnvironment,
     unitPathFor: unitFiles.unitPathFor,
     isLingerEnabled: readLingerIsOn,
     enableLinger: () => setLinger(true),

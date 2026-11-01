@@ -55,6 +55,7 @@ export interface ServiceManager {
   ): Promise<RegisterAutostartResult>;
   unregisterAutostart(input: UnregisterAutostartInput): Promise<void>;
   readUnitWorkingDirectory(unitName: string): Promise<string | null>;
+  readUnitEnvironment(unitName: string): Promise<Record<string, string> | null>;
   unitPathFor(unitName: string): string;
   isLingerEnabled(): Promise<boolean>;
   enableLinger(): Promise<void>;

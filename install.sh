@@ -80,7 +80,10 @@ check_supported_platform() {
       ;;
   esac
 
-  OS_RELEASE_PATH="${AGEMON_OS_RELEASE_PATH:-/etc/os-release}"
+  OS_RELEASE_PATH=/etc/os-release
+  if [ "${AGEMON_DEV:-}" = "1" ] && [ -n "${AGEMON_OS_RELEASE_PATH:-}" ]; then
+    OS_RELEASE_PATH="$AGEMON_OS_RELEASE_PATH"
+  fi
   if [ ! -r "$OS_RELEASE_PATH" ]; then
     print_error "Could not identify this Linux distribution: ${OS_RELEASE_PATH} is missing or unreadable."
     exit 1
@@ -95,7 +98,7 @@ check_supported_platform() {
 }
 
 fetch() {
-  curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 1 \
+  curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 15 --retry 2 --retry-delay 1 \
     -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$@"
 }
 

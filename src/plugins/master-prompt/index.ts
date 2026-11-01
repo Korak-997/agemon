@@ -549,7 +549,7 @@ async function applyMasterPrompt(
   ctx: Context,
   operations: ProposedOperation[],
   staged?: StagedFile[],
-): Promise<void> {
+): Promise<undefined> {
   const stagedContentsByPath = new Map(
     (staged ?? []).map((file) => [file.targetPath, file.contents] as const),
   );
@@ -582,21 +582,6 @@ async function detectMasterPrompt(ctx: Context): Promise<PluginPresence> {
         entry.state === "managed-drifted",
     ),
   };
-}
-
-async function installMasterPrompt(ctx: Context): Promise<void> {
-  const operations = await planMasterPrompt(ctx);
-
-  if (ctx.dryRun) {
-    for (const operation of operations) {
-      ctx.ui.info(
-        `Would ${operation.action} rule file ${operation.targetPath}`,
-      );
-    }
-    return;
-  }
-
-  await applyMasterPrompt(ctx, operations);
 }
 
 async function verifyMasterPrompt(
@@ -774,7 +759,6 @@ export const masterPromptPlugin: AgemonPlugin = {
   plan: planMasterPrompt,
   materialize: materializeMasterPrompt,
   apply: applyMasterPrompt,
-  install: installMasterPrompt,
   verify: verifyMasterPrompt,
   revert: revertMasterPrompt,
   uninstall: uninstallMasterPrompt,

@@ -3,6 +3,7 @@ import {
   cp,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -406,6 +407,30 @@ describe("--verbose", () => {
         /^\s*\$ \S+ \S+\/node_modules\/skills\/bin\/cli\.mjs list --json \(exit 0\)$/m,
       );
       expect(run.stdout).toMatch(/^\s*│ /m);
+    });
+  });
+
+  it("nuke removes the installed skills without running any subprocess", async () => {
+    resetFakeSubprocessState();
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const installedSkills = () =>
+        readdir(join(repoDirectory, ".claude/skills")).catch(() => []);
+      expect(
+        (await runFrom(repoDirectory, ["--yes", "--skip-daemon"])).exitCode,
+      ).toBe(0);
+      expect(await installedSkills()).not.toEqual([]);
+
+      const nuke = await runFrom(repoDirectory, ["nuke", "--yes", "--verbose"]);
+
+      expect(nuke.exitCode).toBe(0);
+      expect(await installedSkills()).toEqual([]);
+      const skillsStep =
+        /Uninstalling skills\n([\s\S]*?)\[ok\] Uninstalled skills/u.exec(
+          nuke.stdout,
+        );
+      expect(skillsStep).not.toBeNull();
+      expect(skillsStep?.[1]).not.toMatch(/^\s*\$ /mu);
+      expect(nuke.stdout).toMatch(/^\s*\$ npm uninstall --global agnix/mu);
     });
   });
 });

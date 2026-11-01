@@ -62,6 +62,7 @@ export interface StatusReport {
   duplication: OverlapFinding[];
   trackedAgemonPaths: string[];
   trackingCheckError: string | null;
+  unconfirmedLedgerEntries: number;
   configError: string | null;
   interruptedApply: InterruptedApplySummary | null;
   agentsSummary: AgentsSummary;
@@ -296,6 +297,9 @@ export async function buildStatusReport(
     duplication,
     trackedAgemonPaths,
     trackingCheckError: discovery.isolation.trackingCheckError,
+    unconfirmedLedgerEntries:
+      ctx.manifest.getActions().length -
+      ctx.manifest.getConfirmedActions().length,
     configError,
     interruptedApply,
     agentsSummary,

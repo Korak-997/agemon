@@ -3,6 +3,7 @@ import type { IsolationStatus } from "../inspect/discover.js";
 import type {
   AgemonPlugin,
   ProposedOperation,
+  SkippedPluginOperation,
   StagedFile,
 } from "../plugins/types.js";
 import { capabilityLabel } from "../ui/labels.js";
@@ -46,14 +47,21 @@ export interface ApplyPlanInput {
   exitProcess?: ExitProcess;
 }
 
+export interface SkippedAppliedOperation {
+  operation: ProposedOperation;
+  reason: string;
+}
+
 export interface ApplyPlanResult {
   applied: ProposedOperation[];
+  skipped: SkippedAppliedOperation[];
 }
 
 export interface RollbackDetail {
   message: string;
   restored: string[];
   reverted: string[];
+  kept: string[];
   manualCleanup: string[];
 }
 
@@ -281,16 +289,20 @@ async function runCapabilityWork(
   plugin: AgemonPlugin,
   operations: ProposedOperation[],
   staged: StagedFile[] | undefined,
-): Promise<void> {
+): Promise<SkippedAppliedOperation[]> {
+  let skippedByPlugin: SkippedPluginOperation[] = [];
   if (plugin.apply) {
-    await plugin.apply(ctx, operations, staged);
-  } else {
+    skippedByPlugin =
+      (await plugin.apply(ctx, operations, staged))?.skipped ?? [];
+  } else if (plugin.install) {
     const presence = await plugin.detect(ctx);
     if (presence.present) {
       ctx.ui.info(`${plugin.id} already present — nothing to install`);
     } else {
       await plugin.install(ctx);
     }
+  } else {
+    throw new Error(`Capability '${plugin.id}' has neither apply nor install.`);
   }
 
   const verification = await plugin.verify(ctx);
@@ -304,11 +316,21 @@ async function runCapabilityWork(
     ctx.ui.info(`${plugin.id}: ${printable(verification.attention)}`);
   }
 
+  const skipReasonById = new Map(
+    skippedByPlugin.map((skip) => [skip.operationId, skip.reason] as const),
+  );
+  const skipped: SkippedAppliedOperation[] = [];
   for (const operation of operations) {
-    await ctx.manifest.updateResourceEntry(operation.resourceId, {
-      validation: { ok: true },
-    });
+    const skipReason = skipReasonById.get(operation.id);
+    if (skipReason === undefined) {
+      await ctx.manifest.updateResourceEntry(operation.resourceId, {
+        validation: { ok: true },
+      });
+    } else {
+      skipped.push({ operation, reason: skipReason });
+    }
   }
+  return skipped;
 }
 
 async function rollBackInProcess(
@@ -330,14 +352,22 @@ async function rollBackInProcess(
     }
   }
 
+  const causeMessage = printable(errorMessage(cause));
+  const rolledBackMessage =
+    outcome.kept.length === 0
+      ? `apply rolled back — repo left as it started (${causeMessage})`
+      : `apply rolled back — repo left as it started, except the changes kept below (${causeMessage})`;
   ignoringTerminalErrors(() => {
     ctx.ui.fail(
       manualCleanup.length === 0
-        ? `apply rolled back — repo left as it started (${errorMessage(cause)})`
-        : `apply partly rolled back — the journal is kept; fix the items below, then run 'agemon recover' (${errorMessage(cause)})`,
+        ? rolledBackMessage
+        : `apply partly rolled back — the journal is kept; fix the items below, then run 'agemon recover' (${causeMessage})`,
     );
+    for (const line of outcome.kept) {
+      ctx.ui.info(printable(line));
+    }
     for (const detail of manualCleanup) {
-      ctx.ui.fail(`manual cleanup needed: ${detail}`);
+      ctx.ui.fail(`manual cleanup needed: ${printable(detail)}`);
     }
   });
   throw new ApplyRollbackError(
@@ -345,6 +375,7 @@ async function rollBackInProcess(
       message: errorMessage(cause),
       restored: outcome.restored,
       reverted: outcome.reverted,
+      kept: outcome.kept,
       manualCleanup,
     },
     cause,
@@ -373,10 +404,11 @@ async function runJournalledCapabilities(
   stagedByCapability: Map<string, StagedFile[]>,
   interruption: InterruptionWatch,
   { path: journalPath, journal }: { path: string; journal: ApplyJournal },
-): Promise<ProposedOperation[]> {
+): Promise<ApplyPlanResult> {
   const progress = ctx.progress ?? SILENT_PROGRESS;
   const capabilityCount = approvedByCapability.size;
   const applied: ProposedOperation[] = [];
+  const skipped: SkippedAppliedOperation[] = [];
   progress.start("Applying capabilities", capabilityCount);
   try {
     for (const [capabilityId, operations] of approvedByCapability) {
@@ -387,14 +419,20 @@ async function runJournalledCapabilities(
           `Plan references capability '${capabilityId}', which is not registered.`,
         );
       }
-      await runCapabilityWork(
+      const skippedOfCapability = await runCapabilityWork(
         ctx,
         plugin,
         operations,
         stagedByCapability.get(capabilityId),
       );
       progress.advance(`Applied ${capabilityLabel(capabilityId)}`);
-      applied.push(...operations);
+      const skippedIds = new Set(
+        skippedOfCapability.map((skip) => skip.operation.id),
+      );
+      applied.push(
+        ...operations.filter((operation) => !skippedIds.has(operation.id)),
+      );
+      skipped.push(...skippedOfCapability);
     }
     interruption.throwIfInterrupted();
     progress.stop(
@@ -414,7 +452,7 @@ async function runJournalledCapabilities(
   }
 
   await deleteJournalAfterSuccess(ctx, journalPath);
-  return applied;
+  return { applied, skipped };
 }
 
 async function applyApprovedOperations(
@@ -458,7 +496,7 @@ async function applyApprovedOperations(
       ledgerBefore: structuredClone(ctx.manifest.getActions()),
       snapshots,
     });
-    const applied = await runJournalledCapabilities(
+    return await runJournalledCapabilities(
       ctx,
       pluginById,
       approvedByCapability,
@@ -466,7 +504,6 @@ async function applyApprovedOperations(
       interruption,
       storedJournal,
     );
-    return { applied };
   } finally {
     interruption.dispose();
   }

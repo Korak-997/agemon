@@ -5,6 +5,7 @@ import type { Context } from "../../../src/core/context.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 function createNoOpServiceManager(): ServiceManager {
@@ -22,6 +23,9 @@ function createNoOpServiceManager(): ServiceManager {
     },
     async unregisterAutostart() {},
     async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
       return null;
     },
     unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
@@ -53,6 +57,7 @@ export async function createAdapterTestContext(
 
   return {
     cwd: sandboxDirectory,
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
     platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
