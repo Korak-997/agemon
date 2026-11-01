@@ -36,7 +36,7 @@ describe("agemon.toml config", () => {
     await writeConfig(cwd, {
       capabilities: ["crg", "master-prompt"],
       skillGroups: "essentials,design",
-      conflictDecisions: { "rule-file:CLAUDE.md": "skip" },
+      conflictDecisions: new Map([["rule-file:CLAUDE.md", "skip"]]),
       knownCapabilities: ["crg", "master-prompt", "agents"],
     });
 
@@ -45,9 +45,34 @@ describe("agemon.toml config", () => {
       capabilities: ["crg", "master-prompt"],
       skillGroups: "essentials,design",
       customSkillGroups: [],
-      conflictDecisions: { "rule-file:CLAUDE.md": "skip" },
+      conflictDecisions: new Map([["rule-file:CLAUDE.md", "skip"]]),
       knownCapabilities: ["crg", "master-prompt", "agents"],
     });
+  });
+
+  it("round-trips conflict decisions keyed by Object.prototype names, and finds no inherited ones", async () => {
+    const cwd = await createSandbox();
+    const prototypeNamedIds = new Map([
+      ["__proto__", "keep"],
+      ["constructor", "replace"],
+      ["toString", "skip"],
+    ] as const);
+
+    await writeConfig(cwd, {
+      capabilities: ["crg"],
+      skillGroups: null,
+      conflictDecisions: prototypeNamedIds,
+      knownCapabilities: ["crg"],
+    });
+
+    expect((await loadConfig(cwd))?.conflictDecisions).toEqual(
+      prototypeNamedIds,
+    );
+    const noDecisions = validateConfigText(
+      'capabilities = ["crg"]\n',
+    ).conflictDecisions;
+    expect(noDecisions.get("constructor")).toBeUndefined();
+    expect(noDecisions.get("__proto__")).toBeUndefined();
   });
 
   it("omits skill_groups from the file when none is chosen", async () => {
@@ -56,7 +81,7 @@ describe("agemon.toml config", () => {
     await writeConfig(cwd, {
       capabilities: ["crg"],
       skillGroups: null,
-      conflictDecisions: {},
+      conflictDecisions: new Map(),
       knownCapabilities: ["crg"],
     });
 

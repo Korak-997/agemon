@@ -437,6 +437,37 @@ describe("nuke removes skills without the skills CLI", () => {
   });
 });
 
+describe("nuke and a replayed install entry", () => {
+  it("keeps a same-named skill the user added after agemon's copy was removed", async () => {
+    const ctx = await createTestContext();
+    const agemonCopy = join(ctx.cwd, ".claude/skills", COMMIT);
+    await cp(resolveVendoredSkillPath("commit", COMMIT), agemonCopy, {
+      recursive: true,
+    });
+    await recordInstalled(
+      ctx,
+      COMMIT,
+      await fingerprintInstalledSkill(agemonCopy),
+    );
+    const ledgerPath = join(ctx.cwd, ".agemon/state.json");
+    const signedLedger = await readFile(ledgerPath);
+    await skillsPlugin.uninstall(ctx);
+    const userCopy = await writeSkill(
+      agemonCopy,
+      "---\nname: agemon-commit\n---\n\nmine\n",
+    );
+    await mkdir(join(ctx.cwd, ".agemon"), { recursive: true });
+    await writeFile(ledgerPath, signedLedger);
+    const replayed = { ...ctx, manifest: await StateManifest.load(ctx.cwd) };
+    expect(replayed.manifest.getConfirmedActions()).toHaveLength(1);
+
+    await skillsPlugin.uninstall(replayed);
+
+    expect(readFileSync(join(userCopy, "SKILL.md"), "utf8")).toContain("mine");
+    expect(ctx.infoLines).toContain(keptLine(COMMIT));
+  });
+});
+
 describe("nuke when the copy or its parent changes during removal", () => {
   async function outsideRepositoryCopy(
     groupDirectory: string,

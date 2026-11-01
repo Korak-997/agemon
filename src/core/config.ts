@@ -170,7 +170,7 @@ export interface AgemonConfig {
   capabilities: string[];
   skillGroups: string | null;
   customSkillGroups: CustomSkillGroupConfig[];
-  conflictDecisions: Record<string, ConflictDecision>;
+  conflictDecisions: ReadonlyMap<string, ConflictDecision>;
   knownCapabilities: string[] | null;
   sourceText: string;
 }
@@ -415,14 +415,14 @@ function isConflictDecision(value: unknown): value is ConflictDecision {
 
 function validateConflictDecisions(
   value: unknown,
-): Record<string, ConflictDecision> {
+): Map<string, ConflictDecision> {
+  const decisions = new Map<string, ConflictDecision>();
   if (value === undefined) {
-    return {};
+    return decisions;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail("'conflict_decisions' must be a table of resource id to decision");
   }
-  const decisions: Record<string, ConflictDecision> = {};
   for (const [resourceId, decision] of Object.entries(
     value as Record<string, unknown>,
   )) {
@@ -431,7 +431,7 @@ function validateConflictDecisions(
         `'conflict_decisions.${resourceId}' must be ${CONFLICT_DECISION_CHOICES}, got ${JSON.stringify(decision)}`,
       );
     }
-    decisions[resourceId] = decision;
+    decisions.set(resourceId, decision);
   }
   return decisions;
 }
@@ -572,7 +572,7 @@ export async function writeConfig(
   if (config.skillGroups !== null) {
     payload.skill_groups = config.skillGroups;
   }
-  payload.conflict_decisions = config.conflictDecisions;
+  payload.conflict_decisions = Object.fromEntries(config.conflictDecisions);
   payload.known_capabilities = config.knownCapabilities;
 
   await writeFileAtomic(configPath, `${stringify(payload)}\n`);

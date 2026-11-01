@@ -655,7 +655,7 @@ describe("resolveConsent", () => {
         },
       },
       log: silentLog,
-      conflictDecisions: { [conflictOperation.resourceId]: "replace" },
+      conflictDecisions: new Map([[conflictOperation.resourceId, "replace"]]),
     });
 
     expect(result.approved).toEqual([
@@ -683,7 +683,7 @@ describe("resolveConsent", () => {
         },
       },
       log: silentLog,
-      conflictDecisions: { [conflictOperation.resourceId]: "replace" },
+      conflictDecisions: new Map([[conflictOperation.resourceId, "replace"]]),
     });
 
     expect(questions).toEqual([
@@ -708,7 +708,7 @@ describe("resolveConsent", () => {
       interactive: false,
       prompts: alwaysDecline,
       log: silentLog,
-      conflictDecisions: { [conflictOperation.resourceId]: "replace" },
+      conflictDecisions: new Map([[conflictOperation.resourceId, "replace"]]),
     });
 
     expect(result.approved).toEqual([]);
@@ -734,7 +734,7 @@ describe("resolveConsent", () => {
       interactive: false,
       prompts: alwaysDecline,
       log: silentLog,
-      conflictDecisions: { [conflictOperation.resourceId]: "keep" },
+      conflictDecisions: new Map([[conflictOperation.resourceId, "keep"]]),
     });
 
     expect(result.skipped.map((skip) => skip.consentMissing)).toEqual([false]);
@@ -763,7 +763,7 @@ describe("resolveConsent", () => {
         },
       },
       log: silentLog,
-      conflictDecisions: { [symlinkConflict.resourceId]: "replace" },
+      conflictDecisions: new Map([[symlinkConflict.resourceId, "replace"]]),
     });
 
     expect(result.approved).toEqual([]);
@@ -816,7 +816,7 @@ describe("agent conflicts that resolve to replace", () => {
       interactive: false,
       prompts: alwaysDecline,
       log: output,
-      conflictDecisions: { [agentConflict.resourceId]: "replace" },
+      conflictDecisions: new Map([[agentConflict.resourceId, "replace"]]),
     });
 
     expect(result.approved).toEqual([{ ...agentConflict, action: "replace" }]);
@@ -862,7 +862,7 @@ describe("agent conflicts that resolve to replace", () => {
       interactive: false,
       prompts: alwaysDecline,
       log: output,
-      conflictDecisions: { [ruleConflict.resourceId]: "replace" },
+      conflictDecisions: new Map([[ruleConflict.resourceId, "replace"]]),
     });
 
     expect(output.lines.join("\n")).not.toContain("subagent");

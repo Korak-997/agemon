@@ -51,4 +51,15 @@ if [ "$VERSION_WITHOUT_ASSETS" != "$EXPECTED_VERSION" ]; then
   exit 1
 fi
 
-echo "Bundle smoke test passed: packaged CLI runs standalone, declares no install-time dependencies, and reports ${ACTUAL_VERSION}, with or without assets/skills."
+DEV_SWITCH_OUTPUT="$(cd "$WORK_DIR" && AGEMON_DEV=1 AGEMON_FAKE_SUBPROCESS=1 node bin/agemon.js --version 2>&1)" || true
+
+case "$DEV_SWITCH_OUTPUT" in
+  *"must never be set outside the sandbox harness"*) ;;
+  *)
+    echo "Bundle smoke test FAILED: the packaged CLI did not refuse AGEMON_DEV=1 with AGEMON_FAKE_SUBPROCESS=1 (output: '${DEV_SWITCH_OUTPUT}')." >&2
+    echo "Dev-only switches must apply only in a source checkout (.git or src/ next to package.json)." >&2
+    exit 1
+    ;;
+esac
+
+echo "Bundle smoke test passed: packaged CLI runs standalone, declares no install-time dependencies, reports ${ACTUAL_VERSION} with or without assets/skills, and refuses the dev-only switches."

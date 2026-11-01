@@ -50,12 +50,9 @@ export function readPackageVersion(packageRoot = resolvePackageRoot()): string {
   return manifest.version;
 }
 
-function isSourceCheckout(packageRoot: string): boolean {
-  return (
-    process.env.AGEMON_DEV === "1" ||
-    SOURCE_CHECKOUT_ENTRIES.some((entry) =>
-      existsSync(join(packageRoot, entry)),
-    )
+export function isSourceCheckout(packageRoot: string): boolean {
+  return SOURCE_CHECKOUT_ENTRIES.some((entry) =>
+    existsSync(join(packageRoot, entry)),
   );
 }
 

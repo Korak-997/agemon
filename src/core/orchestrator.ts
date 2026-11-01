@@ -13,7 +13,11 @@ import {
   FILE_TARGETING_ACTIONS,
 } from "./apply.js";
 import { assertNoInterruptedApply } from "./apply-journal.js";
-import { resolveConfigPath, writeConfig } from "./config.js";
+import {
+  type ConflictDecision,
+  resolveConfigPath,
+  writeConfig,
+} from "./config.js";
 import type { ConflictResolution, SkippedOperation } from "./consent.js";
 import { buildConsentGates, useSharedOperations } from "./consent.js";
 import type { Context } from "./context.js";
@@ -35,8 +39,6 @@ import {
   removeRecordedEmptyDirectories,
   removeWorkspaceFootprint,
 } from "./workspace-footprint.js";
-
-type ConflictDecisionMap = Record<string, "keep" | "replace" | "skip">;
 
 export type RunOutcome =
   | "applied"
@@ -99,7 +101,7 @@ export interface ReconcileOptions {
   allowUnignoredState: boolean;
   trustRepoGitConfig?: boolean;
   plan?: Plan;
-  conflictDecisions?: ConflictDecisionMap;
+  conflictDecisions?: ReadonlyMap<string, ConflictDecision>;
   persistConfig?: boolean;
   platformSkippedCapabilities?: string[];
 }
@@ -251,10 +253,12 @@ async function persistDesiredStateConfig(
   options: ReconcileOptions,
   conflictResolutions: ConflictResolution[],
 ): Promise<void> {
-  const conflictDecisions: ConflictDecisionMap = {};
-  for (const resolution of conflictResolutions) {
-    conflictDecisions[resolution.resourceId] = resolution.decision;
-  }
+  const conflictDecisions = new Map(
+    conflictResolutions.map((resolution) => [
+      resolution.resourceId,
+      resolution.decision,
+    ]),
+  );
 
   const configPath = await writeConfig(ctx.cwd, {
     capabilities: desiredCapabilityIds(plugins, options),

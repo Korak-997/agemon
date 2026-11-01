@@ -1,4 +1,5 @@
 import { fingerprintSkillTree } from "../plugins/skills/skill-tree.js";
+import { isDevMode } from "./dev-mode.js";
 
 export const FAKE_PINNED_SKILL_MANIFEST_FILE = "SKILL.md";
 
@@ -16,7 +17,5 @@ export function fakePinnedSkillFingerprint(skillName: string): string {
 }
 
 export function fakeSubprocessesActive(): boolean {
-  return (
-    process.env.AGEMON_FAKE_SUBPROCESS === "1" && process.env.AGEMON_DEV === "1"
-  );
+  return process.env.AGEMON_FAKE_SUBPROCESS === "1" && isDevMode();
 }

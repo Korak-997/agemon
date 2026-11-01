@@ -136,7 +136,8 @@ const ERROR_HINTS: { match: RegExp; hint: string }[] = [
     hint: "run 'agemon plan' to refresh, then 'agemon apply'.",
   },
   {
-    match: /not git-ignored|isolation/i,
+    match:
+      /^Refusing to write \.agemon\/ state: \/\.agemon\/ is not git-ignored\./,
     hint: "add /.agemon/ to .gitignore, or re-run interactively or with --yes; if agemon reported that git could not answer, fix that git error first.",
   },
   {

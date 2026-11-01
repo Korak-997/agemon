@@ -114,14 +114,14 @@ describe("resolveInstallMethod", () => {
     },
   );
 
-  it("treats AGEMON_DEV=1 as a source checkout", async () => {
+  it("does not treat a packaged layout as a source checkout under AGEMON_DEV=1", async () => {
     vi.stubEnv("AGEMON_DEV", "1");
     const packageRoot = await createTempDirectory();
     await createPackageTree(packageRoot);
 
     await expect(
       resolveInstallMethod({ packageRoot, run: NPM_MUST_NOT_RUN }),
-    ).resolves.toEqual({ kind: "dev" });
+    ).resolves.toEqual({ kind: "unknown", packageRoot });
   });
 
   it("recognises npm's exec cache as npx", async () => {

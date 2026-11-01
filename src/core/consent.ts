@@ -363,7 +363,7 @@ export interface ResolveConsentInput {
   log: Pick<Console, "log">;
   interactive?: boolean;
   prompts: GatePrompts;
-  conflictDecisions?: Record<string, RecordedConflictDecision>;
+  conflictDecisions?: ReadonlyMap<string, RecordedConflictDecision>;
 }
 
 export async function resolveConsent(
@@ -412,7 +412,7 @@ export async function resolveConsent(
       }
       for (const operation of gate.operations) {
         const outcome = await settleConflict(operation, {
-          recordedDecision: input.conflictDecisions?.[operation.resourceId],
+          recordedDecision: input.conflictDecisions?.get(operation.resourceId),
           yes: input.yes,
           interactive,
           prompts,

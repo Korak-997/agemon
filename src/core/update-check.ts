@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { theme } from "../ui/theme.js";
+import { isDevMode } from "./dev-mode.js";
 import {
   compareReleaseVersions,
   fetchLatestReleaseVersion,
@@ -120,7 +121,7 @@ function isUpdateCheckDisabled(input: UpdateCheckInput): boolean {
     input.dryRun ||
     input.quiet ||
     isRunningInCi() ||
-    process.env.AGEMON_DEV === "1" ||
+    isDevMode() ||
     process.env.AGEMON_NO_UPDATE_CHECK === "1"
   );
 }

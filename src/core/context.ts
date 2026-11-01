@@ -11,6 +11,7 @@ import type { CustomSkillGroupConfig } from "./config.js";
 import {
   type ApprovedOperationSet,
   type ConsentGate,
+  type RecordedConflictDecision,
   resolveConsent,
 } from "./consent.js";
 import { assertFakeBackendsAreDevOnly } from "./dev-mode.js";
@@ -65,7 +66,7 @@ export interface Context {
   consent: (
     gates: ConsentGate[],
     options?: {
-      conflictDecisions?: Record<string, "keep" | "replace" | "skip">;
+      conflictDecisions?: ReadonlyMap<string, RecordedConflictDecision>;
     },
   ) => Promise<ApprovedOperationSet>;
   skillGroupsOption?: string;

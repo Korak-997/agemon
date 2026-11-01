@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
+import { assertFakeBackendsAreDevOnly, isDevMode } from "../core/dev-mode.js";
 import { errorMessage } from "../core/error-message.js";
 import { readRegularFileIfExists } from "../core/files.js";
 
@@ -144,10 +144,9 @@ function detectDarwinServiceManager(): ServiceManagerKind {
 }
 
 function resolveOsReleasePath(input: DetectPlatformInput): string {
-  const testOverride =
-    process.env.AGEMON_DEV === "1"
-      ? process.env.AGEMON_OS_RELEASE_PATH
-      : undefined;
+  const testOverride = isDevMode()
+    ? process.env.AGEMON_OS_RELEASE_PATH
+    : undefined;
   return input.osReleasePath ?? testOverride ?? "/etc/os-release";
 }
 

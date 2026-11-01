@@ -284,22 +284,56 @@ describe("withRepositoryRunLock", () => {
     const first = await mkdtemp(join(tmpdir(), "agemon-run-lock-a-"));
     const second = await mkdtemp(join(tmpdir(), "agemon-run-lock-b-"));
     createdTempDirectories.push(first, second);
-    const order: string[] = [];
+    const firstEntered = createSignal();
+    const secondEntered = createSignal();
 
     await Promise.all([
       withRepositoryRunLock(first, async () => {
-        order.push("first:start");
-        await new Promise((resolve) => setTimeout(resolve, 30));
-        order.push("first:end");
+        firstEntered.send();
+        await waitForSignal(secondEntered, "the second repository's lock");
       }),
       withRepositoryRunLock(second, async () => {
-        order.push("second");
+        secondEntered.send();
+        await waitForSignal(firstEntered, "the first repository's lock");
       }),
     ]);
-
-    expect(order.indexOf("second")).toBeLessThan(order.indexOf("first:end"));
   });
 });
+
+const RENDEZVOUS_TIMEOUT_MS = 5_000;
+
+interface Signal {
+  received: Promise<void>;
+  send: () => void;
+}
+
+function createSignal(): Signal {
+  let send = () => {};
+  const received = new Promise<void>((resolve) => {
+    send = resolve;
+  });
+  return { received, send };
+}
+
+async function waitForSignal(signal: Signal, from: string): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `nothing entered ${from} within ${RENDEZVOUS_TIMEOUT_MS} ms`,
+          ),
+        ),
+      RENDEZVOUS_TIMEOUT_MS,
+    );
+  });
+  try {
+    await Promise.race([signal.received, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 describe("resolveStateRoot", () => {
   it("defaults to ~/.local/state on linux", () => {

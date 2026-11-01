@@ -58,4 +58,13 @@ describe("renderCliError", () => {
 
     expect(rendered).toContain("fix that git error first");
   });
+
+  it.each([
+    "code-review-graph failed: process isolation is not supported on this kernel",
+    "pipx failed: warning: /tmp/build is not git-ignored",
+  ])("gives no isolation hint for an unrelated error: %s", (message) => {
+    expect(renderCliError(message)).not.toContain(
+      "add /.agemon/ to .gitignore",
+    );
+  });
 });
