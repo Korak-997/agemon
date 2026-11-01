@@ -9,6 +9,16 @@ dist/
 review-2026-08-13.md
 .npm-cache/
 researches/
-plan.md
+/plan.md
 /.agemon/
 /skills-lock.json
+/website/design/
+/website/.astro/
+/agemon-brand/
+/website/src/content/docs/start/
+/website/src/content/docs/reference/
+/website/src/content/docs/skills/
+/website/src/content/docs/project/
+/website/src/generated/
+/website/public/install.sh
+/docs/road-to-v6.md

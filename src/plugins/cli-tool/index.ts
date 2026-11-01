@@ -1,11 +1,33 @@
+import { lstat } from "node:fs/promises";
+import { join } from "node:path";
 import type { Context } from "../../core/context.js";
+import { errorMessage } from "../../core/error-message.js";
+import { readMachineLedger } from "../../core/machine-ledger.js";
+import { resolveGlobalNpmRoot } from "../../core/npm-global.js";
 import type { LedgerEntry } from "../../core/state-manifest.js";
-import { describeOperation } from "../proposed-operation.js";
+import { resolveAgemonStateDirectory } from "../../core/state-root.js";
+import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
+import { printable } from "../../core/untrusted-text.js";
 import type {
-  AgemonPlugin,
+  InstalledPackageInspection,
+  VerifiedArchiveCandidate,
+} from "../../core/verified-binary-installer.js";
+import type { PlatformCapabilities } from "../../platform/detect.js";
+import { describeOperation } from "../proposed-operation.js";
+import {
+  addSharedHolder,
+  createSharedResource,
+  describeUseSharedOperation,
+  isHeldByThisRepository,
+  releaseSharedResource,
+  repoLedgerUsesSharedResource,
+  wasInstalledByAgemon,
+} from "../shared-resource.js";
+import type {
   CapabilityStateRow,
   PluginPresence,
   PluginVerificationResult,
+  PluginWithInstall,
   ProposedOperation,
 } from "../types.js";
 import { CLI_TOOL_BUNDLE, type CliToolBundleEntry } from "./catalog.js";
@@ -16,8 +38,40 @@ const ACTION_TYPE_INSTALLED_CLI_TOOL = "installed-cli-tool";
 const ACTION_TYPE_PREEXISTING_CLI_TOOL = "preexisting-cli-tool";
 
 const VERSION_CHECK_TIMEOUT_MS = 20_000;
-const INSTALL_TIMEOUT_MS = 180_000;
 const UNINSTALL_TIMEOUT_MS = 60_000;
+
+export function pinnedArchiveKeyFor(platform: PlatformCapabilities): string {
+  return `${platform.family}-${platform.arch}`;
+}
+
+export function hasPinnedBuildFor(platform: PlatformCapabilities): boolean {
+  const platformKey = pinnedArchiveKeyFor(platform);
+  return CLI_TOOL_BUNDLE.every((entry) =>
+    Object.hasOwn(entry.releaseArchivesByPlatform, platformKey),
+  );
+}
+
+export function resolveVerifiedArchiveCandidates(
+  entry: CliToolBundleEntry,
+  platformKey: string,
+): VerifiedArchiveCandidate[] {
+  const archives = Object.hasOwn(entry.releaseArchivesByPlatform, platformKey)
+    ? entry.releaseArchivesByPlatform[platformKey]
+    : undefined;
+  if (!archives) {
+    throw new Error(
+      `${entry.packageName} has no pinned build for ${platformKey}.`,
+    );
+  }
+  return archives.map(({ asset, sha256 }) => ({
+    url: `${entry.releaseDownloadUrl}/${asset}`,
+    sha256,
+  }));
+}
+
+function pinnedPackageSpec(entry: CliToolBundleEntry): string {
+  return `${entry.packageName}@${entry.version}`;
+}
 
 function getPluginActions(ctx: Context) {
   return ctx.manifest
@@ -25,34 +79,88 @@ function getPluginActions(ctx: Context) {
     .filter((action) => action.plugin === PLUGIN_ID);
 }
 
+function isManagedInstallOf(action: LedgerEntry, toolId: string): boolean {
+  return (
+    action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
+    action.target === toolId &&
+    action.preExisting === false
+  );
+}
+
 function hasManagedInstallRecord(ctx: Context, toolId: string): boolean {
   return getPluginActions(ctx).some(
     (action) =>
-      action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
-      action.target === toolId &&
-      action.preExisting === false,
+      isManagedInstallOf(action, toolId) && ctx.manifest.isConfirmed(action),
   );
 }
 
-function hasPreexistingRecord(ctx: Context, toolId: string): boolean {
-  return getPluginActions(ctx).some(
-    (action) =>
-      action.type === ACTION_TYPE_PREEXISTING_CLI_TOOL &&
-      action.target === toolId &&
-      action.preExisting === true,
+const inspectionsByContext = new WeakMap<
+  Context,
+  Map<string, Promise<InstalledPackageInspection>>
+>();
+
+function forgetInspections(ctx: Context): void {
+  inspectionsByContext.delete(ctx);
+}
+
+function inspectInstalledTool(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+  options: { fresh?: boolean } = {},
+): Promise<InstalledPackageInspection> {
+  const inspections = inspectionsByContext.get(ctx) ?? new Map();
+  inspectionsByContext.set(ctx, inspections);
+  const cached = options.fresh ? undefined : inspections.get(entry.id);
+  if (cached) {
+    return cached;
+  }
+  const inspection = ctx.verifiedBinaryInstaller.inspect({
+    packageName: entry.packageName,
+    commandName: entry.binaryName,
+    commandPathInPackage: entry.commandPathInPackage,
+    binaryPathInPackage: entry.binaryPathInPackage,
+    packageFileSha256: entry.packageFileSha256,
+    binarySha256: entry.binarySha256,
+  });
+  inspections.set(entry.id, inspection);
+  return inspection;
+}
+
+function isInstalledByAgemon(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<boolean> {
+  return wasInstalledByAgemon(
+    entry.sharedResource,
+    hasManagedInstallRecord(ctx, entry.id),
   );
 }
 
-function hasAnyRecordForTool(ctx: Context, toolId: string): boolean {
-  return (
-    hasManagedInstallRecord(ctx, toolId) || hasPreexistingRecord(ctx, toolId)
-  );
+async function unpinnedFilesOfAgemonInstall(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<string[]> {
+  if (!(await isInstalledByAgemon(ctx, entry))) {
+    return [];
+  }
+  const inspection = await inspectInstalledTool(ctx, entry);
+  return inspection.kind === "installed" ? inspection.differences : [];
 }
 
 async function isToolBinaryAvailable(
   ctx: Context,
   entry: CliToolBundleEntry,
+  options: { fresh?: boolean } = {},
 ): Promise<boolean> {
+  if (await isInstalledByAgemon(ctx, entry)) {
+    const inspection = await inspectInstalledTool(ctx, entry, options);
+    if (inspection.kind === "absent") {
+      return false;
+    }
+    if (inspection.differences.length > 0) {
+      return true;
+    }
+  }
   const result = await ctx.run(entry.binaryName, ["--version"], {
     timeoutMs: VERSION_CHECK_TIMEOUT_MS,
   });
@@ -60,39 +168,15 @@ async function isToolBinaryAvailable(
 }
 
 async function detectCliTools(ctx: Context): Promise<PluginPresence> {
-  const bundleAvailability = await Promise.all(
-    CLI_TOOL_BUNDLE.map(async (entry) => ({
-      entry,
-      available: await isToolBinaryAvailable(ctx, entry),
-    })),
-  );
-
-  if (bundleAvailability.some((tool) => !tool.available)) {
-    return { present: false, preExisting: false };
+  for (const entry of CLI_TOOL_BUNDLE) {
+    if (!(await isToolBinaryAvailable(ctx, entry))) {
+      return { present: false, preExisting: false };
+    }
   }
-
   const allManaged = CLI_TOOL_BUNDLE.every((entry) =>
     hasManagedInstallRecord(ctx, entry.id),
   );
-  if (allManaged) {
-    return { present: true, preExisting: false };
-  }
-
-  if (!ctx.dryRun) {
-    for (const { entry } of bundleAvailability) {
-      if (hasAnyRecordForTool(ctx, entry.id)) {
-        continue;
-      }
-      await ctx.manifest.recordAction({
-        plugin: PLUGIN_ID,
-        type: ACTION_TYPE_PREEXISTING_CLI_TOOL,
-        target: entry.id,
-        preExisting: true,
-      });
-    }
-  }
-
-  return { present: true, preExisting: true };
+  return { present: true, preExisting: !allManaged };
 }
 
 async function describeCliToolsState(
@@ -114,85 +198,220 @@ async function describeCliToolsState(
       }
 
       const managed = hasManagedInstallRecord(ctx, entry.id);
+      const inspection = await inspectInstalledTool(ctx, entry);
+      const installed =
+        inspection.kind !== "installed"
+          ? entry.packageName
+          : inspection.version === null
+            ? `${entry.packageName}; agemon could not inspect it (${inspection.differences.join("; ")})`
+            : `${entry.packageName} ${inspection.version}${inspection.differences.length > 0 ? `, not the pinned ${entry.version} build` : ""}`;
       return {
         capabilityId: PLUGIN_ID,
         resourceId,
         label: entry.binaryName,
         state: managed ? "present-managed" : "present-adopted",
         detail: managed
-          ? `installed via npm (${entry.packageName})`
-          : "pre-existing install",
+          ? `installed via npm (${installed})`
+          : `pre-existing install (${installed})`,
       };
     }),
   );
 }
 
+function describeInstallOperation(
+  entry: CliToolBundleEntry,
+): ProposedOperation {
+  return describeOperation({
+    capabilityId: PLUGIN_ID,
+    resourceId: `package:${entry.id}`,
+    targetPath: entry.packageName,
+    action: "install-package",
+    riskClass: "executes",
+    requiresConsent: true,
+    preview: {
+      kind: "note",
+      text: `npm install --global --ignore-scripts of the sha512-pinned ${pinnedPackageSpec(entry)} tarball; binary from the v${entry.version} GitHub release, sha256-pinned`,
+    },
+  });
+}
+
 async function planCliTools(ctx: Context): Promise<ProposedOperation[]> {
-  const missingEntries: CliToolBundleEntry[] = [];
+  const operations: ProposedOperation[] = [];
   for (const entry of CLI_TOOL_BUNDLE) {
     if (!(await isToolBinaryAvailable(ctx, entry))) {
-      missingEntries.push(entry);
+      operations.push(describeInstallOperation(entry));
+    } else if (
+      !(
+        entriesForTool(ctx, getPluginActions(ctx), entry).usesIt &&
+        (await isHeldByThisRepository(ctx, entry.sharedResource))
+      )
+    ) {
+      operations.push(
+        describeUseSharedOperation(
+          PLUGIN_ID,
+          entry.sharedResource,
+          hasManagedInstallRecord(ctx, entry.id),
+        ),
+      );
     }
   }
+  return operations;
+}
 
-  return missingEntries.map((entry) =>
-    describeOperation({
-      capabilityId: PLUGIN_ID,
-      resourceId: `package:${entry.id}`,
-      targetPath: entry.packageName,
-      action: "install-package",
-      riskClass: "executes",
-      requiresConsent: true,
-      preview: {
-        kind: "note",
-        text: `npm install --global ${entry.packageName}`,
-      },
-    }),
+async function uninstallGlobalPackage(
+  ctx: Context,
+  packageName: string,
+): Promise<void> {
+  const uninstallResult = await ctx.run(
+    "npm",
+    ["uninstall", "--global", packageName],
+    {
+      timeoutMs: UNINSTALL_TIMEOUT_MS,
+    },
+  );
+  if (uninstallResult.code !== 0) {
+    throw new Error(
+      `npm global uninstall failed for ${printable(packageName)}: ${describeSubprocessFailure(uninstallResult, "npm uninstall")}`,
+    );
+  }
+}
+
+async function removePartlyInstalledPackage(
+  ctx: Context,
+  packageName: string,
+  installError: unknown,
+): Promise<void> {
+  try {
+    await uninstallGlobalPackage(ctx, packageName);
+  } catch (uninstallError) {
+    throw new Error(
+      `${errorMessage(installError)} Removing the partly installed ${packageName} also failed (${errorMessage(uninstallError)}); run: npm uninstall --global ${packageName}`,
+    );
+  }
+}
+
+async function assertNoForeignGlobalPackage(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<void> {
+  const npmRoot = await resolveGlobalNpmRoot(ctx.run, {
+    cwd: (await resolveAgemonStateDirectory("prepare")).path,
+    mayNotExistYet: true,
+  });
+  const packagePath = join(npmRoot, entry.packageName);
+  try {
+    await lstat(packagePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  const recordedByAgemon =
+    (await readMachineLedger()).resources[entry.sharedResource.id] !==
+    undefined;
+  throw new Error(
+    recordedByAgemon
+      ? `${entry.packageName} is installed but '${entry.binaryName} --version' fails on your PATH (it is recorded in the shared-tools ledger); fix your PATH, then run agemon again.`
+      : `A global npm ${entry.packageName} already exists at ${printable(packagePath)} but '${entry.binaryName} --version' fails on your PATH — fix it or run 'npm uninstall --global ${entry.packageName}', then run agemon again.`,
   );
 }
 
-async function installCliTools(ctx: Context): Promise<void> {
+async function installPinnedCliTool(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<void> {
+  await assertNoForeignGlobalPackage(ctx, entry);
+  const candidates = resolveVerifiedArchiveCandidates(
+    entry,
+    pinnedArchiveKeyFor(ctx.platform),
+  );
+  try {
+    await ctx.verifiedBinaryInstaller.install({
+      packageName: entry.packageName,
+      version: entry.version,
+      binaryPathInPackage: entry.binaryPathInPackage,
+      archiveMemberName: entry.archiveMemberName,
+      candidates,
+      packageTarball: entry.packageTarball,
+    });
+  } catch (installError) {
+    await removePartlyInstalledPackage(ctx, entry.packageName, installError);
+    throw new Error(
+      `${errorMessage(installError)} agemon uninstalled the global npm package ${entry.packageName} again, so nothing is left half-installed.`,
+      { cause: installError },
+    );
+  }
+}
+
+async function installSharedCliTool(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<void> {
   if (ctx.dryRun) {
-    for (const entry of CLI_TOOL_BUNDLE) {
-      ctx.ui.info(`Would install ${entry.packageName} globally via npm`);
-    }
+    ctx.ui.info(
+      `Would install the sha512-pinned ${pinnedPackageSpec(entry)} tarball globally via npm, with its sha256-pinned binary`,
+    );
     return;
   }
-
-  for (const entry of CLI_TOOL_BUNDLE) {
-    const toolIsAvailable = await isToolBinaryAvailable(ctx, entry);
-    if (toolIsAvailable) {
-      if (!hasAnyRecordForTool(ctx, entry.id)) {
-        await ctx.manifest.recordAction({
-          plugin: PLUGIN_ID,
-          type: ACTION_TYPE_PREEXISTING_CLI_TOOL,
-          target: entry.id,
-          preExisting: true,
-        });
+  await createSharedResource(ctx, PLUGIN_ID, entry.sharedResource, {
+    isPresent: () => isToolBinaryAvailable(ctx, entry, { fresh: true }),
+    create: async () => {
+      try {
+        await installPinnedCliTool(ctx, entry);
+      } finally {
+        forgetInspections(ctx);
       }
-      continue;
-    }
+    },
+    async recordInstall() {
+      await ctx.manifest.recordAction({
+        plugin: PLUGIN_ID,
+        type: ACTION_TYPE_INSTALLED_CLI_TOOL,
+        target: entry.id,
+        preExisting: false,
+      });
+    },
+  });
+}
 
-    const installResult = await ctx.run(
-      "npm",
-      ["install", "--global", entry.packageName],
-      {
-        timeoutMs: INSTALL_TIMEOUT_MS,
-      },
+async function useInstalledCliTool(
+  ctx: Context,
+  entry: CliToolBundleEntry,
+): Promise<void> {
+  if (ctx.dryRun) {
+    ctx.ui.info(`Would record that this repository uses ${entry.binaryName}`);
+    return;
+  }
+  await addSharedHolder(ctx, PLUGIN_ID, entry.sharedResource, {
+    isPresent: () => isToolBinaryAvailable(ctx, entry, { fresh: true }),
+    repoLedgerSaysInstalled: hasManagedInstallRecord(ctx, entry.id),
+  });
+}
+
+async function installCliTools(ctx: Context): Promise<void> {
+  for (const entry of CLI_TOOL_BUNDLE) {
+    if (!(await isToolBinaryAvailable(ctx, entry))) {
+      await installSharedCliTool(ctx, entry);
+    }
+  }
+}
+
+async function applyCliTools(
+  ctx: Context,
+  operations: ProposedOperation[],
+): Promise<undefined> {
+  for (const operation of operations) {
+    const installEntry = CLI_TOOL_BUNDLE.find(
+      (entry) => operation.resourceId === `package:${entry.id}`,
     );
-    if (installResult.code !== 0) {
-      throw new Error(
-        installResult.stderr ||
-          `npm global install failed for ${entry.packageName}`,
-      );
+    const sharedEntry = CLI_TOOL_BUNDLE.find(
+      (entry) => operation.resourceId === entry.sharedResource.id,
+    );
+    if (operation.action === "install-package" && installEntry) {
+      await installSharedCliTool(ctx, installEntry);
+    } else if (operation.action === "use-shared" && sharedEntry) {
+      await useInstalledCliTool(ctx, sharedEntry);
     }
-
-    await ctx.manifest.recordAction({
-      plugin: PLUGIN_ID,
-      type: ACTION_TYPE_INSTALLED_CLI_TOOL,
-      target: entry.id,
-      preExisting: false,
-    });
   }
 }
 
@@ -216,70 +435,99 @@ async function verifyCliTools(ctx: Context): Promise<PluginVerificationResult> {
     };
   }
 
+  const attention: string[] = [];
+  for (const entry of CLI_TOOL_BUNDLE) {
+    const differences = await unpinnedFilesOfAgemonInstall(ctx, entry);
+    if (differences.length > 0) {
+      attention.push(
+        `${entry.binaryName} is not the pinned ${entry.packageName} ${entry.version} build (${differences.join("; ")}); reinstall it: npm uninstall --global ${entry.packageName}, then run agemon`,
+      );
+    }
+  }
+
   return {
     ok: true,
     detail: `${CLI_TOOL_BUNDLE.length} CLI tool bundle entries present`,
+    ...(attention.length > 0 ? { attention: attention.join(" ") } : {}),
   };
+}
+
+function entriesForTool(
+  ctx: Context,
+  entries: LedgerEntry[],
+  entry: CliToolBundleEntry,
+): { installedIt: boolean; usesIt: boolean } {
+  const installEntries = entries.filter((action) =>
+    isManagedInstallOf(action, entry.id),
+  );
+  const installedIt = installEntries.some((action) =>
+    ctx.manifest.isConfirmed(action),
+  );
+  const usesIt =
+    installEntries.length > 0 ||
+    repoLedgerUsesSharedResource(entries, entry.sharedResource) ||
+    entries.some(
+      (action) =>
+        action.type === ACTION_TYPE_PREEXISTING_CLI_TOOL &&
+        action.target === entry.id,
+    );
+  return { installedIt, usesIt };
+}
+
+function reportUnmanagedTargets(ctx: Context, entries: LedgerEntry[]): void {
+  for (const action of entries) {
+    const isToolEntry =
+      action.type === ACTION_TYPE_INSTALLED_CLI_TOOL ||
+      action.type === ACTION_TYPE_PREEXISTING_CLI_TOOL;
+    if (
+      isToolEntry &&
+      !CLI_TOOL_BUNDLE.some((entry) => entry.id === action.target)
+    ) {
+      ctx.ui.info(
+        `ignoring ledger entry for ${printable(action.target)}: cli-tool does not manage that package`,
+      );
+    }
+  }
 }
 
 async function revertCliTools(
   ctx: Context,
   entries: LedgerEntry[],
 ): Promise<void> {
-  const managedActions = entries.filter(
-    (action) =>
-      action.type === ACTION_TYPE_INSTALLED_CLI_TOOL &&
-      action.preExisting === false,
-  );
-
-  if (ctx.dryRun) {
-    if (managedActions.length === 0) {
-      ctx.ui.info("Would keep pre-existing CLI tools untouched");
-      return;
+  reportUnmanagedTargets(ctx, entries);
+  let releasedAny = false;
+  for (const entry of CLI_TOOL_BUNDLE) {
+    const { installedIt, usesIt } = entriesForTool(ctx, entries, entry);
+    if (!usesIt) {
+      continue;
     }
-    for (const action of managedActions) {
-      const bundleEntry = CLI_TOOL_BUNDLE.find(
-        (entry) => entry.id === action.target,
-      );
-      const packageName = bundleEntry?.packageName ?? action.target;
-      ctx.ui.info(`Would uninstall global npm package ${packageName}`);
-    }
-    return;
-  }
-
-  for (const action of managedActions) {
-    const bundleEntry = CLI_TOOL_BUNDLE.find(
-      (entry) => entry.id === action.target,
-    );
-    const packageName = bundleEntry?.packageName ?? action.target;
-
-    const uninstallResult = await ctx.run(
-      "npm",
-      ["uninstall", "--global", packageName],
-      {
-        timeoutMs: UNINSTALL_TIMEOUT_MS,
+    releasedAny = true;
+    await releaseSharedResource(ctx, entry.sharedResource, {
+      releasingRepoInstalledIt: installedIt,
+      isPresent: async () => true,
+      remove: async () => {
+        await uninstallGlobalPackage(ctx, entry.packageName);
+        forgetInspections(ctx);
       },
-    );
-    if (uninstallResult.code !== 0) {
-      throw new Error(
-        uninstallResult.stderr ||
-          `npm global uninstall failed for ${packageName}`,
-      );
-    }
+    });
+  }
+  if (ctx.dryRun && !releasedAny) {
+    ctx.ui.info("Would keep pre-existing CLI tools untouched");
   }
 }
 
 async function uninstallCliTools(ctx: Context): Promise<void> {
   await revertCliTools(ctx, getPluginActions(ctx));
-  await ctx.manifest.removeActionsForPlugin(PLUGIN_ID);
 }
 
-export const cliToolPlugin: AgemonPlugin = {
+export const cliToolPlugin: PluginWithInstall = {
   id: PLUGIN_ID,
   riskClass: "executes",
+  sharedResources: CLI_TOOL_BUNDLE.map((entry) => entry.sharedResource),
   detect: detectCliTools,
   describeState: describeCliToolsState,
   plan: planCliTools,
+  apply: applyCliTools,
   install: installCliTools,
   verify: verifyCliTools,
   revert: revertCliTools,

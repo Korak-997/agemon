@@ -1,6 +1,7 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { resolveHomeDirectory } from "../home.js";
 import type {
   RegisterAutostartInput,
   RegisterAutostartResult,
@@ -8,6 +9,11 @@ import type {
   ServiceStatus,
   UnregisterAutostartInput,
 } from "./index.js";
+import {
+  environmentOfUnit,
+  isAgemonDaemonUnitFile,
+  workingDirectoryOfUnit,
+} from "./unit-files.js";
 
 interface CreateFakeServiceManagerInput {
   homeDir?: string;
@@ -17,13 +23,10 @@ interface CreateFakeServiceManagerInput {
 interface FakeServiceState {
   unitName: string;
   unitContents: string;
+  attemptLabel: string;
   user: string;
   active: boolean;
-  lingerEnabledByAgemon: boolean;
-}
-
-function resolveHomeDir(homeDir?: string): string {
-  return homeDir ?? process.env.HOME ?? homedir();
+  failed?: boolean;
 }
 
 function resolveUser(user?: string): string {
@@ -32,6 +35,10 @@ function resolveUser(user?: string): string {
 
 function markerPath(homeDir: string, unitName: string): string {
   return join(homeDir, ".agemon", "fake-services", `${unitName}.json`);
+}
+
+function lingerMarkerPath(homeDir: string): string {
+  return join(homeDir, ".agemon", "fake-linger");
 }
 
 async function readMarker(
@@ -52,12 +59,15 @@ async function readMarker(
 export function createFakeServiceManager(
   input: CreateFakeServiceManagerInput,
 ): ServiceManager {
-  const homeDir = resolveHomeDir(input.homeDir);
+  const homeDir = input.homeDir ?? resolveHomeDirectory();
   const user = resolveUser(input.user);
 
   const isActive = async (unitName: string): Promise<ServiceStatus> => {
     const marker = await readMarker(homeDir, unitName);
-    return { active: marker?.active === true };
+    return {
+      active: marker?.active === true,
+      failed: marker?.failed === true,
+    };
   };
 
   const registerAutostart = async (
@@ -65,12 +75,13 @@ export function createFakeServiceManager(
   ): Promise<RegisterAutostartResult> => {
     const destinationPath = markerPath(homeDir, registration.unitName);
     await mkdir(join(homeDir, ".agemon", "fake-services"), { recursive: true });
+    const [firstAttempt] = registration.attempts;
     const state: FakeServiceState = {
       unitName: registration.unitName,
-      unitContents: registration.unitContents,
+      unitContents: firstAttempt.unitContents,
+      attemptLabel: firstAttempt.label,
       user,
       active: true,
-      lingerEnabledByAgemon: true,
     };
     await writeFile(
       destinationPath,
@@ -80,7 +91,8 @@ export function createFakeServiceManager(
 
     return {
       unitPath: destinationPath,
-      lingerEnabledByAgemon: state.lingerEnabledByAgemon,
+      attemptLabel: state.attemptLabel,
+      failedAttempts: [],
     };
   };
 
@@ -90,9 +102,48 @@ export function createFakeServiceManager(
     await rm(markerPath(homeDir, registration.unitName), { force: true });
   };
 
+  const readUnitWorkingDirectory = async (
+    unitName: string,
+  ): Promise<string | null> => {
+    const marker = await readMarker(homeDir, unitName);
+    return marker === null ? null : workingDirectoryOfUnit(marker.unitContents);
+  };
+
+  const readUnitEnvironment = async (
+    unitName: string,
+  ): Promise<Record<string, string> | null> => {
+    const marker = await readMarker(homeDir, unitName);
+    return marker === null ? null : environmentOfUnit(marker.unitContents);
+  };
+
+  const findAgemonDaemonUnit = async (): Promise<string | null> => {
+    const markers = await readdir(
+      join(homeDir, ".agemon", "fake-services"),
+    ).catch(() => []);
+    return (
+      markers
+        .map((marker) => marker.replace(/\.json$/, ""))
+        .find(isAgemonDaemonUnitFile) ?? null
+    );
+  };
+
   return {
+    kind: "systemd-user",
     isActive,
+    isSandboxEnforced: async () => true,
     registerAutostart,
     unregisterAutostart,
+    readUnitWorkingDirectory,
+    readUnitEnvironment,
+    unitPathFor: (unitName) => markerPath(homeDir, unitName),
+    isLingerEnabled: async () => existsSync(lingerMarkerPath(homeDir)),
+    async enableLinger() {
+      await mkdir(join(homeDir, ".agemon"), { recursive: true });
+      await writeFile(lingerMarkerPath(homeDir), `${user}\n`, "utf8");
+    },
+    async disableLinger() {
+      await rm(lingerMarkerPath(homeDir), { force: true });
+    },
+    findAgemonDaemonUnit,
   };
 }

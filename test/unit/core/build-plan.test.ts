@@ -1,17 +1,21 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import { buildPlan } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { getRegisteredPlugins } from "../../../src/plugins/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
+import { applyAllPlanned } from "../apply-all-planned.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
@@ -19,14 +23,35 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
-      return { active: false };
+      return { active: false, failed: false };
+    },
+    async isSandboxEnforced() {
+      return false;
     },
     async registerAutostart() {
-      return { unitPath: "", lingerEnabledByAgemon: false };
+      return {
+        unitPath: "",
+        attemptLabel: "strict",
+        failedAttempts: [],
+      };
     },
-    async unregisterAutostart() {
-      return;
+    async unregisterAutostart() {},
+    async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
+      return null;
     },
   };
 }
@@ -34,10 +59,15 @@ function createNoOpServiceManager(): ServiceManager {
 async function createTestContext(): Promise<Context> {
   const sandboxDirectory = await mkdtemp(join(tmpdir(), "agemon-build-plan-"));
   createdTempDirectories.push(sandboxDirectory);
+  vi.stubEnv("HOME", sandboxDirectory);
+  vi.stubEnv("PATH", "");
+  vi.stubEnv("PIPX_HOME", undefined);
+  vi.stubEnv("XDG_DATA_HOME", undefined);
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: true,
     yes: false,
@@ -57,6 +87,10 @@ async function createTestContext(): Promise<Context> {
         : { code: 0, stdout: "", stderr: "" },
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
   };
 }
 
@@ -87,7 +121,7 @@ describe("buildPlan", () => {
 
     const plan = await buildPlan(context, [masterPromptPlugin], {
       ...PLAN_OPTIONS,
-      only: "master-prompt",
+      only: ["master-prompt"],
     });
 
     expect(plan.operations).toHaveLength(5);
@@ -98,11 +132,11 @@ describe("buildPlan", () => {
 
   it("plans nothing once the rule files are already managed", async () => {
     const context = await createTestContext();
-    await masterPromptPlugin.install({ ...context, dryRun: false });
+    await applyAllPlanned(masterPromptPlugin, { ...context, dryRun: false });
 
     const plan = await buildPlan(context, [masterPromptPlugin], {
       ...PLAN_OPTIONS,
-      only: "master-prompt",
+      only: ["master-prompt"],
     });
 
     expect(plan.operations).toEqual([]);
@@ -113,7 +147,7 @@ describe("buildPlan", () => {
 
     const plan = await buildPlan(context, getRegisteredPlugins(), {
       ...PLAN_OPTIONS,
-      only: "daemon",
+      only: ["daemon"],
     });
 
     const capabilityOrder = plan.operations.map(

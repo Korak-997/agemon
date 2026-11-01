@@ -5,17 +5,40 @@ import type { Context } from "../../../src/core/context.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
-      return { active: false };
+      return { active: false, failed: false };
+    },
+    async isSandboxEnforced() {
+      return false;
     },
     async registerAutostart() {
-      return { unitPath: "", lingerEnabledByAgemon: false };
+      return {
+        unitPath: "",
+        attemptLabel: "strict",
+        failedAttempts: [],
+      };
     },
-    async unregisterAutostart() {
-      return;
+    async unregisterAutostart() {},
+    async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
+      return null;
     },
   };
 }
@@ -37,7 +60,8 @@ export async function createAdapterTestContext(
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: true,
@@ -54,5 +78,9 @@ export async function createAdapterTestContext(
     run: runSubprocess,
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
   };
 }

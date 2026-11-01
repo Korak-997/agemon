@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import type { Context } from "../core/context.js";
+import { agemonSubprocessEnvironment } from "../core/subprocess-runner.js";
 import type { AgentInstallationEvidence } from "./types.js";
 
 const SEMVER_PATTERN = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/;
@@ -50,7 +51,7 @@ export async function probeAgentInstallation(
 ): Promise<AgentInstallationEvidence> {
   const executablePath = await resolveExecutableAbsolutePath(
     spec.binaryName,
-    process.env.PATH ?? "",
+    agemonSubprocessEnvironment().PATH ?? "",
   );
   if (!executablePath) {
     return notInstalledEvidence();

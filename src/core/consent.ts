@@ -11,10 +11,15 @@ import {
   isInteractiveTerminal,
 } from "./prompt.js";
 import { styleUnifiedDiff } from "./text-diff.js";
+import { needsGitConfigApproval } from "./untrusted-git-config.js";
+import { printable } from "./untrusted-text.js";
 
 export type ConsentGateId =
   | "workspace-isolation"
+  | "trust-repository-git-config"
+  | "install-custom-skills"
   | "install-tooling"
+  | "install-subagents"
   | "register-service"
   | "write-config"
   | "touch-instruction-files"
@@ -25,12 +30,14 @@ export interface ConsentGate {
   summary: string;
   operations: ProposedOperation[];
   forcesDiff: boolean;
+  announcementWithYes: string | null;
   satisfiableWithYes: boolean;
 }
 
 export interface SkippedOperation {
   operation: ProposedOperation;
   reason: string;
+  consentMissing: boolean;
 }
 
 export type RecordedConflictDecision = "keep" | "replace" | "skip";
@@ -56,8 +63,21 @@ const INSTRUCTION_FILE_ACTIONS: ReadonlySet<ProposedOperationAction> = new Set([
 
 type OperationGateId = Exclude<ConsentGateId, "workspace-isolation">;
 
+export const CUSTOM_SKILL_GROUP_RESOURCE_PREFIX = "custom-skill-group:";
+export const AGENT_FILE_RESOURCE_PREFIX = "agent-file:";
+
+const TRUST_GATE_EXPLANATION =
+  "code-review-graph and its daemon will run git here with these repository settings, which agemon does not trust by default:";
+const DIFF_HEADER_LINE_COUNT = 2;
+const FRONTMATTER_FENCE = "---";
+const TOOLS_LINE_PATTERN = /^tools: (.+)$/u;
+const UNKNOWN_TOOLS = "tools: unknown — see diff";
+
 const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
+  "trust-repository-git-config",
+  "install-custom-skills",
   "install-tooling",
+  "install-subagents",
   "register-service",
   "write-config",
   "touch-instruction-files",
@@ -67,6 +87,7 @@ const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
 export interface BuildConsentGatesInput {
   plan: Plan;
   isolationStatus: IsolationStatus;
+  trustRepoGitConfig?: boolean;
 }
 
 export function buildConsentGates(
@@ -80,6 +101,7 @@ export function buildConsentGates(
       summary: isolationGateSummary(input.isolationStatus),
       operations: [],
       forcesDiff: false,
+      announcementWithYes: null,
       satisfiableWithYes: true,
     });
   }
@@ -103,31 +125,109 @@ export function buildConsentGates(
     if (operations === undefined) {
       continue;
     }
-    gates.push({
-      id: gateId,
-      summary: operationGateSummary(gateId, operations),
-      operations,
-      forcesDiff: operations.some(
-        (operation) => operation.riskClass === "credential-adjacent",
-      ),
-      satisfiableWithYes: gateId !== "resolve-conflict",
-    });
+    gates.push(
+      gateId === "trust-repository-git-config"
+        ? trustRepositoryGitConfigGate(
+            operations,
+            input.trustRepoGitConfig === true,
+          )
+        : {
+            id: gateId,
+            summary: operationGateSummary(gateId, operations),
+            operations,
+            forcesDiff:
+              gateId === "install-custom-skills" ||
+              operations.some(
+                (operation) => operation.riskClass === "credential-adjacent",
+              ),
+            announcementWithYes:
+              gateId === "install-subagents"
+                ? `Installing ${describeSubagents(operations)}.`
+                : null,
+            satisfiableWithYes: gateId !== "resolve-conflict",
+          },
+    );
   }
 
   return gates;
 }
 
+function untrustedPairsOf(operations: ProposedOperation[]): string[] {
+  return [
+    ...new Set(
+      operations.flatMap((operation) =>
+        operation.untrustedGitConfig?.kind === "pairs"
+          ? operation.untrustedGitConfig.pairs
+          : [],
+      ),
+    ),
+  ];
+}
+
+function normalActionText(operation: ProposedOperation): string {
+  const normalGate = gateForOperation({
+    ...operation,
+    untrustedGitConfig: undefined,
+  });
+  return normalGate === null
+    ? `Record that this repository uses ${operation.targetPath || operation.resourceId}.`
+    : operationGateSummary(normalGate, [operation]).replace(/ Proceed\?$/, "");
+}
+
+function trustRepositoryGitConfigGate(
+  operations: ProposedOperation[],
+  flagGiven: boolean,
+): ConsentGate {
+  const pairs = untrustedPairsOf(operations);
+  const pairLines = pairs.map((pair) => `  ${pair}`).join("\n");
+  return {
+    id: "trust-repository-git-config",
+    summary: `${operations.map(normalActionText).join(" ")}\n${TRUST_GATE_EXPLANATION}\n${pairLines}\nProceed?`,
+    operations,
+    forcesDiff: true,
+    announcementWithYes: `${TRUST_GATE_EXPLANATION}\n${pairLines}`,
+    satisfiableWithYes: flagGiven,
+  };
+}
+
+export function useSharedOperations(plan: Plan): ProposedOperation[] {
+  return plan.operations.filter(
+    (operation) =>
+      operation.action === "use-shared" && !needsGitConfigApproval(operation),
+  );
+}
+
 function gateForOperation(
   operation: ProposedOperation,
 ): OperationGateId | null {
+  if (needsGitConfigApproval(operation)) {
+    return "trust-repository-git-config";
+  }
   if (operation.action === "conflict") {
     return "resolve-conflict";
   }
-  if (operation.action === "skip") {
+  if (operation.resourceId.startsWith(AGENT_FILE_RESOURCE_PREFIX)) {
+    return "install-subagents";
+  }
+  const isCustomSkillGroup = operation.resourceId.startsWith(
+    CUSTOM_SKILL_GROUP_RESOURCE_PREFIX,
+  );
+  if (
+    isCustomSkillGroup &&
+    (operation.action === "install-package" || operation.action === "skip")
+  ) {
+    return "install-custom-skills";
+  }
+  if (operation.action === "skip" && operation.requiresConsent) {
+    return "install-tooling";
+  }
+  if (operation.action === "skip" || operation.action === "use-shared") {
     return null;
   }
   if (operation.riskClass === "inert" && !operation.requiresConsent) {
-    return null;
+    throw new Error(
+      `Operation ${printable(operation.id)} (${operation.action}) is marked as needing no consent; only use-shared operations may be.`,
+    );
   }
   if (operation.action === "install-package") {
     return "install-tooling";
@@ -151,16 +251,96 @@ function isolationGateSummary(status: IsolationStatus): string {
   return "agemon needs /.agemon/ git-ignored so its regenerated state is never committed. Add /.agemon/ to .gitignore?";
 }
 
+function describeTargets(operations: ProposedOperation[]): string {
+  return operations
+    .map((operation) => operation.targetPath || operation.resourceId)
+    .join(", ");
+}
+
+function describeUpdates(operations: ProposedOperation[]): string {
+  return operations
+    .map(
+      (operation) =>
+        `${operation.resourceId} updates ${(operation.updates ?? []).map((update) => update.name).join(", ")}`,
+    )
+    .join("; ");
+}
+
+function installToolingSummary(operations: ProposedOperation[]): string {
+  const declines = operations.filter(
+    (operation) => operation.action === "skip",
+  );
+  const updates = operations.filter(
+    (operation) => (operation.updates ?? []).length > 0,
+  );
+  const installs = operations.filter(
+    (operation) => operation.action !== "skip" && !updates.includes(operation),
+  );
+  const parts = [
+    ...(installs.length > 0
+      ? [
+          `Install ${installs.length} package(s) (${describeTargets(installs)}). Uses pipx / npm`,
+        ]
+      : []),
+    ...(updates.length > 0
+      ? [
+          `update or repair ${updates.length} skill group(s) to the version bundled with this agemon (${describeUpdates(updates)})`,
+        ]
+      : []),
+    ...(declines.length > 0
+      ? [
+          `record ${declines.length} declined skill group(s) (${describeTargets(declines)})`,
+        ]
+      : []),
+  ];
+  const sentence = parts.join(", and ");
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}. Proceed?`;
+}
+
+function postImageFrontmatter(diffPreview: string): string[] | null {
+  const postImage = diffPreview
+    .split("\n")
+    .slice(DIFF_HEADER_LINE_COUNT)
+    .filter((line) => line.startsWith("+") || line.startsWith(" "))
+    .map((line) => line.slice(1));
+  if (postImage[0] !== FRONTMATTER_FENCE) {
+    return null;
+  }
+  const closingFence = postImage.indexOf(FRONTMATTER_FENCE, 1);
+  return closingFence === -1 ? null : postImage.slice(1, closingFence);
+}
+
+function describeSubagent(operation: ProposedOperation): string {
+  const name = operation.resourceId.slice(AGENT_FILE_RESOURCE_PREFIX.length);
+  if (operation.preview.kind !== "diff") {
+    return `${name} (already identical; nothing written)`;
+  }
+  const toolsLines = (postImageFrontmatter(operation.preview.text) ?? [])
+    .map((line) => TOOLS_LINE_PATTERN.exec(line)?.[1])
+    .filter((tools) => tools !== undefined);
+  const tools =
+    toolsLines.length === 1 ? `tools: ${toolsLines[0]}` : UNKNOWN_TOOLS;
+  return `${name} [${tools}]`;
+}
+
+function describeSubagents(operations: ProposedOperation[]): string {
+  return `${operations.length} Claude Code subagent definition(s) into .claude/agents: ${operations.map(describeSubagent).join(", ")}. Each agent can use only the tools listed`;
+}
+
 function operationGateSummary(
   gateId: OperationGateId,
   operations: ProposedOperation[],
 ): string {
-  const targets = operations
-    .map((operation) => operation.targetPath || operation.resourceId)
-    .join(", ");
+  const targets = describeTargets(operations);
   switch (gateId) {
+    case "trust-repository-git-config":
+      return trustRepositoryGitConfigGate(operations, false).summary;
+    case "install-custom-skills":
+      return `Install skills from ${operations.length} skill group(s) defined in this repository's agemon.toml (${targets}). They come from the repository's own sources, not from agemon — review every source shown. Proceed?`;
     case "install-tooling":
-      return `Install ${operations.length} package(s) (${targets}). Uses pipx / npm. Proceed?`;
+      return installToolingSummary(operations);
+    case "install-subagents":
+      return `Install ${describeSubagents(operations)}. Proceed?`;
     case "register-service":
       return `Register ${operations.length} background service unit(s) (${targets}). Proceed?`;
     case "write-config":
@@ -183,7 +363,7 @@ export interface ResolveConsentInput {
   log: Pick<Console, "log">;
   interactive?: boolean;
   prompts: GatePrompts;
-  conflictDecisions?: Record<string, RecordedConflictDecision>;
+  conflictDecisions?: ReadonlyMap<string, RecordedConflictDecision>;
 }
 
 export async function resolveConsent(
@@ -231,29 +411,31 @@ export async function resolveConsent(
         input.log.log(gateIntro);
       }
       for (const operation of gate.operations) {
-        const recordedDecision =
-          input.conflictDecisions?.[operation.resourceId];
-        const { decision, reason } = recordedDecision
-          ? {
-              decision: recordedDecision,
-              reason: `conflict ${describeRecordedDecision(recordedDecision)} per agemon.toml`,
-            }
-          : await resolveConflict(operation, {
-              interactive,
-              prompts,
-              log: input.log,
-            });
-        if (decision !== null) {
+        const outcome = await settleConflict(operation, {
+          recordedDecision: input.conflictDecisions?.get(operation.resourceId),
+          yes: input.yes,
+          interactive,
+          prompts,
+          log: input.log,
+        });
+        if (outcome.decision !== null && outcome.recordable) {
           conflictResolutions.push({
             resourceId: operation.resourceId,
-            decision,
+            decision: outcome.decision,
           });
         }
-        if (decision === "replace") {
+        if (outcome.decision === "replace") {
+          if (operation.resourceId.startsWith(AGENT_FILE_RESOURCE_PREFIX)) {
+            input.log.log(`Installing ${describeSubagents([operation])}.`);
+          }
           approved.push({ ...operation, action: "replace" });
           continue;
         }
-        skipped.push({ operation, reason });
+        skipped.push({
+          operation,
+          reason: outcome.reason,
+          consentMissing: outcome.decision === null,
+        });
       }
       continue;
     }
@@ -270,12 +452,11 @@ export async function resolveConsent(
       continue;
     }
 
-    const reason =
-      !input.yes && !interactive
-        ? `no consent for the '${gate.id}' gate (non-interactive, no --yes)`
-        : `declined at the '${gate.id}' consent gate`;
+    const consentMissing =
+      !interactive && !(input.yes && gate.satisfiableWithYes);
+    const reason = skipReason(gate, consentMissing);
     for (const operation of gate.operations) {
-      skipped.push({ operation, reason });
+      skipped.push({ operation, reason, consentMissing });
     }
     input.log.log(`Skipped ${gate.operations.length} operation(s): ${reason}.`);
   }
@@ -296,6 +477,18 @@ interface GateDecisionContext {
   intro?: string;
 }
 
+function skipReason(gate: ConsentGate, consentMissing: boolean): string {
+  if (gate.id === "trust-repository-git-config") {
+    const pairs = untrustedPairsOf(gate.operations).join("; ");
+    return consentMissing
+      ? `untrusted repository git config (approve interactively or pass --yes --trust-repo-git-config): ${pairs}`
+      : `declined: untrusted repository git config: ${pairs}`;
+  }
+  return consentMissing
+    ? `no consent for the '${gate.id}' gate (non-interactive, no --yes)`
+    : `declined at the '${gate.id}' consent gate`;
+}
+
 async function askGate(
   gate: ConsentGate,
   ctx: GateDecisionContext,
@@ -303,6 +496,9 @@ async function askGate(
   if (ctx.yes && gate.satisfiableWithYes) {
     if (gate.forcesDiff) {
       printOperationPreviews(gate.operations, ctx.log);
+    }
+    if (gate.announcementWithYes !== null) {
+      ctx.log.log(gate.announcementWithYes);
     }
     return true;
   }
@@ -338,24 +534,72 @@ function describeRecordedDecision(decision: RecordedConflictDecision): string {
   }
 }
 
+interface SettleConflictContext extends GateDecisionContext {
+  recordedDecision: RecordedConflictDecision | undefined;
+}
+
+interface SettledConflict extends ConflictOutcome {
+  recordable: boolean;
+}
+
+async function settleConflict(
+  operation: ProposedOperation,
+  ctx: SettleConflictContext,
+): Promise<SettledConflict> {
+  if (operation.expectedFingerprint === null) {
+    return {
+      decision: "keep",
+      reason: `${printable(operation.targetPath)} is not a regular file; agemon leaves it alone`,
+      recordable: false,
+    };
+  }
+
+  const { recordedDecision } = ctx;
+  if (recordedDecision === "replace" && !ctx.yes) {
+    if (!ctx.interactive) {
+      return {
+        decision: null,
+        reason: "recorded 'replace' needs --yes or an interactive session",
+        recordable: false,
+      };
+    }
+    return {
+      ...(await resolveConflict(
+        operation,
+        ctx,
+        "agemon.toml records 'replace'. ",
+      )),
+      recordable: true,
+    };
+  }
+  if (recordedDecision !== undefined) {
+    return {
+      decision: recordedDecision,
+      reason: `conflict ${describeRecordedDecision(recordedDecision)} per agemon.toml`,
+      recordable: true,
+    };
+  }
+  return { ...(await resolveConflict(operation, ctx)), recordable: true };
+}
+
 async function resolveConflict(
   operation: ProposedOperation,
   ctx: Omit<GateDecisionContext, "yes">,
+  questionPrefix = "",
 ): Promise<ConflictOutcome> {
   if (!ctx.interactive) {
     return {
       decision: null,
-      reason:
-        "conflict left unresolved — needs an explicit decision (non-interactive)",
+      reason: `conflict left unresolved (non-interactive) — record "${printable(operation.resourceId)}" = "keep", "replace" or "skip" under [conflict_decisions] in agemon.toml`,
     };
   }
 
   const reply = await ctx.prompts.conflict(
-    `Conflict at ${operation.targetPath || operation.resourceId}: keep, replace, show agemon's, or skip?`,
+    `${questionPrefix}Conflict at ${operation.targetPath || operation.resourceId}: keep, replace, show agemon's, or skip?`,
   );
   if (reply === "show-theirs") {
     printOperationPreviews([operation], ctx.log);
-    return resolveConflict(operation, ctx);
+    return resolveConflict(operation, ctx, questionPrefix);
   }
   if (reply === "skip") {
     return { decision: "skip", reason: "conflict skipped by choice" };
@@ -372,8 +616,11 @@ function printOperationPreviews(
     log.log(`--- ${operation.targetPath || operation.resourceId}`);
     log.log(
       operation.preview.kind === "diff"
-        ? styleUnifiedDiff(operation.preview.text, { color: true, context: 3 })
-        : operation.preview.text,
+        ? styleUnifiedDiff(printable(operation.preview.text), {
+            color: true,
+            context: 3,
+          })
+        : printable(operation.preview.text),
     );
   }
 }

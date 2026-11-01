@@ -3,7 +3,10 @@ import type { Plan } from "../../../src/core/plan-store.js";
 import type { InspectReport } from "../../../src/inspect/index.js";
 import type { StatusReport } from "../../../src/inspect/status.js";
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
-import type { ProposedOperation } from "../../../src/plugins/types.js";
+import type {
+  ProposedOperation,
+  UntrustedGitConfig,
+} from "../../../src/plugins/types.js";
 import { renderGateIntro } from "../../../src/ui/consent-view.js";
 import { renderInspectReport } from "../../../src/ui/inspect-view.js";
 import { renderPlan } from "../../../src/ui/plan-view.js";
@@ -48,12 +51,92 @@ function planWith(operations: ProposedOperation[]): Plan {
     id: "a1b2c3d4e5f6a7b8",
     agemonVersion: "2.4.0",
     desiredStateHash: "hash",
+    inputs: { capabilityIds: [], skillGroups: null },
     createdAt: "2026-01-01T00:00:00.000Z",
     operations,
   };
 }
 
 describe("renderPlan", () => {
+  it("lists each skill group as its own row with its skills", () => {
+    const skillGroup = (id: string, lines: string[]) =>
+      op({
+        capabilityId: "skills",
+        resourceId: `skill-group:${id}`,
+        targetPath: "",
+        action: "install-package",
+        riskClass: "executes",
+        preview: { kind: "note", text: lines.join("\n") },
+      });
+
+    const rendered = renderPlan(
+      planWith([
+        skillGroup("essentials", [
+          "Essentials:",
+          "web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee9",
+        ]),
+        skillGroup("security", [
+          "Security:",
+          "agemon-security — bundled with agemon",
+        ]),
+      ]),
+    );
+
+    expect(rendered).toMatch(/skill-group:essentials\s+\[executes\]/u);
+    expect(rendered).toMatch(/skill-group:security\s+\[executes\]/u);
+    expect(rendered).toContain(
+      "web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee9",
+    );
+    expect(rendered).toContain("agemon-security — bundled with agemon");
+  });
+
+  it.each([
+    [
+      {
+        kind: "pairs",
+        pairs: [".git/config: diff.x.command=/tmp/differ"],
+        fingerprint: "d".repeat(64),
+      },
+      "needs approval or --trust-repo-git-config: .git/config: diff.x.command=/tmp/differ",
+    ],
+    [
+      { kind: "tooMany", count: 25, fingerprint: "d".repeat(64) },
+      "skipped: too many untrusted git config keys to review (25 > 20)",
+    ],
+    [
+      { kind: "unshowable", fingerprint: "d".repeat(64) },
+      "skipped: untrusted git config contains entries that cannot be shown safely",
+    ],
+    [
+      { kind: "unreadable", category: "cap-reached" },
+      "skipped: could not read this repository's git config (cap-reached)",
+    ],
+  ] satisfies Array<[UntrustedGitConfig, string]> as Array<
+    [UntrustedGitConfig, string]
+  >)(
+    "marks an operation with untrusted git config as needing approval or skipped (%#)",
+    (untrustedGitConfig, line) => {
+      const rendered = renderPlan(
+        planWith(
+          [
+            op({
+              capabilityId: "crg",
+              resourceId: "package:code-review-graph",
+              targetPath: "code-review-graph",
+              action: "install-package",
+              riskClass: "executes",
+            }),
+          ].map((operation) => ({ ...operation, untrustedGitConfig })),
+        ),
+      );
+
+      expect(rendered).toContain(line);
+      expect(rendered).toMatch(
+        untrustedGitConfig.kind === "pairs" ? /1 install/ : /1 skip/,
+      );
+    },
+  );
+
   it("reports an empty plan as nothing to do", () => {
     const rendered = renderPlan(planWith([]));
     expect(rendered).toContain("Plan a1b2c3d4e5f6a7b8");
@@ -129,10 +212,16 @@ describe("renderStatusReport", () => {
         health: null,
       },
     ],
+    sharedResources: [],
     duplication: [],
     trackedAgemonPaths: [],
+    trackingCheckError: null,
+    unconfirmedLedgerEntries: 0,
+    configError: null,
+    interruptedApply: null,
     agentsSummary: { total: 3, configured: 1, installed: 0 },
     healthy: true,
+    hasAgemonState: true,
   };
 
   it("renders a healthy environment with no duplication and clean isolation", () => {
@@ -161,11 +250,127 @@ describe("renderStatusReport", () => {
     expect(rendered).toContain("[ drifted ]");
     expect(rendered).toContain("agemon template updated");
   });
+
+  it("prints control characters in a verify detail as ?", () => {
+    const rendered = renderStatusReport({
+      ...base,
+      healthy: false,
+      capabilities: [
+        {
+          ...base.capabilities[0],
+          health: {
+            ok: false,
+            detail: `status failed${String.fromCharCode(27)}]0;pwned`,
+            attention: null,
+          },
+        },
+      ],
+    });
+
+    expect(rendered).toContain("status failed?]0;pwned");
+    expect(rendered).not.toContain(`${String.fromCharCode(27)}]0;`);
+  });
+
+  it("prints control characters in a managed resource detail as ?", () => {
+    const escapeCharacter = String.fromCharCode(27);
+    const rendered = renderStatusReport({
+      ...base,
+      managedResources: [
+        { ...base.managedResources[0], detail: `d${escapeCharacter}]0;x` },
+      ],
+    });
+
+    expect(rendered).not.toContain(escapeCharacter);
+    expect(rendered).toContain("d?]0;x");
+  });
+
+  it('status renders present-modified as "present · changed"', () => {
+    const rendered = renderStatusReport({
+      ...base,
+      capabilities: [
+        {
+          capabilityId: "agents",
+          resourceId: "agent-file:geo-audit-technical",
+          label: "geo-audit-technical",
+          state: "present-modified",
+          detail:
+            "changed since agemon wrote it; agemon keeps your version (conflict)",
+          health: null,
+        },
+      ],
+    });
+
+    expect(rendered).toContain("present · changed");
+  });
+});
+
+describe("renderStatusReport — shared tools", () => {
+  const report: StatusReport = {
+    managedResources: [],
+    capabilities: [],
+    sharedResources: [
+      {
+        tool: "code-review-graph",
+        origin: "installed",
+        recordedBy: "/home/u/a",
+        holders: [
+          { path: "/home/u/a", thisRepository: true, missing: false },
+          { path: "/home/u/gone", thisRepository: false, missing: true },
+        ],
+        heldWithoutLedgerEntry: false,
+        manualRemoveCommand: "pipx uninstall code-review-graph",
+      },
+      {
+        tool: "agnix",
+        origin: "migrated",
+        recordedBy: "/home/u/b",
+        holders: [{ path: "/home/u/a", thisRepository: true, missing: false }],
+        heldWithoutLedgerEntry: true,
+        manualRemoveCommand: "npm uninstall --global agnix",
+      },
+    ],
+    duplication: [],
+    trackedAgemonPaths: [],
+    trackingCheckError: null,
+    unconfirmedLedgerEntries: 0,
+    configError: null,
+    interruptedApply: null,
+    agentsSummary: { total: 0, configured: 0, installed: 0 },
+    healthy: true,
+    hasAgemonState: true,
+  };
+
+  it("lists each shared tool with its origin, holders and missing holders", () => {
+    const rendered = renderStatusReport(report);
+    expect(rendered).toContain("Shared tools");
+    expect(rendered).toContain("/home/u/a (this repository)");
+    expect(rendered).toContain(
+      "/home/u/gone (missing — dropped on the next change)",
+    );
+    expect(rendered).toContain("installed by /home/u/a");
+  });
+
+  it("marks a holder entry this repository's ledger lost", () => {
+    expect(renderStatusReport(report)).toContain(
+      "held by this repository but not in its ledger — run 'agemon' to repair",
+    );
+  });
+
+  it("says when no shared tool is recorded", () => {
+    expect(renderStatusReport({ ...report, sharedResources: [] })).toContain(
+      "none recorded on this machine",
+    );
+  });
 });
 
 describe("renderInspectReport", () => {
   const base: InspectReport = {
-    isolation: { status: "ignored", trackedAgemonPaths: [] },
+    isolation: {
+      status: "ignored",
+      trackedAgemonPaths: [],
+      trackingCheckError: null,
+    },
+    configError: null,
     resources: [
       {
         resourceId: "rule-file:AGENTS.md",
@@ -259,6 +464,27 @@ describe("renderInspectReport", () => {
     expect(rendered).toContain("Gemini CLI");
     expect(rendered).toContain("[ not configured ]");
   });
+
+  it("prints control characters in resource and capability details as ?", () => {
+    const escapeCharacter = String.fromCharCode(27);
+    const rendered = renderInspectReport({
+      ...base,
+      resources: [{ ...base.resources[0], detail: `a${escapeCharacter}]0;x` }],
+      capabilities: [
+        {
+          capabilityId: "agents",
+          resourceId: "agent-file:geo-audit-technical",
+          label: "geo-audit-technical",
+          state: "present-modified",
+          detail: `b${escapeCharacter}]0;y`,
+        },
+      ],
+    });
+
+    expect(rendered).not.toContain(escapeCharacter);
+    expect(rendered).toContain("a?]0;x");
+    expect(rendered).toContain("b?]0;y");
+  });
 });
 
 describe("renderRunSummary", () => {
@@ -303,6 +529,7 @@ describe("renderRunSummary", () => {
       message: "daemon exploded",
       restored: ["restored AGENTS.md"],
       reverted: ["crg"],
+      kept: [],
       manualCleanup: ["crg: pipx uninstall unavailable"],
     });
     expect(rendered).toContain("Rolled back");
@@ -310,6 +537,59 @@ describe("renderRunSummary", () => {
     expect(rendered).toContain("restored AGENTS.md");
     expect(rendered).toContain("Manual cleanup needed");
     expect(rendered).toContain("pipx uninstall unavailable");
+    expect(rendered).not.toContain("Kept");
+  });
+
+  it("lists what a rollback kept, and says so in the title", () => {
+    const rendered = renderRunSummary({
+      kind: "failure",
+      message: "breaker exploded",
+      restored: [],
+      reverted: [],
+      kept: ["Kept updated skill agemon-commit (agemon's newer version)"],
+      manualCleanup: [],
+    });
+
+    expect(rendered).toContain(
+      "Rolled back — except the changes listed under Kept",
+    );
+    expect(rendered).toContain(
+      "Kept updated skill agemon-commit (agemon's newer version)",
+    );
+  });
+
+  it("prints control characters as ? in every kind's untrusted text", () => {
+    const hostile = `x${String.fromCharCode(27)}]0;pwned${String.fromCharCode(7)}`;
+    const summaries = [
+      renderRunSummary({
+        kind: "success",
+        applied: [op()],
+        nextSteps: [hostile],
+      }),
+      renderRunSummary({
+        kind: "declined",
+        skipped: [{ label: hostile, reason: hostile }],
+      }),
+      renderRunSummary({
+        kind: "partial",
+        appliedCount: 1,
+        problems: [hostile],
+      }),
+      renderRunSummary({
+        kind: "failure",
+        message: hostile,
+        restored: [hostile],
+        reverted: [hostile],
+        kept: [hostile],
+        manualCleanup: [hostile],
+      }),
+    ];
+
+    for (const rendered of summaries) {
+      expect(rendered).toContain("x?]0;pwned?");
+      expect(rendered).not.toContain(String.fromCharCode(7));
+      expect(rendered).not.toContain(`${String.fromCharCode(27)}]0;`);
+    }
   });
 });
 

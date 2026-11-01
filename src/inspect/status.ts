@@ -1,18 +1,25 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { detectAgents } from "../adapters/detect.js";
+import { readJournals } from "../core/apply-journal.js";
 import type { Context } from "../core/context.js";
+import { RefusedFileError, readRegularFileIfExists } from "../core/files.js";
 import { fingerprintContent } from "../core/fingerprint.js";
+import { resolveInsideRepo } from "../core/repo-paths.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
+import { printable } from "../core/untrusted-text.js";
 import { resolveCurrentDesiredRevision } from "../plugins/desired-revision.js";
+import {
+  describeSharedTools,
+  type SharedToolStatus,
+} from "../plugins/shared-resource.js";
 import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
 import { renderStatusReport } from "../ui/status-view.js";
 import { collectCapabilityStates } from "./capabilities.js";
 import { TEMPLATE_DRIFT_DETAIL, USER_DRIFT_DETAIL } from "./classify.js";
-import { discoverRepository } from "./discover.js";
+import { discoverRepository, ROOT_RULE_FILES } from "./discover.js";
 import { detectDuplication, type OverlapFinding } from "./duplication.js";
 
 const RULE_FILE_RESOURCE_PREFIX = "rule-file:";
+const MANAGED_RULE_FILE_TARGETS: ReadonlySet<string> = new Set(ROOT_RULE_FILES);
 
 export type ManagedResourceHealth =
   | "managed-current"
@@ -30,6 +37,7 @@ export interface ManagedResourceStatus {
 export interface CapabilityHealth {
   ok: boolean;
   detail: string;
+  attention: string | null;
 }
 
 export interface CapabilityStatusRow extends CapabilityStateRow {
@@ -42,21 +50,36 @@ export interface AgentsSummary {
   installed: number;
 }
 
+export interface InterruptedApplySummary {
+  planId: string;
+  startedAt: string;
+}
+
 export interface StatusReport {
   managedResources: ManagedResourceStatus[];
   capabilities: CapabilityStatusRow[];
+  sharedResources: SharedToolStatus[];
   duplication: OverlapFinding[];
   trackedAgemonPaths: string[];
+  trackingCheckError: string | null;
+  unconfirmedLedgerEntries: number;
+  configError: string | null;
+  interruptedApply: InterruptedApplySummary | null;
   agentsSummary: AgentsSummary;
   healthy: boolean;
+  hasAgemonState: boolean;
 }
 
-async function readFileIfExists(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
+async function findInterruptedApply(
+  ctx: Context,
+): Promise<InterruptedApplySummary | null> {
+  const [interrupted] = await readJournals(ctx.cwd);
+  return interrupted
+    ? {
+        planId: printable(interrupted.journal.planId),
+        startedAt: printable(interrupted.journal.startedAt),
+      }
+    : null;
 }
 
 function isFileBackedRuleEntry(entry: LedgerEntry): entry is LedgerEntry & {
@@ -69,11 +92,35 @@ function isFileBackedRuleEntry(entry: LedgerEntry): entry is LedgerEntry & {
   );
 }
 
+type ManagedTargetRead =
+  | { contents: string | null; refused: false }
+  | { contents: null; refused: true };
+
+async function readManagedTarget(
+  ctx: Context,
+  target: string,
+): Promise<ManagedTargetRead> {
+  try {
+    return {
+      contents: await readRegularFileIfExists(
+        await resolveInsideRepo(ctx.cwd, target),
+      ),
+      refused: false,
+    };
+  } catch (error) {
+    if (!(error instanceof RefusedFileError)) {
+      throw error;
+    }
+    return { contents: null, refused: true };
+  }
+}
+
 export async function checkManagedResources(
   ctx: Context,
   plugins: AgemonPlugin[] = [],
 ): Promise<ManagedResourceStatus[]> {
   const seenResourceIds = new Set<string>();
+  const readsByTarget = new Map<string, Promise<ManagedTargetRead>>();
   const results: ManagedResourceStatus[] = [];
 
   for (const entry of ctx.manifest.getActions()) {
@@ -84,8 +131,35 @@ export async function checkManagedResources(
       continue;
     }
     seenResourceIds.add(entry.resourceId);
+    const displayTarget = printable(entry.target);
+    const reportDrift = (detail: string) =>
+      results.push({
+        resourceId: entry.resourceId,
+        target: displayTarget,
+        ownershipMode: entry.ownershipMode,
+        health: "managed-drifted",
+        detail,
+      });
 
-    const contents = await readFileIfExists(join(ctx.cwd, entry.target));
+    if (!MANAGED_RULE_FILE_TARGETS.has(entry.target)) {
+      reportDrift(
+        `ignoring ledger entry for ${displayTarget}: master-prompt does not manage that file`,
+      );
+      continue;
+    }
+
+    let pendingRead = readsByTarget.get(entry.target);
+    if (pendingRead === undefined) {
+      pendingRead = readManagedTarget(ctx, entry.target);
+      readsByTarget.set(entry.target, pendingRead);
+    }
+    const targetRead = await pendingRead;
+    if (targetRead.refused) {
+      reportDrift(USER_DRIFT_DETAIL);
+      continue;
+    }
+
+    const { contents } = targetRead;
     let health: ManagedResourceHealth;
     let detail: string | null = null;
     if (contents === null) {
@@ -114,7 +188,7 @@ export async function checkManagedResources(
 
     results.push({
       resourceId: entry.resourceId,
-      target: entry.target,
+      target: displayTarget,
       ownershipMode: entry.ownershipMode,
       health,
       detail,
@@ -135,12 +209,16 @@ export async function verifyManagedState(
       problems.push(
         `${managed.target} is recorded in the ledger but missing on disk`,
       );
-    } else if (managed.health === "managed-drifted") {
+    } else if (managed.detail === TEMPLATE_DRIFT_DETAIL) {
       problems.push(
-        managed.detail === TEMPLATE_DRIFT_DETAIL
-          ? `${managed.target} is behind agemon's current template; re-run to refresh`
-          : `${managed.target} no longer matches its ledger fingerprint`,
+        `${managed.target} is behind agemon's current template; re-run to refresh`,
       );
+    } else if (managed.detail === USER_DRIFT_DETAIL) {
+      problems.push(
+        `${managed.target} no longer matches its ledger fingerprint`,
+      );
+    } else if (managed.detail !== null) {
+      problems.push(managed.detail);
     }
   }
 
@@ -166,10 +244,16 @@ export async function verifyManagedState(
   return problems;
 }
 
+export interface StatusOptions {
+  configError?: string | null;
+}
+
 export async function buildStatusReport(
   ctx: Context,
   plugins: AgemonPlugin[],
+  options: StatusOptions = {},
 ): Promise<StatusReport> {
+  const configError = options.configError ?? null;
   const managedResources = await checkManagedResources(ctx, plugins);
 
   const discovery = await discoverRepository(ctx);
@@ -181,6 +265,7 @@ export async function buildStatusReport(
   ).overlaps;
 
   const capabilities = await buildCapabilityStatusRows(ctx, plugins);
+  const sharedResources = await describeSharedTools(ctx, plugins);
 
   const agents = await detectAgents(ctx, discovery);
   const agentsSummary: AgentsSummary = {
@@ -191,21 +276,35 @@ export async function buildStatusReport(
   };
 
   const trackedAgemonPaths = discovery.isolation.trackedAgemonPaths;
+  const interruptedApply = await findInterruptedApply(ctx);
   const healthy =
     managedResources.every(
       (resource) => resource.health === "managed-current",
     ) &&
     duplication.length === 0 &&
-    capabilities.every((row) => row.health === null || row.health.ok) &&
-    trackedAgemonPaths.length === 0;
+    capabilities.every(
+      (row) =>
+        row.health === null || (row.health.ok && row.health.attention === null),
+    ) &&
+    trackedAgemonPaths.length === 0 &&
+    interruptedApply === null &&
+    configError === null;
 
   return {
     managedResources,
     capabilities,
+    sharedResources,
     duplication,
     trackedAgemonPaths,
+    trackingCheckError: discovery.isolation.trackingCheckError,
+    unconfirmedLedgerEntries:
+      ctx.manifest.getActions().length -
+      ctx.manifest.getConfirmedActions().length,
+    configError,
+    interruptedApply,
     agentsSummary,
     healthy,
+    hasAgemonState: ctx.manifest.hasActions() || interruptedApply !== null,
   };
 }
 
@@ -235,6 +334,7 @@ async function buildCapabilityStatusRows(
         ok: verification.ok,
         detail:
           verification.detail ?? (verification.ok ? "healthy" : "unhealthy"),
+        attention: verification.attention ?? null,
       };
     }
     healthByCapability.set(capabilityId, health);
@@ -251,7 +351,9 @@ async function buildCapabilityStatusRows(
 export async function runStatus(
   ctx: Context,
   plugins: AgemonPlugin[],
-): Promise<void> {
-  const report = await buildStatusReport(ctx, plugins);
+  options: StatusOptions = {},
+): Promise<StatusReport> {
+  const report = await buildStatusReport(ctx, plugins, options);
   ctx.log.log(renderStatusReport(report));
+  return report;
 }

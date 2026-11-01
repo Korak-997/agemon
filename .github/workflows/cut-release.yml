@@ -14,47 +14,136 @@ on:
 
 concurrency: cut-release
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   tag:
     name: bump, changelog, tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.deploy.outputs.tag }}
 
     steps:
       - name: Checkout master
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: master
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.x
-          cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump version, draft changelog, tag, push
+      - name: Bump version, draft changelog, commit and tag
         id: deploy
+        env:
+          BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
 
-          npm run deploy -- ${{ inputs.bump }} --yes --skip-checks
-          echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          npm run deploy -- "$BUMP" --yes --skip-checks --no-push
+          TAG="v$(node -p "require('./package.json').version")"
+          git bundle create release.bundle master "refs/tags/${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release commit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-commit
+          path: release.bundle
+          if-no-files-found: error
+          retention-days: 1
+
+  push:
+    name: verify and push release commit
+    needs: tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    env:
+      RELEASE_TAG: ${{ needs.tag.outputs.tag }}
+
+    steps:
+      - name: Download release commit
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-commit
+          path: ${{ runner.temp }}/release-commit
+
+      - name: Verify the release commit only bumps the version and changelog
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "$1"
+            exit 1
+          }
+
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Unexpected release tag: $RELEASE_TAG"
+          BUNDLE_PATH="${RUNNER_TEMP}/release-commit/release.bundle"
+          RELEASE_REPO="${RUNNER_TEMP}/release-repo"
+          [[ -f "$BUNDLE_PATH" && ! -L "$BUNDLE_PATH" ]] || fail "release.bundle is not a regular file."
+
+          git init --quiet "$RELEASE_REPO"
+          cd "$RELEASE_REPO"
+          git bundle verify --quiet "$BUNDLE_PATH" >/dev/null 2>&1 || fail "release.bundle is not a valid git bundle."
+          git fetch --quiet "$BUNDLE_PATH" "refs/heads/master:refs/heads/release" "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          git fetch --quiet "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/master:refs/remotes/origin/master"
+
+          [[ "$(git rev-list --count origin/master..release)" == 1 ]] || fail "The release is not exactly one commit on top of master."
+          [[ "$(git rev-list --parents -n 1 release | wc -w)" == 2 ]] || fail "The release commit must have exactly one parent."
+          [[ "$(git rev-parse release^)" == "$(git rev-parse origin/master)" ]] || fail "The release commit is not based on the current master."
+          [[ "$(git rev-parse "${RELEASE_TAG}^{commit}")" == "$(git rev-parse release)" ]] || fail "${RELEASE_TAG} does not point at the release commit."
+
+          UNEXPECTED_CHANGES="$(git diff --raw --no-renames origin/master release | awk -F '\t' '{ split($1, meta, " "); if (meta[2] != "100644" || meta[5] != "M" || $2 !~ /^(CHANGELOG\.md|package\.json|package-lock\.json)$/) print }')"
+          [[ -z "$UNEXPECTED_CHANGES" ]] || fail "The release commit changes more than the version and changelog: ${UNEXPECTED_CHANGES}"
+
+          command -v jq >/dev/null || fail "jq is required to compare the manifests."
+          for manifest in package.json package-lock.json; do
+            if ! diff <(git show "origin/master:${manifest}" | jq -S 'del(.version, .packages[""].version)') \
+              <(git show "release:${manifest}" | jq -S 'del(.version, .packages[""].version)') >/dev/null; then
+              fail "${manifest} changes more than its version field."
+            fi
+          done
+          [[ "$(git show release:package.json | jq -r .version)" == "${RELEASE_TAG#v}" ]] || fail "package.json version does not match ${RELEASE_TAG}."
+          [[ "$(git diff --numstat origin/master release -- CHANGELOG.md | cut -f2)" =~ ^0?$ ]] || fail "The release commit removes CHANGELOG.md lines."
+
+      - name: Push release commit and tag
+        working-directory: ${{ runner.temp }}/release-repo
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          BASIC_AUTH="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
+          echo "::add-mask::${BASIC_AUTH}"
+          GIT_CONFIG_COUNT=2 \
+            GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${BASIC_AUTH}" \
+            GIT_CONFIG_KEY_1="core.hooksPath" \
+            GIT_CONFIG_VALUE_1="/dev/null" \
+            git push "https://github.com/${GITHUB_REPOSITORY}.git" release:refs/heads/master "refs/tags/${RELEASE_TAG}"
 
   publish:
-    needs: tag
+    needs: [tag, push]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      pages: write
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}

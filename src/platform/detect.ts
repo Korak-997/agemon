@@ -1,6 +1,9 @@
 import { constants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { assertFakeBackendsAreDevOnly, isDevMode } from "../core/dev-mode.js";
+import { errorMessage } from "../core/error-message.js";
+import { readRegularFileIfExists } from "../core/files.js";
 
 export const REQUIRED_BINARIES = [
   "python3",
@@ -18,24 +21,30 @@ export interface BinaryDetectionResult {
   path?: string;
 }
 
-export interface PlatformDetectionResult {
-  os: "ubuntu";
-  osReleasePath: string;
-  binaries: Record<RequiredBinary, BinaryDetectionResult>;
+type PlatformFamily = "linux" | "darwin" | "other";
+
+export type ServiceManagerKind = "systemd-user" | "launchd" | "none";
+
+export interface PlatformCapabilities {
+  family: PlatformFamily;
+  arch: string;
+  serviceManager: ServiceManagerKind;
+  unsupportedReason: string | null;
 }
 
 export interface DetectPlatformInput {
   osReleasePath?: string;
-  pathEnv?: string;
+  hostPlatform?: NodeJS.Platform;
+  hostArch?: string;
+  systemdRuntimeDirectory?: string;
 }
 
-export class UnsupportedPlatformError extends Error {
-  constructor(osId: string, osReleasePath: string) {
-    super(
-      `agemon v1 supports Ubuntu only. Detected '${osId}' in ${osReleasePath}. Windows and macOS support are planned for v2.`,
-    );
-  }
-}
+const SUPPORTED_LINUX_IDS = ["ubuntu", "debian"];
+const SYSTEMD_RUNTIME_DIRECTORY = "/run/systemd/system";
+const READ_ONLY_COMMANDS_NOTE =
+  "Read-only commands (inspect, status, plan) still work here.";
+
+export class UnsupportedPlatformError extends Error {}
 
 function normalizeOsReleaseValue(value: string): string {
   const trimmedValue = value.trim();
@@ -48,9 +57,11 @@ function normalizeOsReleaseValue(value: string): string {
   return trimmedValue;
 }
 
-function parseOsReleaseId(osReleaseContents: string): string {
-  const lines = osReleaseContents.split(/\r?\n/);
-  for (const line of lines) {
+function readOsReleaseField(
+  osReleaseContents: string,
+  fieldName: string,
+): string | undefined {
+  for (const line of osReleaseContents.split(/\r?\n/)) {
     const trimmedLine = line.trim();
     if (trimmedLine.length === 0 || trimmedLine.startsWith("#")) {
       continue;
@@ -62,20 +73,127 @@ function parseOsReleaseId(osReleaseContents: string): string {
     }
 
     const key = trimmedLine.slice(0, separatorIndex).trim();
-    if (key !== "ID") {
-      continue;
+    if (key === fieldName) {
+      return normalizeOsReleaseValue(
+        trimmedLine.slice(separatorIndex + 1),
+      ).toLowerCase();
     }
-
-    return normalizeOsReleaseValue(
-      trimmedLine.slice(separatorIndex + 1),
-    ).toLowerCase();
   }
 
-  return "unknown";
+  return undefined;
 }
 
-async function findBinaryPath(
-  binaryName: RequiredBinary,
+function isSupportedLinuxDistribution(osReleaseContents: string): boolean {
+  const osId = readOsReleaseField(osReleaseContents, "ID") ?? "";
+  const osIdLike = readOsReleaseField(osReleaseContents, "ID_LIKE") ?? "";
+  return [osId, ...osIdLike.split(/\s+/)].some((id) =>
+    SUPPORTED_LINUX_IDS.includes(id),
+  );
+}
+
+async function findLinuxUnsupportedReason(
+  osReleasePath: string,
+): Promise<string | null> {
+  let osReleaseContents: string | null;
+  try {
+    osReleaseContents = await readRegularFileIfExists(
+      await realpath(osReleasePath),
+    );
+  } catch (error) {
+    const reason = (error as NodeJS.ErrnoException).code ?? errorMessage(error);
+    return `agemon could not identify this Linux distribution: reading ${osReleasePath} failed (${reason}). ${READ_ONLY_COMMANDS_NOTE}`;
+  }
+  if (osReleaseContents === null) {
+    return `agemon could not identify this Linux distribution: reading ${osReleasePath} failed (ENOENT). ${READ_ONLY_COMMANDS_NOTE}`;
+  }
+
+  if (isSupportedLinuxDistribution(osReleaseContents)) {
+    return null;
+  }
+  const osId = readOsReleaseField(osReleaseContents, "ID") ?? "unknown";
+  return `agemon can only change Ubuntu, Debian, their derivatives and macOS. ${osReleasePath} reports '${osId}'. ${READ_ONLY_COMMANDS_NOTE}`;
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function usesFakeServices(): boolean {
+  if (process.env.AGEMON_FAKE_SERVICES !== "1") {
+    return false;
+  }
+  assertFakeBackendsAreDevOnly();
+  return true;
+}
+
+async function detectLinuxServiceManager(
+  systemdRuntimeDirectory: string,
+): Promise<ServiceManagerKind> {
+  if (usesFakeServices()) {
+    return "systemd-user";
+  }
+  return (await isDirectory(systemdRuntimeDirectory)) ? "systemd-user" : "none";
+}
+
+function detectDarwinServiceManager(): ServiceManagerKind {
+  return usesFakeServices() ? "systemd-user" : "launchd";
+}
+
+function resolveOsReleasePath(input: DetectPlatformInput): string {
+  const testOverride = isDevMode()
+    ? process.env.AGEMON_OS_RELEASE_PATH
+    : undefined;
+  return input.osReleasePath ?? testOverride ?? "/etc/os-release";
+}
+
+export async function detectPlatformCapabilities(
+  input: DetectPlatformInput = {},
+): Promise<PlatformCapabilities> {
+  const hostPlatform = input.hostPlatform ?? process.platform;
+  const arch = input.hostArch ?? process.arch;
+  if (hostPlatform === "darwin") {
+    return {
+      family: "darwin",
+      arch,
+      serviceManager: detectDarwinServiceManager(),
+      unsupportedReason: null,
+    };
+  }
+  if (hostPlatform !== "linux") {
+    return {
+      family: "other",
+      arch,
+      serviceManager: "none",
+      unsupportedReason: `agemon does not support ${hostPlatform}. ${READ_ONLY_COMMANDS_NOTE}`,
+    };
+  }
+
+  return {
+    family: "linux",
+    arch,
+    serviceManager: await detectLinuxServiceManager(
+      input.systemdRuntimeDirectory ?? SYSTEMD_RUNTIME_DIRECTORY,
+    ),
+    unsupportedReason: await findLinuxUnsupportedReason(
+      resolveOsReleasePath(input),
+    ),
+  };
+}
+
+export function assertPlatformSupportsChanges(
+  platform: PlatformCapabilities,
+): void {
+  if (platform.unsupportedReason !== null) {
+    throw new UnsupportedPlatformError(platform.unsupportedReason);
+  }
+}
+
+export async function findBinaryPath(
+  binaryName: string,
   pathEnv: string,
 ): Promise<string | undefined> {
   for (const pathEntry of pathEnv.split(delimiter)) {
@@ -93,7 +211,7 @@ async function findBinaryPath(
   return undefined;
 }
 
-async function detectBinaries(
+export async function detectRequiredBinaries(
   pathEnv: string,
 ): Promise<Record<RequiredBinary, BinaryDetectionResult>> {
   const binaryResults = await Promise.all(
@@ -110,30 +228,4 @@ async function detectBinaries(
   return Object.fromEntries(
     binaryResults.map((binaryResult) => [binaryResult.name, binaryResult]),
   ) as Record<RequiredBinary, BinaryDetectionResult>;
-}
-
-function resolveOsReleasePath(input: DetectPlatformInput): string {
-  return (
-    input.osReleasePath ??
-    process.env.AGEMON_OS_RELEASE_PATH ??
-    "/etc/os-release"
-  );
-}
-
-export async function detectPlatform(
-  input: DetectPlatformInput = {},
-): Promise<PlatformDetectionResult> {
-  const osReleasePath = resolveOsReleasePath(input);
-  const osReleaseContents = await readFile(osReleasePath, "utf8");
-  const osId = parseOsReleaseId(osReleaseContents);
-
-  if (osId !== "ubuntu") {
-    throw new UnsupportedPlatformError(osId, osReleasePath);
-  }
-
-  return {
-    os: "ubuntu",
-    osReleasePath,
-    binaries: await detectBinaries(input.pathEnv ?? process.env.PATH ?? ""),
-  };
 }

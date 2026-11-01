@@ -1,0 +1,158 @@
+---
+import siteData from "../generated/site-data.json";
+
+const { rows, addedPaths } = siteData.recordedLedger;
+---
+
+<div class="ledger-panel" data-ledger-panel>
+  <button type="button" class="ag-button nuke-toggle" data-ledger-nuke>
+    <code>agemon nuke</code>
+  </button>
+  <div class="ledger-cards">
+    <div class="ag-card ledger-card">
+      <span class="ag-label">.agemon/state.json · recorded</span>
+      <ol class="ledger-rows">
+        {
+          rows.map(({ plugin, type, firstTarget, count }, index) => (
+            <li class="ledger-row" style={`--row-index: ${index}`}>
+              <span class="row-text">
+                {plugin} · {type} · {firstTarget}
+                {count > 1 && <span class="row-more"> (+{count - 1} more)</span>}
+              </span>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+    <div class="ag-card ledger-card">
+      <span class="ag-label">Files the ledger records agemon as owning</span>
+      <div class="tree">
+        <span>your files</span>
+        <ul class="added-paths">
+          {addedPaths.map((path) => <li>{path}</li>)}
+        </ul>
+        <span class="tree-note" aria-live="polite" data-ledger-note></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  import "../scripts/ledger-panel.ts";
+</script>
+
+<style>
+  .ledger-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  .nuke-toggle {
+    align-self: flex-start;
+  }
+
+  .ledger-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+    gap: 2rem;
+  }
+
+  .ledger-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 1.5rem;
+  }
+
+  .ledger-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: ledger-row;
+  }
+
+  .ledger-row {
+    position: relative;
+    display: flex;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px dashed var(--ag-border-strong);
+    border-radius: 6px;
+    font: 0.875rem var(--sl-font-mono);
+    overflow-wrap: anywhere;
+    counter-increment: ledger-row;
+  }
+
+  .ledger-row::before {
+    content: counter(ledger-row);
+    color: var(--ag-text-muted);
+  }
+
+  .ledger-row::after {
+    content: "";
+    position: absolute;
+    inset-inline: 8px;
+    top: 50%;
+    height: 1.5px;
+    background: var(--ag-danger);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 150ms var(--ease-io, ease-in-out);
+  }
+
+  .row-more {
+    color: var(--ag-text-muted);
+  }
+
+  .tree {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    font: 0.875rem var(--sl-font-mono);
+  }
+
+  .added-paths {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin: 0;
+    padding-inline-start: 1rem;
+    border-inline-start: 1px solid var(--ag-secondary);
+    list-style: none;
+    transition: opacity 300ms var(--ease-io, ease-in-out);
+  }
+
+  .added-paths li {
+    margin: 0;
+  }
+
+  .tree-note {
+    color: var(--ag-success);
+  }
+
+  [data-nuked] .ledger-row {
+    color: var(--ag-text-muted);
+  }
+
+  [data-nuked] .ledger-row::after {
+    transform: scaleX(1);
+    transition-delay: calc(var(--row-index) * 150ms);
+  }
+
+  [data-nuked] .added-paths {
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ledger-row::after,
+    .added-paths {
+      transition: none;
+    }
+  }
+</style>

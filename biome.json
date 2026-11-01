@@ -11,7 +11,9 @@
       "!**/dist",
       "!**/.sandbox",
       "!assets/skills",
-      "!.claude/skills"
+      "!.claude/skills",
+      "!website/src/assets/brand",
+      "!website/public"
     ]
   },
   "formatter": {
@@ -36,5 +38,18 @@
     "formatter": {
       "quoteStyle": "double"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.astro"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "off",
+            "noUnusedImports": "off"
+          }
+        }
+      }
+    }
+  ]
 }

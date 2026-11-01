@@ -1,0 +1,35 @@
+---
+interface Props {
+  text: string;
+  label: string;
+}
+
+const { text, label } = Astro.props;
+---
+
+<button type="button" class="ag-button copy-button" data-copy={text} aria-label={label}>
+  <span class="when-idle">Copy</span>
+  <span class="when-copied" aria-hidden="true">Copied</span>
+</button>
+<span class="sr-only" role="status" aria-live="polite"></span>
+
+<script>
+  import "../scripts/copy.ts";
+</script>
+
+<style>
+  .copy-button {
+    min-width: 6.5rem;
+    justify-content: center;
+  }
+
+  .when-copied,
+  .copy-button[data-copied] .when-idle {
+    display: none;
+  }
+
+  .copy-button[data-copied] .when-copied {
+    display: inline;
+    color: var(--ag-success);
+  }
+</style>

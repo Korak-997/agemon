@@ -1,5 +1,85 @@
 # agemon
 
+## 6.0.0
+
+agemon 6 is a rework focused on safety: it can always undo what it did, it never removes
+or replaces your own files, and a cloned repository cannot make it do either. There is no
+5.x release.
+
+### Breaking changes
+
+- **Exit codes.** agemon used to exit 0 or 1. It now exits `2` when it finds drift, when
+  consent is missing in a non-interactive run, or when an apply finished but verification
+  found problems, and `130` / `143` / `129` when interrupted by SIGINT / SIGTERM / SIGHUP.
+  `agemon status` exits 2 when it finds a problem in a repository agemon manages.
+- **`agemon nuke` needs `--yes` in scripts.** It now lists everything it will reverse and
+  asks once. Without a terminal and without `--yes` it prints the list and stops (exit 0).
+- **`install.sh` checks every download** against the release's `SHA256SUMS`, so releases
+  up to 4.7.2 can no longer be installed with it.
+- **Node.js 22.12 or later** is required (was 24).
+- **Repositories that track `.code-review-graph/`** are refused for the code graph and the
+  daemon until it is removed from git (`git rm -r --cached .code-review-graph`).
+
+### Uninstall that leaves nothing behind
+
+- `agemon nuke` reverses only what agemon recorded, never deletes your content, and keeps
+  a skill or agent you edited. It removes agemon's skills without running the skills CLI
+  or touching the network, removes the `.gitignore` lines and empty directories agemon
+  added, and deletes `agemon.toml` only when everything was reversed.
+- Shared tools (code-review-graph, agnix) are removed only by the repository that
+  installed them, once no other repository uses them; `--remove-shared` handles tools
+  installed before agemon tracked them.
+- New `agemon self-uninstall` removes agemon itself and its machine state.
+
+### Safe applies and recovery
+
+- Files are written atomically with their permissions kept; backups never overwrite each
+  other; agemon refuses to write through a symlink, special file or read-only file.
+- A failed apply rolls back every file it touched. An interrupted apply (Ctrl-C, a closed
+  terminal, a crash) is restored with the new `agemon recover`.
+- Plans are validated and pinned to the agemon version that made them, and `--plan`
+  cannot point outside the plan directory.
+
+### Trust and consent
+
+- The ledger in `.agemon/state.json` is signed with a per-machine key. A forged or copied
+  ledger in a cloned repository can no longer make agemon remove, replace or repair
+  anything.
+- Every install path asks first: a first run without consent shows a preview, and
+  `--yes` approves it.
+- Repository git config that could run a program is refused before code-review-graph or
+  its daemon runs. Pass `--yes --trust-repo-git-config` (command line only) to approve it
+  for one run after reading the keys agemon prints.
+
+### Skills and agents
+
+- Bundled skill fixes reach existing installs. A skill you edited is reported as
+  `present-modified` and never replaced.
+- Skill groups can install Claude Code subagents into `.claude/agents/`; `status` shows a
+  row for every agent and reports shadowed and retired ones.
+- New `geo-seo` skill group.
+
+### Installing and upgrading
+
+- agemon is published to npm (`npm install --global agemon`) with provenance, and the
+  GitHub Release assets are checksummed and attested.
+- New `agemon upgrade` (with `--rollback` for script installs) and an update check that
+  offers the upgrade after a successful run.
+- macOS 11 or later is supported, with the daemon as a launchd user agent.
+
+### Daemon
+
+- A daemon that keeps crashing is stopped after five starts in ten minutes and shown as
+  `failed` in `agemon status`; the next `agemon` run registers it again. On macOS a crash
+  loop is slowed to one restart a minute.
+- On systemd the unit refuses to start when a symlink appears under
+  `.code-review-graph`, for example after a `git pull`.
+- When the `strict` sandbox is requested but the host does not apply it (Ubuntu with
+  `kernel.apparmor_restrict_unprivileged_userns=1`), agemon says
+  `strict requested, not enforced on this host` instead of claiming `strict`.
+- **Existing daemon units** get the new start-time checks, restart limit and hardening
+  only after `agemon nuke --only daemon` and a fresh `agemon` run.
+
 ## 4.7.2
 
 - fix: distinguish declined skill groups from never-offered ones (#16)

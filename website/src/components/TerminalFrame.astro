@@ -1,0 +1,109 @@
+---
+import {
+  RECORDING_HEIGHT,
+  RECORDING_WIDTH,
+  type Recording,
+} from "../recordings";
+
+interface Props {
+  recording: Recording;
+}
+
+const { recording } = Astro.props;
+const descriptionId = `recording-${recording.name}-description`;
+---
+
+<figure class="terminal-frame" data-terminal-frame>
+  <div class="frame-bar">
+    <i></i><i></i><i></i>
+    <span class="frame-title">{recording.title}</span>
+    <button
+      type="button"
+      class="frame-toggle"
+      data-terminal-toggle
+      hidden
+    >
+      Play recording
+    </button>
+  </div>
+  <video
+    src={`/media/${recording.name}.webm`}
+    poster={`/media/${recording.name}.png`}
+    width={RECORDING_WIDTH}
+    height={RECORDING_HEIGHT}
+    muted
+    loop
+    playsinline
+    controls
+    preload="none"
+    aria-describedby={descriptionId}
+  ></video>
+  <figcaption id={descriptionId}>{recording.description}</figcaption>
+</figure>
+
+<script>
+  import "../scripts/terminal-frames.ts";
+</script>
+
+<style>
+  .terminal-frame {
+    margin: 0;
+    border: 1px solid var(--ag-border);
+    border-radius: 10px;
+    background: #0d1620;
+    overflow: hidden;
+  }
+
+  .frame-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 40px;
+    padding: 0 1rem;
+    border-bottom: 1px solid #26384c;
+    background: #142130;
+    color: #93a4b5;
+    font: 0.8125rem var(--sl-font-mono);
+  }
+
+  .frame-bar i {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid #566f8a;
+    border-radius: 50%;
+  }
+
+  .frame-title {
+    margin-inline-start: 0.75rem;
+  }
+
+  .frame-toggle {
+    min-height: 32px;
+    margin-inline-start: auto;
+    padding: 0 0.75rem;
+    border: 1px solid #566f8a;
+    border-radius: 6px;
+    background: transparent;
+    color: #e8edf2;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .frame-toggle:hover {
+    border-color: #e8edf2;
+  }
+
+  video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+
+  figcaption {
+    padding: 0.75rem 1rem;
+    border-top: 1px solid #26384c;
+    color: #93a4b5;
+    font-size: 0.875rem;
+  }
+</style>

@@ -1,8 +1,20 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { StateManifest } from "../../../src/core/state-manifest.js";
+import {
+  parseStateManifestContents,
+  StateManifest,
+} from "../../../src/core/state-manifest.js";
+import { printable } from "../../../src/core/untrusted-text.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -137,14 +149,14 @@ describe("StateManifest ledger v3", () => {
     });
 
     const backup = JSON.parse(
-      await readFile(join(cwd, ".agemon", "state.v1.bak"), "utf8"),
+      await readFile(join(cwd, ".agemon", "state.v2.bak"), "utf8"),
     );
     expect(backup).toEqual(V2_MANIFEST);
 
-    await rm(join(cwd, ".agemon", "state.v1.bak"), { force: true });
+    await rm(join(cwd, ".agemon", "state.v2.bak"), { force: true });
     await StateManifest.load(cwd);
     await expect(
-      readFile(join(cwd, ".agemon", "state.v1.bak"), "utf8"),
+      readFile(join(cwd, ".agemon", "state.v2.bak"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -260,5 +272,257 @@ describe("StateManifest ledger v3", () => {
     await expect(StateManifest.load(cwd)).rejects.toThrow(
       /Unrecognised state manifest version/,
     );
+  });
+  it("never overwrites an existing pre-migration backup", async () => {
+    const cwd = await createSandbox();
+    await writeV1Manifest(cwd);
+    await writeFile(
+      join(cwd, ".agemon", "state.v1.bak"),
+      "earlier backup\n",
+      "utf8",
+    );
+
+    await StateManifest.load(cwd);
+
+    await expect(
+      readFile(join(cwd, ".agemon", "state.v1.bak"), "utf8"),
+    ).resolves.toBe("earlier backup\n");
+    const backups = (await readdir(join(cwd, ".agemon"))).filter((name) =>
+      /^state\.v1\.\d+\.bak$/.test(name),
+    );
+    expect(backups).toHaveLength(1);
+    expect(
+      JSON.parse(await readFile(join(cwd, ".agemon", backups[0]), "utf8")),
+    ).toEqual(V1_MANIFEST);
+  });
+
+  it("explains a corrupt state.json and leaves it untouched", async () => {
+    const cwd = await createSandbox();
+    await mkdir(join(cwd, ".agemon"), { recursive: true });
+    const manifestPath = join(cwd, ".agemon", "state.json");
+    await writeFile(manifestPath, '{ "version": 3, ', "utf8");
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(
+      /\.agemon\/state\.json is not valid JSON .*left untouched/,
+    );
+    await expect(readFile(manifestPath, "utf8")).resolves.toBe(
+      '{ "version": 3, ',
+    );
+  });
+
+  it("refuses a ledger entry whose backup path is not a string", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, {
+      ...V2_MANIFEST,
+      version: 3,
+      actions: [
+        { ...V2_MANIFEST.actions[0], backup: { path: 42, checksum: "x" } },
+      ],
+    });
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(/invalid schema/);
+  });
+
+  it("drops unknown keys from ledger entries and their nested objects", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, {
+      ...V2_MANIFEST,
+      version: 3,
+      actions: [
+        {
+          ...V2_MANIFEST.actions[0],
+          injected: "dropped",
+          backup: { path: "/r/.agemon/backups/a.bak", checksum: "c", x: 1 },
+          validation: { ok: true, extra: "dropped" },
+        },
+      ],
+    });
+
+    const [entry] = (await StateManifest.load(cwd)).getActions();
+
+    expect(entry).not.toHaveProperty("injected");
+    expect(entry.backup).toEqual({
+      path: "/r/.agemon/backups/a.bak",
+      checksum: "c",
+    });
+    expect(entry.validation).toEqual({ ok: true });
+  });
+
+  it("never echoes raw control characters from an unparsable state.json", async () => {
+    const cwd = await createSandbox();
+    await mkdir(join(cwd, ".agemon"), { recursive: true });
+    await writeFile(join(cwd, ".agemon", "state.json"), "\u001b[2J", "utf8");
+
+    const error = await StateManifest.load(cwd).catch(
+      (caught: Error) => caught,
+    );
+
+    expect((error as Error).message).toMatch(/is not valid JSON/);
+    expect((error as Error).message).not.toContain("\u001b");
+  });
+
+  it("refuses a symlinked .agemon directory", async () => {
+    const cwd = await createSandbox();
+    const outside = await createSandbox();
+    await writeManifest(outside, V2_MANIFEST);
+    await symlink(join(outside, ".agemon"), join(cwd, ".agemon"));
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(
+      /symlink or not a directory.*replace it with a real directory/,
+    );
+  });
+});
+
+describe("StateManifest recording plan id and restoreActions", () => {
+  it("defaults new entries to the recording plan id until it is cleared", async () => {
+    const manifest = await StateManifest.load(await createSandbox());
+
+    manifest.setRecordingPlanId("0123456789abcdef");
+    const during = await manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-global-package",
+      target: "agnix",
+      preExisting: false,
+    });
+    manifest.setRecordingPlanId(null);
+    const after = await manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-global-package",
+      target: "other",
+      preExisting: false,
+    });
+
+    expect(during.planId).toBe("0123456789abcdef");
+    expect(after.planId).toBeNull();
+  });
+
+  it("replaces the ledger with the given entries and persists them", async () => {
+    const sandbox = await createSandbox();
+    const manifest = await StateManifest.load(sandbox);
+    const kept = await manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-global-package",
+      target: "kept",
+      preExisting: false,
+    });
+    const snapshot = structuredClone(manifest.getActions());
+    await manifest.recordAction({
+      plugin: "cli-tool",
+      type: "installed-global-package",
+      target: "dropped",
+      preExisting: false,
+    });
+
+    await manifest.restoreActions(snapshot);
+
+    expect(manifest.getActions()).toEqual([kept]);
+    expect((await StateManifest.load(sandbox)).getActions()).toEqual([kept]);
+  });
+});
+
+describe("StateManifest refuses control characters in ledger text", () => {
+  const V3_ENTRY = { ...V2_MANIFEST.actions[0] };
+
+  it.each<[string, Record<string, unknown>]>([
+    ["type", { type: "managed\nrule-file" }],
+    ["plugin", { plugin: "crg\u001b[2J" }],
+    ["id", { id: "11\u0007" }],
+    ["resourceId", { resourceId: "rule-file:A\nB" }],
+    ["planId", { planId: "abc\u0000" }],
+    ["target", { target: "AGENTS\n.md" }],
+    ["backup.path", { backup: { path: "a\nb", checksum: "x" } }],
+    ["validation.detail", { validation: { ok: false, detail: "x\u001b" } }],
+  ])(
+    "a v3 entry with a control character in %s fails to load, naming the entry and field",
+    async (field, override) => {
+      const cwd = await createSandbox();
+      await writeManifest(cwd, {
+        ...V2_MANIFEST,
+        version: 3,
+        actions: [{ ...V3_ENTRY, ...override }],
+      });
+
+      await expect(StateManifest.load(cwd)).rejects.toThrow(
+        `entry 0 (${printable(String(override.plugin ?? "master-prompt"))}/`,
+      );
+      await expect(StateManifest.load(cwd)).rejects.toThrow(
+        `'${field}' contains a control character. agemon never writes this`,
+      );
+    },
+  );
+
+  it("a forged v1 ledger with a newline in its target fails to load", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, {
+      ...V1_MANIFEST,
+      actions: [{ ...V1_MANIFEST.actions[0], target: "AGENTS.md\nfake line" }],
+    });
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(
+      "'target' contains a control character",
+    );
+  });
+
+  it("a tab or a zero-width character in a target is accepted; a newline is not", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, {
+      ...V2_MANIFEST,
+      version: 3,
+      actions: [{ ...V3_ENTRY, target: "dir\twith tab/​file.md" }],
+    });
+
+    await expect(StateManifest.load(cwd)).resolves.toBeDefined();
+  });
+
+  it("a non-object ledger entry still reports the schema error", async () => {
+    const cwd = await createSandbox();
+    await writeManifest(cwd, { ...V2_MANIFEST, version: 3, actions: [null] });
+
+    await expect(StateManifest.load(cwd)).rejects.toThrow(/invalid schema/);
+  });
+
+  it("recordAction refuses to write what the reader would refuse", async () => {
+    const cwd = await createSandbox();
+    const manifest = await StateManifest.load(cwd);
+
+    await expect(
+      manifest.recordAction({
+        plugin: "crg",
+        type: "installed\nbinary",
+        target: "code-review-graph",
+        preExisting: false,
+      }),
+    ).rejects.toThrow("'type' contains a control character");
+    expect(manifest.getActions()).toEqual([]);
+  });
+});
+
+describe("parseStateManifestContents", () => {
+  it("reads what StateManifest.load reads, reports the migration and writes nothing", async () => {
+    for (const [manifest, migratedFromVersion] of [
+      [V1_MANIFEST, 1],
+      [V2_MANIFEST, 2],
+      [{ ...V2_MANIFEST, version: 3, actions: [] }, null],
+    ] as const) {
+      const cwd = await createSandbox();
+      const manifestPath = await writeManifest(cwd, manifest);
+      const rawContents = await readFile(manifestPath, "utf8");
+
+      const parsed = parseStateManifestContents(rawContents);
+
+      expect(parsed.migratedFromVersion).toBe(migratedFromVersion);
+      expect(await readdir(join(cwd, ".agemon"))).toEqual(["state.json"]);
+      const loaded = await StateManifest.load(cwd);
+      expect(parsed.state.actions).toEqual(loaded.getActions());
+    }
+  });
+
+  it("refuses invalid JSON and unknown versions", () => {
+    expect(() => parseStateManifestContents("{")).toThrow(/not valid JSON/u);
+    expect(() =>
+      parseStateManifestContents(
+        JSON.stringify({ ...V2_MANIFEST, version: 9 }),
+      ),
+    ).toThrow(/Unrecognised state manifest version: 9/u);
   });
 });

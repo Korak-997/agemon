@@ -34,19 +34,21 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph; build the code graph for this repository
+             pipx install code-review-graph==2.3.9 (dependencies hash-locked); build the code graph for this repository
 
       daemon
-        v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
-             register systemd --user unit agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service to keep the code graph fresh
+        v  agemon-crg-daemon-repo-<REPO_HASH>.service [executes]
+             register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
-        v  skill-groups:configured  [executes]
-             add the configured skill groups via 'npx skills add'
+        v  skill-group:essentials   [executes]
+             Essentials:
+             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
 
       cli-tool
         v  agnix                    [executes]
-             npm install --global agnix
+             npm install --global --ignore-scripts of the sha512-pinned agnix@0.58.0 tarball; binary from the v0.58.0 GitHub release, sha256-pinned
 
       master-prompt
         +  AGENTS.md                [writes-config]
@@ -140,19 +142,21 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph; build the code graph for this repository
+             pipx install code-review-graph==2.3.9 (dependencies hash-locked); build the code graph for this repository
 
       daemon
-        v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
-             register systemd --user unit agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service to keep the code graph fresh
+        v  agemon-crg-daemon-repo-<REPO_HASH>.service [executes]
+             register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
-        v  skill-groups:configured  [executes]
-             add the configured skill groups via 'npx skills add'
+        v  skill-group:essentials   [executes]
+             Essentials:
+             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
 
       cli-tool
         v  agnix                    [executes]
-             npm install --global agnix
+             npm install --global --ignore-scripts of the sha512-pinned agnix@0.58.0 tarball; binary from the v0.58.0 GitHub release, sha256-pinned
 
       master-prompt
         +  AGENTS.md                [writes-config]
@@ -242,12 +246,15 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
+      Installing 5 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash]. Each agent can use only the tools listed.
+      daemon hardening: strict
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
-      ╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
+      ╭ [ok] Applied 23 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             1 operation                                     │
+      │     Skills             10 operations                                   │
+      │     Subagents          5 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
       │                                                                        │
@@ -263,11 +270,13 @@ describe("non-interactive output contract", () => {
       await captureNonInteractiveRun("clean-repo", ["--yes", "--quiet"]),
     ).toMatchInlineSnapshot(`
       "exit 0
-      ╭ [ok] Applied 9 operations · environment verified ──────────────────────╮
+      Installing 5 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash]. Each agent can use only the tools listed.
+      ╭ [ok] Applied 23 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             1 operation                                     │
+      │     Skills             10 operations                                   │
+      │     Subagents          5 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
       │                                                                        │
@@ -287,19 +296,21 @@ describe("non-interactive output contract", () => {
 
       crg
         v  code-review-graph        [executes]
-             pipx install code-review-graph; build the code graph for this repository
+             pipx install code-review-graph==2.3.9 (dependencies hash-locked); build the code graph for this repository
 
       daemon
-        v  agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service [executes]
-             register systemd --user unit agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service to keep the code graph fresh
+        v  agemon-crg-daemon-repo-<REPO_HASH>.service [executes]
+             register systemd --user unit agemon-crg-daemon-repo-<REPO_HASH>.service to keep the code graph fresh
 
       skills
-        v  skill-groups:configured  [executes]
-             add the configured skill groups via 'npx skills add'
+        v  skill-group:essentials   [executes]
+             Essentials:
+             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
 
       cli-tool
         v  agnix                    [executes]
-             npm install --global agnix
+             npm install --global --ignore-scripts of the sha512-pinned agnix@0.58.0 tarball; binary from the v0.58.0 GitHub release, sha256-pinned
 
       master-prompt
         +  AGENTS.md                [writes-config]
@@ -390,8 +401,10 @@ describe("non-interactive output contract", () => {
       {
         "isolation": {
           "status": "ignored",
-          "trackedAgemonPaths": []
+          "trackedAgemonPaths": [],
+          "trackingCheckError": null
         },
+        "configError": null,
         "resources": [
           {
             "resourceId": "rule-file:AGENTS.md",
@@ -467,8 +480,8 @@ describe("non-interactive output contract", () => {
           },
           {
             "capabilityId": "daemon",
-            "resourceId": "service-unit:agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service",
-            "label": "agemon-crg-daemon-fake-subprocess-git-rev-parse-show-tople.service",
+            "resourceId": "service-unit:agemon-crg-daemon-repo-<REPO_HASH>.service",
+            "label": "agemon-crg-daemon-repo-<REPO_HASH>.service",
             "state": "absent",
             "detail": null
           },

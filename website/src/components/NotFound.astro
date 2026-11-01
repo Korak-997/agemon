@@ -1,0 +1,46 @@
+---
+import siteData from "../generated/site-data.json";
+import Mark from "./Mark.astro";
+
+const NOT_FOUND_HOLLOW_INDEX = 8;
+const { routes } = siteData;
+---
+
+<div class="not-found">
+  <Mark size={220} hollowIndexes={[NOT_FOUND_HOLLOW_INDEX]} label="Tetractys with one hollow ring: not found" />
+  <p class="ag-label">404 · not found</p>
+  <p class="explanation">
+    The address may be mistyped, or the page was removed. Start from the docs or the skill library.
+  </p>
+  <div class="actions">
+    <a class="ag-button primary" href={routes.gettingStarted}>Get started</a>
+    <a class="ag-button" href={routes.skills}>Browse the skill library</a>
+  </div>
+</div>
+
+<style>
+  .not-found {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 2rem 0 4rem;
+    text-align: center;
+  }
+
+  .not-found p {
+    margin: 0;
+  }
+
+  .explanation {
+    max-width: 44ch;
+    color: var(--ag-text-muted);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1rem;
+  }
+</style>

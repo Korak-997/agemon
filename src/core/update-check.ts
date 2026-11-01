@@ -1,13 +1,18 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { theme } from "../ui/theme.js";
+import { isDevMode } from "./dev-mode.js";
+import {
+  compareReleaseVersions,
+  fetchLatestReleaseVersion,
+  parseReleaseVersion,
+} from "./github-release.js";
+import { assertRootUsesItsOwnEnvironment } from "./install-location.js";
+import { type InstallMethod, resolveInstallMethod } from "./install-method.js";
 import { isInteractiveTerminal, promptYesNo } from "./prompt.js";
+import { installRelease } from "./self-upgrade.js";
 
-const GITHUB_REPO = "Korak-997/agemon";
-const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
-const INSTALL_SCRIPT_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/master/install.sh`;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_TIMEOUT_MS = 3_000;
 
@@ -16,14 +21,35 @@ interface UpdateCheckCache {
   latestVersion: string;
 }
 
+export function resolveAgemonCacheDirectory(): string {
+  const configuredCacheHome = process.env.XDG_CACHE_HOME;
+  const cacheHome =
+    configuredCacheHome && isAbsolute(configuredCacheHome)
+      ? configuredCacheHome
+      : join(homedir(), ".cache");
+  return join(cacheHome, "agemon");
+}
+
 function resolveCachePath(): string {
-  const cacheHome = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
-  return join(cacheHome, "agemon", "update-check.json");
+  return join(resolveAgemonCacheDirectory(), "update-check.json");
+}
+
+function isUpdateCheckCache(value: unknown): value is UpdateCheckCache {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const { lastCheckedAt, latestVersion } = value as Record<string, unknown>;
+  return (
+    typeof lastCheckedAt === "string" &&
+    !Number.isNaN(Date.parse(lastCheckedAt)) &&
+    parseReleaseVersion(latestVersion) === latestVersion
+  );
 }
 
 function readCache(cachePath: string): UpdateCheckCache | undefined {
   try {
-    return JSON.parse(readFileSync(cachePath, "utf8"));
+    const cache: unknown = JSON.parse(readFileSync(cachePath, "utf8"));
+    return isUpdateCheckCache(cache) ? cache : undefined;
   } catch {
     return undefined;
   }
@@ -38,38 +64,9 @@ function writeCache(cachePath: string, cache: UpdateCheckCache): void {
   }
 }
 
-function parseVersionParts(version: string): [number, number, number] {
-  const [core] = version.split("-");
-  const [major, minor, patch] = core
-    .split(".")
-    .map((part) => Number(part) || 0);
-  return [major, minor, patch];
-}
-
-function isNewerVersion(candidate: string, current: string): boolean {
-  const candidateParts = parseVersionParts(candidate);
-  const currentParts = parseVersionParts(current);
-  for (let index = 0; index < 3; index += 1) {
-    if (candidateParts[index] !== currentParts[index]) {
-      return candidateParts[index] > currentParts[index];
-    }
-  }
-  return false;
-}
-
-async function fetchLatestVersionFromGitHub(): Promise<string | undefined> {
-  const response = await fetch(LATEST_RELEASE_API_URL, {
-    headers: { "User-Agent": "agemon-update-check" },
-    signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    return undefined;
-  }
-  const body = (await response.json()) as { tag_name?: string };
-  return body.tag_name?.replace(/^v/, "");
-}
-
-async function resolveLatestVersion(): Promise<string | undefined> {
+async function resolveLatestVersion(
+  signal: AbortSignal,
+): Promise<string | undefined> {
   const cachePath = resolveCachePath();
   const cached = readCache(cachePath);
   const cacheAge = cached
@@ -81,7 +78,9 @@ async function resolveLatestVersion(): Promise<string | undefined> {
   }
 
   try {
-    const fetchedVersion = await fetchLatestVersionFromGitHub();
+    const fetchedVersion = await fetchLatestReleaseVersion(
+      AbortSignal.any([signal, AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS)]),
+    );
     if (fetchedVersion) {
       writeCache(cachePath, {
         lastCheckedAt: new Date().toISOString(),
@@ -97,45 +96,92 @@ async function resolveLatestVersion(): Promise<string | undefined> {
   return cached?.latestVersion;
 }
 
-function runInstaller(): boolean {
+export interface UpdateCheckInput {
+  currentVersion: string;
+  dryRun: boolean;
+  quiet: boolean;
+}
+
+export type UpdateCheckOutcome = "updated" | "update-failed" | "not-updated";
+
+export interface PendingUpdateCheck {
+  finish(options: { yes: boolean }): Promise<UpdateCheckOutcome>;
+  abort(): void;
+}
+
+const CI_DISABLED_VALUES: readonly string[] = ["", "0", "false"];
+
+function isRunningInCi(): boolean {
+  const ci = process.env.CI;
+  return ci !== undefined && !CI_DISABLED_VALUES.includes(ci.toLowerCase());
+}
+
+function isUpdateCheckDisabled(input: UpdateCheckInput): boolean {
+  return (
+    input.dryRun ||
+    input.quiet ||
+    isRunningInCi() ||
+    isDevMode() ||
+    process.env.AGEMON_NO_UPDATE_CHECK === "1"
+  );
+}
+
+function runsWithItsOwnEnvironment(): boolean {
   try {
-    execFileSync("sh", ["-c", `curl -fsSL ${INSTALL_SCRIPT_URL} | sh`], {
-      stdio: "inherit",
-    });
+    assertRootUsesItsOwnEnvironment();
     return true;
   } catch {
     return false;
   }
 }
 
-export interface UpdateCheckInput {
-  currentVersion: string;
-  dryRun: boolean;
+function upgradeHint(
+  kind: InstallMethod["kind"],
+  latestVersion: string,
+): string {
+  switch (kind) {
+    case "install-script":
+      return "Run 'agemon upgrade' to install it.";
+    case "npm-global":
+      return `Run 'agemon upgrade' (or 'npm install --global agemon@${latestVersion}').`;
+    case "npx":
+      return "Run 'npx agemon@latest' to use it.";
+    default:
+      return "Update this copy the way you installed it.";
+  }
 }
 
-export type UpdateCheckOutcome = "updated" | "update-failed" | "not-updated";
-
-export async function checkForUpdate(
-  input: UpdateCheckInput,
+async function offerUpdate(
+  latestVersion: string | undefined,
+  currentVersion: string,
+  options: { yes: boolean },
 ): Promise<UpdateCheckOutcome> {
+  const runningVersion = parseReleaseVersion(currentVersion);
   if (
-    input.dryRun ||
-    process.env.AGEMON_DEV === "1" ||
-    process.env.AGEMON_NO_UPDATE_CHECK === "1"
+    !latestVersion ||
+    !runningVersion ||
+    compareReleaseVersions(latestVersion, runningVersion) <= 0
   ) {
     return "not-updated";
   }
 
-  const latestVersion = await resolveLatestVersion().catch(() => undefined);
-  if (!latestVersion || !isNewerVersion(latestVersion, input.currentVersion)) {
+  const updateNotice = `A new version of agemon is available: ${currentVersion} -> ${latestVersion}.`;
+  if (!runsWithItsOwnEnvironment()) {
+    console.log(
+      theme.accent(`${updateNotice} Run 'agemon upgrade' to install it.`),
+    );
     return "not-updated";
   }
+  const method = await resolveInstallMethod();
+  const canInstallHere =
+    method.kind === "install-script" || method.kind === "npm-global";
 
-  const isInteractive = isInteractiveTerminal();
-  const updateNotice = `A new version of agemon is available: ${input.currentVersion} -> ${latestVersion}.`;
-
-  if (!isInteractive) {
-    console.log(theme.accent(`${updateNotice} Run the installer to upgrade.`));
+  if (options.yes || !isInteractiveTerminal() || !canInstallHere) {
+    console.log(
+      theme.accent(
+        `${updateNotice} ${upgradeHint(method.kind, latestVersion)}`,
+      ),
+    );
     return "not-updated";
   }
 
@@ -145,18 +191,50 @@ export async function checkForUpdate(
   }
 
   console.log(theme.accent("Updating agemon..."));
-  const updated = runInstaller();
-  if (!updated) {
+  try {
+    await installRelease(method, latestVersion, latestVersion);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
     console.error(
       theme.danger(
-        `Automatic update failed. Run it yourself: curl -fsSL ${INSTALL_SCRIPT_URL} | sh`,
+        `Automatic update failed (${reason}). Run 'agemon upgrade' to retry.`,
       ),
     );
     return "update-failed";
   }
 
-  console.log(
-    theme.ok(`Updated to ${latestVersion}. Re-run your command to use it.`),
-  );
+  console.log(theme.ok(`Updated to ${latestVersion}.`));
   return "updated";
+}
+
+export function startUpdateCheck(
+  input: UpdateCheckInput,
+): PendingUpdateCheck | null {
+  if (isUpdateCheckDisabled(input)) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  let lookup: { latestVersion: string | undefined } | null = null;
+  resolveLatestVersion(controller.signal).then(
+    (latestVersion) => {
+      lookup = { latestVersion };
+    },
+    () => {
+      lookup = { latestVersion: undefined };
+    },
+  );
+
+  return {
+    async finish(options) {
+      if (lookup === null) {
+        controller.abort();
+        return "not-updated";
+      }
+      return offerUpdate(lookup.latestVersion, input.currentVersion, options);
+    },
+    abort() {
+      controller.abort();
+    },
+  };
 }

@@ -21,11 +21,6 @@ function runCapture(command: string, args: string[]): string {
 function readPackageVersion(): string {
   return JSON.parse(readFileSync("package.json", "utf8")).version;
 }
-
-// A single readline interface is shared across every prompt in the run.
-// Piped, non-TTY stdin (e.g. `printf "patch\ny\n" | npm run deploy`) is not
-// reliably re-readable by a second interface once the first one closes —
-// creating one per prompt silently hangs the second question forever.
 let promptInterface: Interface | undefined;
 
 function getPromptInterface(): Interface {
@@ -152,6 +147,7 @@ async function deploy(): Promise<void> {
   const args = process.argv.slice(2);
   const skipConfirm = args.includes("--yes");
   const skipChecks = args.includes("--skip-checks");
+  const skipPush = args.includes("--no-push");
   const requestedBump = args.find(isBumpType);
 
   ensureOnReleaseBranch();
@@ -201,7 +197,9 @@ async function deploy(): Promise<void> {
   );
   console.log("  1. commit package.json (+ package-lock.json + CHANGELOG.md)");
   console.log(`  2. tag v${nextVersion}`);
-  console.log(`  3. push ${RELEASE_BRANCH} and the tag to origin`);
+  if (!skipPush) {
+    console.log(`  3. push ${RELEASE_BRANCH} and the tag to origin`);
+  }
 
   if (!skipConfirm && !(await promptConfirm("Proceed?"))) {
     revertVersionBump();
@@ -213,6 +211,13 @@ async function deploy(): Promise<void> {
   run("git", ["add", "package.json", "package-lock.json", "CHANGELOG.md"]);
   run("git", ["commit", "-m", `release: ${nextVersion}`]);
   run("git", ["tag", "-a", `v${nextVersion}`, "-m", `v${nextVersion}`]);
+  if (skipPush) {
+    console.log(
+      `\nCommitted and tagged v${nextVersion} locally (--no-push); push ${RELEASE_BRANCH} and the tag yourself.`,
+    );
+    return;
+  }
+
   run("git", ["push", "origin", RELEASE_BRANCH, `v${nextVersion}`]);
 
   console.log(

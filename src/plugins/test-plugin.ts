@@ -32,10 +32,5 @@ export const testPlugin: AgemonPlugin = {
       detail: "action logged in manifest",
     };
   },
-  async uninstall(ctx) {
-    if (ctx.dryRun) {
-      return;
-    }
-    await ctx.manifest.removeActionsForPlugin("test-plugin");
-  },
+  async uninstall() {},
 };

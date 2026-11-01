@@ -1,0 +1,176 @@
+name: Website
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag whose site to build and deploy (e.g. v1.2.3)
+        required: true
+        type: string
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  SITE_ORIGIN: https://agemon.korak-kurani.com
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master'
+    permissions:
+      contents: read
+      attestations: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Choose the release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          TAG="${INPUT_TAG:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "The site is only built from stable release tags like v1.2.3, not '$TAG'."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a released master commit with a website
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if ! git merge-base --is-ancestor "refs/tags/${TAG}^{commit}" origin/master; then
+            echo "Tag ${TAG} is not on master; the site is only built from released master commits."
+            exit 1
+          fi
+          if [[ ! -f website/package.json ]]; then
+            echo "Release ${TAG} has no website/ — the site can only be built from v6 or later."
+            exit 1
+          fi
+
+      - name: Download and verify the release installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          mkdir "$RUNNER_TEMP/release"
+          cd "$RUNNER_TEMP/release"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern install.sh --pattern SHA256SUMS
+          grep -E '^[0-9a-f]{64}  install\.sh$' SHA256SUMS | sha256sum -c -
+          gh attestation verify install.sh --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --deny-self-hosted-runners
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix website --ignore-scripts
+
+      - name: Build the site
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          npm run website:build -- --install-sh "$RUNNER_TEMP/release/install.sh" \
+            --sha256sums "$RUNNER_TEMP/release/SHA256SUMS" --release-tag "$TAG"
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: website/dist
+
+  verify:
+    name: verify outside the build job
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+
+    steps:
+      - name: Checkout the release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ needs.build.outputs.tag }}
+          persist-credentials: false
+
+      - name: Download the site artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: github-pages
+          path: ${{ runner.temp }}/pages
+
+      - name: Unpack the site safely
+        working-directory: ${{ runner.temp }}/pages
+        run: |
+          set -euo pipefail
+
+          if tar -tvf artifact.tar | grep -Eq '^[lh]'; then
+            echo "The site artifact contains a link."
+            exit 1
+          fi
+          if tar -tf artifact.tar | grep -Eq '^/|(^|/)\.\.(/|$)'; then
+            echo "The site artifact contains an absolute or parent path."
+            exit 1
+          fi
+          mkdir "$RUNNER_TEMP/site"
+          tar --no-same-owner --no-same-permissions -xf artifact.tar -C "$RUNNER_TEMP/site"
+
+      - name: Verify the site against the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          mkdir "$RUNNER_TEMP/release"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/release" \
+            --pattern install.sh --pattern SHA256SUMS
+          gh attestation verify "$RUNNER_TEMP/release/install.sh" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --deny-self-hosted-runners
+          sh scripts/verify-site.sh "$RUNNER_TEMP/site" "$SITE_ORIGIN" website/csp-policy.txt \
+            "$RUNNER_TEMP/release/install.sh" "$RUNNER_TEMP/release/SHA256SUMS"
+
+  deploy:
+    name: deploy
+    needs: [build, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

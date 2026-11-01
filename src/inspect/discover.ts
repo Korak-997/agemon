@@ -1,11 +1,21 @@
-import { execFile } from "node:child_process";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { promisify } from "node:util";
+import { readdir } from "node:fs/promises";
 import type { Context } from "../core/context.js";
+import { RefusedFileError, readRegularFileIfExists } from "../core/files.js";
+import {
+  gitIgnoresAgemonState,
+  gitignoreListsAgemonState,
+} from "../core/gitignore.js";
+import {
+  hasGitEntry,
+  resolveInsideRepo,
+  resolveRepoDirectory,
+} from "../core/repo-paths.js";
+import { runRepositoryGit } from "../core/repository-git.js";
+import { TRUNCATION_MARKER } from "../core/subprocess-runner.js";
+import { printable } from "../core/untrusted-text.js";
 import { isDenylistedPath } from "./redact.js";
 
-const execFileAsync = promisify(execFile);
+const GIT_ERROR_MAX_CHARACTERS = 200;
 
 export const ROOT_RULE_FILES = [
   "AGENTS.md",
@@ -58,6 +68,7 @@ export interface BinaryResource {
 export interface WorkspaceIsolation {
   status: IsolationStatus;
   trackedAgemonPaths: string[];
+  trackingCheckError: string | null;
 }
 
 export interface DiscoveryResult {
@@ -68,11 +79,27 @@ export interface DiscoveryResult {
   isolation: WorkspaceIsolation;
 }
 
-async function readFileIfExists(filePath: string): Promise<string | null> {
+type RepoFileRead =
+  | { exists: false; contents: null; refusal: null }
+  | { exists: true; contents: string; refusal: null }
+  | { exists: true; contents: null; refusal: string };
+
+async function readRepoFile(
+  cwd: string,
+  relativePath: string,
+): Promise<RepoFileRead> {
   try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return null;
+    const contents = await readRegularFileIfExists(
+      await resolveInsideRepo(cwd, relativePath),
+    );
+    return contents === null
+      ? { exists: false, contents: null, refusal: null }
+      : { exists: true, contents, refusal: null };
+  } catch (error) {
+    if (error instanceof RefusedFileError) {
+      return { exists: true, contents: null, refusal: error.message };
+    }
+    throw error;
   }
 }
 
@@ -80,14 +107,25 @@ async function discoverStructuredConfig(
   cwd: string,
   relativePath: string,
 ): Promise<StructuredConfigResource> {
-  const contents = await readFileIfExists(join(cwd, relativePath));
-  if (contents === null) {
+  const { exists, contents, refusal } = await readRepoFile(cwd, relativePath);
+  if (!exists) {
     return {
       kind: "structured-config",
       path: relativePath,
       exists: false,
       parsed: null,
       parseError: null,
+      denylisted: false,
+    };
+  }
+
+  if (refusal !== null) {
+    return {
+      kind: "structured-config",
+      path: relativePath,
+      exists: true,
+      parsed: null,
+      parseError: `not read: ${printable(refusal)}`,
       denylisted: false,
     };
   }
@@ -129,7 +167,14 @@ async function discoverScopedCopilotInstructions(
 ): Promise<CopilotInstructionResource[]> {
   let entries: string[];
   try {
-    entries = await readdir(join(cwd, SCOPED_COPILOT_INSTRUCTION_DIRECTORY));
+    const instructionDirectory = await resolveRepoDirectory(
+      cwd,
+      SCOPED_COPILOT_INSTRUCTION_DIRECTORY,
+    );
+    if (instructionDirectory === null) {
+      return [];
+    }
+    entries = await readdir(instructionDirectory);
   } catch {
     return [];
   }
@@ -149,9 +194,7 @@ async function discoverCopilotInstructions(
 ): Promise<CopilotInstructionResource[]> {
   const instructions: CopilotInstructionResource[] = [];
 
-  if (
-    (await readFileIfExists(join(cwd, ROOT_COPILOT_INSTRUCTION_FILE))) !== null
-  ) {
+  if ((await readRepoFile(cwd, ROOT_COPILOT_INSTRUCTION_FILE)).exists) {
     instructions.push({
       kind: "copilot-instruction",
       path: ROOT_COPILOT_INSTRUCTION_FILE,
@@ -163,32 +206,81 @@ async function discoverCopilotInstructions(
   return instructions;
 }
 
-async function readIsolationStatus(cwd: string): Promise<IsolationStatus> {
-  const contents = await readFileIfExists(join(cwd, ".gitignore"));
-  if (contents === null) {
-    return "no-gitignore-file";
-  }
-
-  const normalizedEntries = contents
-    .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^\//, "").replace(/\/$/, ""));
-  return normalizedEntries.includes(".agemon") ? "ignored" : "not-ignored";
+interface IsolationCheck {
+  status: IsolationStatus;
+  gitCheckError: string | null;
 }
 
-async function listTrackedAgemonPaths(cwd: string): Promise<string[]> {
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", cwd, "ls-files", "--", ".agemon"],
-      { encoding: "utf8" },
-    );
-    return stdout
+async function checkIsolation(cwd: string): Promise<IsolationCheck> {
+  const { exists, contents } = await readRepoFile(cwd, ".gitignore");
+  if (!exists) {
+    return { status: "no-gitignore-file", gitCheckError: null };
+  }
+  if (contents === null || !gitignoreListsAgemonState(contents)) {
+    return { status: "not-ignored", gitCheckError: null };
+  }
+  const verdict = await gitIgnoresAgemonState(cwd);
+  if (verdict.kind === "failed") {
+    return {
+      status: "not-ignored",
+      gitCheckError: `could not ask git whether .agemon/ is ignored: ${describeGitFailure(verdict.detail)}`,
+    };
+  }
+  return {
+    status:
+      verdict.kind === "ignored" || verdict.kind === "not-a-repository"
+        ? "ignored"
+        : "not-ignored",
+    gitCheckError: null,
+  };
+}
+
+export async function readIsolationStatus(
+  cwd: string,
+): Promise<IsolationStatus> {
+  return (await checkIsolation(cwd)).status;
+}
+
+interface TrackedAgemonPaths {
+  trackedAgemonPaths: string[];
+  trackingCheckError: string | null;
+}
+
+function describeGitFailure(text: string): string {
+  const lastLine = text.trim().split(/\r?\n/).at(-1) ?? "";
+  return printable(lastLine).slice(0, GIT_ERROR_MAX_CHARACTERS);
+}
+
+async function listTrackedAgemonPaths(
+  cwd: string,
+): Promise<TrackedAgemonPaths> {
+  const result = await runRepositoryGit(cwd, ["ls-files", "--", ".agemon"]);
+  const failure =
+    result.code !== 0
+      ? describeGitFailure(result.stderr || "git failed")
+      : result.stdout.endsWith(TRUNCATION_MARKER)
+        ? "git ls-files output exceeded the capture limit"
+        : null;
+  if (failure !== null) {
+    return {
+      trackedAgemonPaths: [],
+      trackingCheckError: (await hasGitEntry(cwd))
+        ? `could not check whether .agemon/ is tracked by git: ${failure}`
+        : null,
+    };
+  }
+  return {
+    trackedAgemonPaths: result.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-  } catch {
-    return [];
-  }
+      .filter((line) => line.length > 0),
+    trackingCheckError: null,
+  };
+}
+
+function joinGitCheckErrors(...errors: Array<string | null>): string | null {
+  const reported = errors.filter((error): error is string => error !== null);
+  return reported.length === 0 ? null : reported.join("; ");
 }
 
 export async function discoverRepository(
@@ -196,11 +288,11 @@ export async function discoverRepository(
 ): Promise<DiscoveryResult> {
   const ruleFiles = await Promise.all(
     ROOT_RULE_FILES.map(async (relativePath) => {
-      const contents = await readFileIfExists(join(ctx.cwd, relativePath));
+      const { exists, contents } = await readRepoFile(ctx.cwd, relativePath);
       return {
         kind: "rule-file" as const,
         path: relativePath,
-        exists: contents !== null,
+        exists,
         contents,
       };
     }),
@@ -212,6 +304,8 @@ export async function discoverRepository(
     ),
   );
 
+  const isolationCheck = await checkIsolation(ctx.cwd);
+  const tracked = await listTrackedAgemonPaths(ctx.cwd);
   return {
     ruleFiles,
     copilotInstructions: await discoverCopilotInstructions(ctx.cwd),
@@ -222,8 +316,12 @@ export async function discoverRepository(
       present: binary.present,
     })),
     isolation: {
-      status: await readIsolationStatus(ctx.cwd),
-      trackedAgemonPaths: await listTrackedAgemonPaths(ctx.cwd),
+      status: isolationCheck.status,
+      trackedAgemonPaths: tracked.trackedAgemonPaths,
+      trackingCheckError: joinGitCheckErrors(
+        isolationCheck.gitCheckError,
+        tracked.trackingCheckError,
+      ),
     },
   };
 }

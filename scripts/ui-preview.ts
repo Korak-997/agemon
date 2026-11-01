@@ -172,6 +172,7 @@ function previewSummaries(): void {
       message: "daemon registration exploded",
       restored: ["restored AGENTS.md"],
       reverted: ["crg"],
+      kept: [],
       manualCleanup: ["crg: pipx uninstall unavailable"],
     }),
     theme.heading("Summary — failure"),

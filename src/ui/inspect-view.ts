@@ -1,4 +1,5 @@
 import type { AgentDetectionRow } from "../adapters/types.js";
+import { printable } from "../core/untrusted-text.js";
 import type { ClassifiedResource, ResourceState } from "../inspect/classify.js";
 import { describeOverlap } from "../inspect/duplication.js";
 import type { InspectReport } from "../inspect/index.js";
@@ -22,6 +23,7 @@ const RESOURCE_STATE_TONE: Record<ResourceState, Parameters<typeof badge>[1]> =
 const CAPABILITY_STATE_LABEL: Record<CapabilityState, string> = {
   "present-managed": "present · managed",
   "present-adopted": "present · adopted",
+  "present-modified": "present · changed",
   absent: "absent",
   declined: "absent · declined",
   unknown: "unknown",
@@ -33,6 +35,7 @@ const CAPABILITY_STATE_TONE: Record<
 > = {
   "present-managed": "ok",
   "present-adopted": "warn",
+  "present-modified": "warn",
   absent: "neutral",
   declined: "neutral",
   unknown: "warn",
@@ -40,9 +43,9 @@ const CAPABILITY_STATE_TONE: Record<
 
 function resourceRow(resource: ClassifiedResource): string[] {
   return [
-    resource.path,
+    printable(resource.path),
     badge(resource.state, RESOURCE_STATE_TONE[resource.state]),
-    resource.detail ?? "",
+    printable(resource.detail ?? ""),
   ];
 }
 
@@ -97,6 +100,12 @@ export function renderInspectReport(report: InspectReport): string {
       )}`,
     );
   }
+  if (report.isolation.trackingCheckError !== null) {
+    blocks.push(`  ${theme.warn(report.isolation.trackingCheckError)}`);
+  }
+  if (report.configError !== null) {
+    blocks.push(`  ${theme.warn(report.configError)}`);
+  }
 
   blocks.push(section("Resources"));
   blocks.push(
@@ -120,7 +129,7 @@ export function renderInspectReport(report: InspectReport): string {
             CAPABILITY_STATE_LABEL[row.state],
             CAPABILITY_STATE_TONE[row.state],
           ),
-          row.detail ?? "",
+          printable(row.detail ?? ""),
         ]),
       ]),
     );

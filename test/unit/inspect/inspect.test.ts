@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -8,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import { fingerprintContent } from "../../../src/core/fingerprint.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
@@ -18,10 +19,13 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 import type { AgemonPlugin } from "../../../src/plugins/types.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const directoryPath of createdTempDirectories.splice(0)) {
     await rm(directoryPath, { recursive: true, force: true });
   }
@@ -29,14 +33,35 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
-      return { active: false };
+      return { active: false, failed: false };
+    },
+    async isSandboxEnforced() {
+      return false;
     },
     async registerAutostart() {
-      return { unitPath: "", lingerEnabledByAgemon: false };
+      return {
+        unitPath: "",
+        attemptLabel: "strict",
+        failedAttempts: [],
+      };
     },
-    async unregisterAutostart() {
-      return;
+    async unregisterAutostart() {},
+    async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
+      return null;
     },
   };
 }
@@ -53,7 +78,8 @@ async function createInspectContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [
       { name: "python3", present: true },
       { name: "code-review-graph", present: false },
@@ -73,6 +99,10 @@ async function createInspectContext(): Promise<Context> {
     run: async () => ({ code: 0, stdout: "", stderr: "" }),
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
   };
 }
 
@@ -144,6 +174,47 @@ describe("inspectRepository", () => {
     expect((await inspectRepository(unignoredContext)).isolation.status).toBe(
       "not-ignored",
     );
+  });
+
+  it("asks git in a repository, so a negated .agemon is not-ignored", async () => {
+    const context = await createInspectContext();
+    execFileSync("git", ["init", "-q", context.cwd]);
+    await writeFile(
+      join(context.cwd, ".gitignore"),
+      "/.agemon/\n!/.agemon/\n",
+      "utf8",
+    );
+
+    expect((await inspectRepository(context)).isolation.status).toBe(
+      "not-ignored",
+    );
+  });
+
+  it("reports not-ignored with git's failure when git cannot answer in a repository", async () => {
+    const context = await createInspectContext();
+    await mkdir(join(context.cwd, ".git"));
+    await writeFile(join(context.cwd, ".gitignore"), "/.agemon/\n", "utf8");
+
+    const { isolation } = await inspectRepository(context);
+
+    expect(isolation.status).toBe("not-ignored");
+    expect(isolation.trackingCheckError).toMatch(
+      /could not ask git whether \.agemon\/ is ignored: /,
+    );
+  });
+
+  it("lets the .gitignore file decide outside a repository", async () => {
+    const context = await createInspectContext();
+    await writeFile(
+      join(context.cwd, ".gitignore"),
+      ".agemon\n!.agemon\n",
+      "utf8",
+    );
+
+    const { isolation } = await inspectRepository(context);
+
+    expect(isolation.status).toBe("ignored");
+    expect(isolation.trackingCheckError).toBeNull();
   });
 
   it("redacts credential-shaped values in structured config", async () => {
@@ -436,8 +507,18 @@ describe("inspectRepository capabilities", () => {
 
   it("reports an adopted crg install and absent skills from the real capabilities", async () => {
     const context = await createInspectContext();
+    const home = await mkdtemp(join(tmpdir(), "agemon-inspect-home-"));
+    createdTempDirectories.push(home);
+    const binDirectory = join(home, "bin");
+    await mkdir(binDirectory);
+    await writeFile(join(binDirectory, "code-review-graph"), "#!/bin/sh\n");
+    await chmod(join(binDirectory, "code-review-graph"), 0o755);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("PATH", binDirectory);
+    vi.stubEnv("PIPX_HOME", undefined);
+    vi.stubEnv("XDG_DATA_HOME", undefined);
     context.run = async (command: string) =>
-      command === "code-review-graph"
+      command === join(binDirectory, "code-review-graph")
         ? { code: 0, stdout: "code-review-graph 1.2.3", stderr: "" }
         : { code: 1, stdout: "", stderr: "not found" };
 

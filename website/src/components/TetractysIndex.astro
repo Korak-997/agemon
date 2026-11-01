@@ -1,0 +1,218 @@
+---
+import siteData from "../generated/site-data.json";
+import {
+  APEX_INDEX,
+  DOT_RADIUS,
+  MARK_HOLLOW_INDEXES,
+  TETRACTYS_DOTS,
+  TETRACTYS_VIEW_BOX_SIZE,
+} from "../tetractys";
+
+const DOT_INSET = DOT_RADIUS + 0.6;
+const usableSize = TETRACTYS_VIEW_BOX_SIZE - 2 * DOT_INSET;
+const position = (coordinate: number) =>
+  `${(((coordinate - DOT_INSET) / usableSize) * 100).toFixed(2)}%`;
+
+const groups = siteData.skillGroups.map((group, index) => ({
+  ...group,
+  number: index + 1,
+  left: position(TETRACTYS_DOTS[index].x),
+  top: position(TETRACTYS_DOTS[index].y),
+  hollow: MARK_HOLLOW_INDEXES.includes(index),
+  apex: index === APEX_INDEX,
+}));
+---
+
+<div class="skill-index">
+  <div class="dots" role="group" aria-label="Skill groups">
+    {
+      groups.map((group, index) => (
+        <button
+          type="button"
+          style={`left:${group.left};top:${group.top}`}
+          class:list={{ hollow: group.hollow, apex: group.apex }}
+          aria-label={group.label}
+          aria-pressed={index === 0 ? "true" : "false"}
+          aria-controls={`skill-group-card-${group.id}`}
+          tabindex={index === 0 ? "0" : "-1"}
+          data-group-index={index}
+        >
+          <i />
+        </button>
+      ))
+    }
+  </div>
+  <div class="cards">
+    {
+      groups.map((group, index) => (
+        <div class="ag-card group-card" id={`skill-group-card-${group.id}`} hidden={index !== 0}>
+          <span class="ag-label">Group {group.number} of {groups.length}</span>
+          <h3>{group.id}</h3>
+          <p>{group.description}</p>
+          <div class="facts">
+            <span class="count">{group.skillCount} skills</span>
+            <span class="ag-label pinned">pinned</span>
+          </div>
+          <a href={group.route}>Browse the {group.label} group</a>
+        </div>
+      ))
+    }
+  </div>
+</div>
+
+<script>
+  const SELECT_KEYS: Record<string, (index: number, count: number) => number> = {
+    ArrowRight: (index, count) => (index + 1) % count,
+    ArrowDown: (index, count) => (index + 1) % count,
+    ArrowLeft: (index, count) => (index - 1 + count) % count,
+    ArrowUp: (index, count) => (index - 1 + count) % count,
+    Home: () => 0,
+    End: (_index, count) => count - 1,
+  };
+
+  for (const index of document.querySelectorAll(".skill-index")) {
+    const buttons = [...index.querySelectorAll<HTMLButtonElement>("button[data-group-index]")];
+
+    const select = (selected: HTMLButtonElement) => {
+      for (const button of buttons) {
+        const isSelected = button === selected;
+        button.setAttribute("aria-pressed", String(isSelected));
+        button.tabIndex = isSelected ? 0 : -1;
+        const card = document.getElementById(button.getAttribute("aria-controls") ?? "");
+        if (card) card.hidden = !isSelected;
+      }
+    };
+
+    for (const [position, button] of buttons.entries()) {
+      button.addEventListener("click", () => select(button));
+      button.addEventListener("mouseenter", () => select(button));
+      button.addEventListener("focus", () => select(button));
+      button.addEventListener("keydown", (event) => {
+        const next = SELECT_KEYS[event.key];
+        if (!next) return;
+        event.preventDefault();
+        buttons[next(position, buttons.length)].focus();
+      });
+    }
+  }
+</script>
+
+<style>
+  .skill-index {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(21rem, 100%), 1fr));
+    gap: 3rem;
+    align-items: center;
+  }
+
+  .dots {
+    position: relative;
+    width: 100%;
+    max-width: 26rem;
+    aspect-ratio: 1;
+  }
+
+  .dots button {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin: -22px 0 0 -22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .dots i {
+    display: block;
+    width: 24px;
+    height: 24px;
+    border: 2.6px solid var(--ag-accent);
+    border-radius: 50%;
+    background: var(--ag-accent);
+    transition:
+      background 160ms,
+      transform 160ms var(--ease-out);
+  }
+
+  .dots .apex i {
+    border-color: var(--ag-secondary);
+    background: var(--ag-secondary);
+  }
+
+  .dots .hollow i {
+    border-color: var(--ag-text);
+    background: transparent;
+  }
+
+  .dots .hollow[aria-pressed="true"] i {
+    border-color: var(--ag-accent);
+    background: var(--ag-accent);
+  }
+
+  .dots button:hover i,
+  .dots button:focus-visible i,
+  .dots button[aria-pressed="true"] i {
+    transform: scale(1.15);
+  }
+
+  .group-card {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-height: 17.5rem;
+    padding: 2rem;
+  }
+
+  .group-card[hidden] {
+    display: none;
+  }
+
+  .group-card h3 {
+    margin: 0;
+    font: 500 1.625rem / 1.3 var(--sl-font-mono);
+  }
+
+  .group-card p {
+    margin: 0;
+    color: var(--ag-text-muted);
+  }
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .count {
+    font: 0.875rem var(--sl-font-mono);
+  }
+
+  .pinned {
+    padding: 0.125rem 0.75rem;
+    border: 1px solid var(--ag-secondary);
+    border-radius: 999px;
+    color: var(--ag-secondary);
+  }
+
+  .group-card a {
+    align-self: flex-start;
+    padding: 0.5rem 0;
+    color: var(--ag-accent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dots i {
+      transition: none;
+    }
+
+    .dots button i {
+      transform: none !important;
+    }
+  }
+</style>

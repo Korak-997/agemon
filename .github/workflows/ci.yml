@@ -15,6 +15,9 @@ on:
       - synchronize
       - reopened
 
+permissions:
+  contents: read
+
 jobs:
   quality:
     name: quality (node ${{ matrix.node-version }})
@@ -24,15 +27,16 @@ jobs:
       fail-fast: false
       matrix:
         node-version:
+          - 22.x
           - 24.x
           - 26.x
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -40,11 +44,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit (production + high-severity dev advisories)
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev
+
+      - name: Audit the pinned skills CLI lockfile
+        run: npm audit --prefix assets/tools --audit-level=high
 
       - name: Lint
         run: npm run lint
+
+      - name: Lint bundled skills
+        run: npm run lint-skills
 
       - name: Typecheck
         run: npm run typecheck
@@ -58,6 +68,11 @@ jobs:
       - name: Smoke-test the packaged bundle
         run: npm run smoke
 
+      - name: Dry-run the npm publish
+        run: |
+          sh scripts/pack-release.sh "$RUNNER_TEMP/agemon.tgz"
+          npm publish --dry-run "$RUNNER_TEMP/agemon.tgz"
+
   sandbox:
     name: sandbox checks
     runs-on: ubuntu-latest
@@ -65,10 +80,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.x
           cache: npm
@@ -76,11 +93,105 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check bundled skill fingerprints against every release
+        run: npm run skills:fingerprints -- --check
+
       - name: Sandbox dry-run checkpoint
         run: npm run sandbox -- run clean-repo --dry-run
 
       - name: Sandbox roundtrip checkpoint
         run: npm run sandbox -- roundtrip clean-repo
+
+  website:
+    name: website build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.action != 'edited'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix website --ignore-scripts
+
+      - name: Audit the website dependencies
+        run: npm audit --prefix website --audit-level=high
+
+      - name: Build and verify the website
+        run: npm run website:build
+
+  macos:
+    name: macos tests
+    runs-on: macos-latest
+    if: github.event_name != 'pull_request' || github.event.action != 'edited'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke-test the packaged bundle
+        run: npm run smoke
+
+      - name: Sandbox dry-run checkpoint
+        run: npm run sandbox -- run clean-repo --dry-run
+
+      - name: Run inspect, status and plan
+        run: |
+          repo="$RUNNER_TEMP/macos-repo"
+          mkdir "$repo"
+          cd "$repo"
+          git init --quiet
+          agemon="$GITHUB_WORKSPACE/bin/agemon.js"
+          node "$agemon" inspect
+          node "$agemon" status
+          node "$agemon" plan
+
+  workflow-lint:
+    name: workflow lint
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.action != 'edited'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Shellcheck
+        run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck@sha256:bb596a0d169b85ddd81d8b6d3a2ff6d5baf5fca10b97f575ebc647c3dff62b3d install.sh scripts/*.sh
+
+      - name: Actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
 
   commitlint:
     name: commitlint
@@ -91,7 +202,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 

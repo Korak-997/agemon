@@ -13,28 +13,31 @@ on:
 
 concurrency: ${{ github.workflow }}-${{ inputs.tag || github.ref }}
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
-  release:
-    name: release
+  build:
+    name: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      checksums-digest: ${{ steps.checksums.outputs.digest }}
 
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.x
-          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -61,9 +64,9 @@ jobs:
           TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
 
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+|-beta\.[0-9]+)?$ ]]; then
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
             echo "Unsupported tag format: $TAG"
-            echo "Allowed: vX.Y.Z, vX.Y.Z-alpha.N, vX.Y.Z-beta.N"
+            echo "Allowed: vX.Y.Z, vX.Y.Z-alpha.N, vX.Y.Z-beta.N, vX.Y.Z-rc.N"
             exit 1
           fi
 
@@ -90,14 +93,67 @@ jobs:
             exit 1
           fi
 
-      - name: Package release tarball
+      - name: Package release assets
+        id: checksums
         run: |
           set -euo pipefail
 
-          npm pack --pack-destination /tmp
-          mv /tmp/agemon-*.tgz agemon.tgz
+          mkdir release-assets
+          sh scripts/pack-release.sh release-assets/agemon.tgz
+          cp install.sh release-assets/install.sh
+
+          cd release-assets
+          sha256sum agemon.tgz install.sh > SHA256SUMS
+          echo "digest=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Verify assets match the build job
+        working-directory: release-assets
+        env:
+          EXPECTED_CHECKSUMS_DIGEST: ${{ needs.build.outputs.checksums-digest }}
+        run: |
+          set -euo pipefail
+
+          ACTUAL_CHECKSUMS_DIGEST="$(sha256sum SHA256SUMS | cut -d' ' -f1)"
+          if [[ "$ACTUAL_CHECKSUMS_DIGEST" != "$EXPECTED_CHECKSUMS_DIGEST" ]]; then
+            echo "SHA256SUMS changed between the build and publish jobs."
+            exit 1
+          fi
+          sha256sum -c SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: release-assets/SHA256SUMS
 
       - name: Publish GitHub Release
+        working-directory: release-assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -105,11 +161,103 @@ jobs:
 
           TAG="${RELEASE_TAG}"
           PRERELEASE_FLAG=""
-          if [[ "$TAG" == *-alpha.* || "$TAG" == *-beta.* ]]; then
+          if [[ "$TAG" == *-alpha.* || "$TAG" == *-beta.* || "$TAG" == *-rc.* ]]; then
             PRERELEASE_FLAG="--prerelease"
           fi
 
-          gh release create "$TAG" agemon.tgz \
+          gh release create "$TAG" agemon.tgz install.sh SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
             --title "$TAG" \
             --generate-notes \
             $PRERELEASE_FLAG
+
+  npm:
+    name: publish to npm
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Download the published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern agemon.tgz --pattern SHA256SUMS
+
+      - name: Verify the tarball is the one the build job checksummed
+        env:
+          EXPECTED_CHECKSUMS_DIGEST: ${{ needs.build.outputs.checksums-digest }}
+        run: |
+          set -euo pipefail
+
+          ACTUAL_CHECKSUMS_DIGEST="$(sha256sum SHA256SUMS | cut -d' ' -f1)"
+          if [[ "$ACTUAL_CHECKSUMS_DIGEST" != "$EXPECTED_CHECKSUMS_DIGEST" ]]; then
+            echo "The release's SHA256SUMS is not the one the build job produced."
+            exit 1
+          fi
+          grep -E '^[0-9a-f]{64}  agemon\.tgz$' SHA256SUMS | sha256sum -c -
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+
+      - name: Require an npm that supports trusted publishing
+        run: |
+          set -euo pipefail
+
+          NPM_VERSION="$(npm --version)"
+          if [[ "$(printf '%s\n' 11.5.1 "$NPM_VERSION" | sort -V | head -n 1)" != "11.5.1" ]]; then
+            echo "npm ${NPM_VERSION} cannot publish with trusted publishing; 11.5.1 or later is required."
+            exit 1
+          fi
+
+      - name: Choose the dist-tag
+        run: |
+          set -euo pipefail
+
+          VERSION="${RELEASE_TAG#v}"
+          case "$RELEASE_TAG" in
+            *-alpha.* | *-beta.* | *-rc.*) DIST_TAG=next ;;
+            *) DIST_TAG=latest ;;
+          esac
+
+          if [[ "$DIST_TAG" == "latest" ]]; then
+            if ! PUBLISHED_LATEST="$(npm view agemon dist-tags.latest)" || [[ -z "$PUBLISHED_LATEST" ]]; then
+              echo "Could not read npm's latest dist-tag for agemon; re-run this job."
+              exit 1
+            fi
+            if [[ "$PUBLISHED_LATEST" != "$VERSION" &&
+              "$(printf '%s\n' "$PUBLISHED_LATEST" "$VERSION" | sort -V | tail -n 1)" == "$PUBLISHED_LATEST" ]]; then
+              echo "npm's latest is already ${PUBLISHED_LATEST}; publishing ${VERSION} would move it backwards."
+              exit 1
+            fi
+          fi
+          echo "DIST_TAG=${DIST_TAG}" >> "$GITHUB_ENV"
+
+      - name: Publish to npm
+        run: npm publish ./agemon.tgz --tag "$DIST_TAG"
+
+  website:
+    name: website
+    needs: [publish, npm]
+    if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      attestations: read
+    uses: ./.github/workflows/website.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}

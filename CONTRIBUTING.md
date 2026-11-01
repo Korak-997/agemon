@@ -1,6 +1,22 @@
 # Contributing to agemon
 
-Thanks for contributing to agemon.
+Thanks for contributing to agemon. Everyone taking part follows the
+[Code of Conduct](CODE_OF_CONDUCT.md); how decisions are made is in [GOVERNANCE.md](GOVERNANCE.md).
+
+## Start here
+
+1. Open the repository in its dev container (`.devcontainer/`: Node 22 and pipx, no systemd
+   needed), or install Node 22.12+ yourself and run `npm install`.
+2. See what agemon does, safely, in a throwaway copy of a test repository:
+
+```bash
+npm run sandbox -- run clean-repo --dry-run
+```
+
+3. Pick a guide:
+   - [Adding a skill](docs/contributing/adding-a-skill.md) to a bundled skill group;
+   - [Writing a capability plugin](docs/contributing/writing-a-plugin.md);
+   - issues labelled `good first issue` are a good place to begin.
 
 ## Development Setup
 
@@ -20,8 +36,19 @@ git config core.hooksPath .githooks
 
 ```bash
 npm run lint
+npm run lint-skills
 npm run typecheck
 npm test
+```
+
+4. If you change anything the website is built from (`README.md`, `SECURITY.md`,
+   `CHANGELOG.md`, `docs/contributing/`, the skill catalog, CLI help text, the `agemon.toml`
+   key reference in `src/core/config.ts` or `website/`),
+   build it once. CI does the same on every pull request:
+
+```bash
+npm ci --prefix website --ignore-scripts
+npm run website:build
 ```
 
 ## Sandbox Workflow (Required)
@@ -50,7 +77,7 @@ Use `--real` only when you intentionally want to exercise host-coupled tooling.
 
 ## Code Style
 
-- Node.js `>=24`
+- Node.js `>=22.12`
 - TypeScript + ESM
 - Biome for formatting and linting
 
@@ -102,8 +129,8 @@ itself be a valid Conventional Commit — the `pr-title` CI job enforces this.
 
 ## Commit and Release Flow
 
-This repository does not publish to npm — releases are self-contained tarballs attached
-to GitHub Releases, installed via `install.sh`. See `docs/releasing.md` for the full flow.
+Each release is one self-contained tarball, attached to the GitHub Release (installed by
+`install.sh`) and published to npm as `agemon`. See `docs/releasing.md` for the full flow.
 
 1. For user-facing changes, add a `## X.Y.Z` entry to the top of `CHANGELOG.md` describing
    them (a maintainer will fold this into the next release's version bump).

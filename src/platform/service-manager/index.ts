@@ -1,5 +1,10 @@
+import type { ServiceManagerKind } from "../detect.js";
+import { resolveHomeDirectory } from "../home.js";
+import { createLaunchdServiceManager } from "./darwin.js";
 import { createFakeServiceManager } from "./fake.js";
 import { createLinuxServiceManager } from "./linux.js";
+import { createUnavailableServiceManager } from "./unavailable.js";
+import { createUserUnitFiles } from "./user-unit-files.js";
 
 export interface RunCommandResult {
   code: number;
@@ -20,35 +25,49 @@ export type RunCommand = (
 
 export interface ServiceStatus {
   active: boolean;
+  failed: boolean;
+}
+
+export interface AutostartAttempt {
+  label: string;
+  unitContents: string;
 }
 
 export interface RegisterAutostartInput {
   unitName: string;
-  unitContents: string;
+  attempts: AutostartAttempt[];
 }
 
 export interface RegisterAutostartResult {
   unitPath: string;
-  lingerEnabledByAgemon: boolean;
+  attemptLabel: string;
+  failedAttempts: string[];
 }
 
 export interface UnregisterAutostartInput {
   unitName: string;
-  disableLinger: boolean;
 }
 
 export interface ServiceManager {
+  readonly kind: ServiceManagerKind;
   isActive(unitName: string): Promise<ServiceStatus>;
+  isSandboxEnforced(unitName: string): Promise<boolean>;
   registerAutostart(
     input: RegisterAutostartInput,
   ): Promise<RegisterAutostartResult>;
   unregisterAutostart(input: UnregisterAutostartInput): Promise<void>;
+  readUnitWorkingDirectory(unitName: string): Promise<string | null>;
+  readUnitEnvironment(unitName: string): Promise<Record<string, string> | null>;
+  unitPathFor(unitName: string): string;
+  isLingerEnabled(): Promise<boolean>;
+  enableLinger(): Promise<void>;
+  disableLinger(): Promise<void>;
+  findAgemonDaemonUnit(): Promise<string | null>;
 }
 
 export interface CreateServiceManagerInput {
-  os: "ubuntu";
+  kind: ServiceManagerKind;
   run: RunCommand;
-  homeDir?: string;
   user?: string;
 }
 
@@ -57,14 +76,25 @@ export function createServiceManager(
 ): ServiceManager {
   if (process.env.AGEMON_FAKE_SERVICES === "1") {
     return createFakeServiceManager({
-      homeDir: input.homeDir,
       user: input.user,
     });
   }
 
-  return createLinuxServiceManager({
-    run: input.run,
-    homeDir: input.homeDir,
-    user: input.user,
-  });
+  switch (input.kind) {
+    case "systemd-user":
+      return createLinuxServiceManager({
+        run: input.run,
+        user: input.user,
+      });
+    case "launchd":
+      return createLaunchdServiceManager({ run: input.run });
+    case "none":
+      return createUnavailableServiceManager(
+        createUserUnitFiles(resolveHomeDirectory()),
+      );
+    default: {
+      const unhandledKind: never = input.kind;
+      throw new Error(`No service manager for ${String(unhandledKind)}`);
+    }
+  }
 }

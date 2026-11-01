@@ -1,6 +1,7 @@
 const CAPABILITY_LABELS: Record<string, string> = {
   daemon: "Background service",
   skills: "Skills",
+  agents: "Subagents",
   "master-prompt": "Instruction files",
   crg: "code-review-graph",
   "cli-tool": "CLI tools",

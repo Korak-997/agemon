@@ -1,9 +1,15 @@
+import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { diffSnapshots, snapshotTree } from "../../scripts/sandbox/snapshot.js";
 import { runCli } from "../../src/cli/index.js";
+
+const { mockDetectOnLinuxHost, mockInstallLocationOnLinuxHost } =
+  await vi.hoisted(() => import("./linux-host.js"));
+vi.mock("../../src/platform/detect.js", mockDetectOnLinuxHost);
+vi.mock("../../src/core/install-location.js", mockInstallLocationOnLinuxHost);
 
 const createdTempDirectories: string[] = [];
 const fixturesRoot = join(process.cwd(), "test/fixtures");
@@ -22,9 +28,12 @@ function setOrDeleteEnv(name: string, value: string | undefined): void {
   process.env[name] = value;
 }
 
+const UNRESOLVED_CONFLICT_EXIT_CODE = 2;
+
 async function runRoundtripFixture(
   fixtureName: string,
   nukeArgs = ["nuke", "--yes"],
+  installExitCode = 0,
 ) {
   const sandboxDirectory = await mkdtemp(
     join(tmpdir(), "agemon-roundtrip-test-"),
@@ -62,8 +71,7 @@ async function runRoundtripFixture(
   );
 
   try {
-    const installExitCode = await runCli(["--yes"]);
-    expect(installExitCode).toBe(0);
+    expect(await runCli(["--yes"])).toBe(installExitCode);
 
     const nukeExitCode = await runCli(nukeArgs);
     expect(nukeExitCode).toBe(0);
@@ -158,14 +166,20 @@ describe("nuke roundtrip", () => {
   });
 
   it("restores existing CLAUDE fixture byte-identically", async () => {
-    const { beforeSnapshot, afterSnapshot } =
-      await runRoundtripFixture("existing-claude-md");
+    const { beforeSnapshot, afterSnapshot } = await runRoundtripFixture(
+      "existing-claude-md",
+      ["nuke", "--yes"],
+      UNRESOLVED_CONFLICT_EXIT_CODE,
+    );
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
   it("restores messy agent rules fixture byte-identically", async () => {
-    const { beforeSnapshot, afterSnapshot } =
-      await runRoundtripFixture("messy-agent-rules");
+    const { beforeSnapshot, afterSnapshot } = await runRoundtripFixture(
+      "messy-agent-rules",
+      ["nuke", "--yes"],
+      UNRESOLVED_CONFLICT_EXIT_CODE,
+    );
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
@@ -175,20 +189,110 @@ describe("nuke roundtrip", () => {
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
 
-  it("creates .gitignore with /.agemon/ when the repo has none and the user accepts", async () => {
+  it("no-gitignore fixture: nuke deletes the .gitignore agemon created and restores the repo byte-identically", async () => {
     const { beforeSnapshot, afterSnapshot } =
       await runRoundtripFixture("no-gitignore");
 
     expect(beforeSnapshot.has("repo/.gitignore")).toBe(false);
-    expect(afterSnapshot.has("repo/.gitignore")).toBe(true);
-    expect(afterSnapshot.get("repo/README.md")).toBe(
-      beforeSnapshot.get("repo/README.md"),
-    );
+    expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
+  });
+
+  it("clean-repo with skills: nuke leaves no .agents, .claude or skills-lock.json", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      expect(await runCli(["--yes"])).toBe(0);
+      expect(existsSync(join(repoDirectory, ".claude/skills"))).toBe(true);
+      expect(existsSync(join(repoDirectory, "skills-lock.json"))).toBe(true);
+      expect(await readFile(join(repoDirectory, ".gitignore"), "utf8")).toBe(
+        "/.agemon/\n/skills-lock.json\n",
+      );
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+
+      for (const leftover of [
+        ".claude/skills",
+        ".claude",
+        ".agents",
+        "skills-lock.json",
+        ".agemon",
+      ]) {
+        expect(existsSync(join(repoDirectory, leftover))).toBe(false);
+      }
+      expect(await readFile(join(repoDirectory, ".gitignore"), "utf8")).toBe(
+        "/.agemon/\n",
+      );
+    });
+  });
+
+  it("nuke --only agents removes the empty .claude/agents agemon created and keeps .claude while skills remain", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      expect(
+        await runCli(["--yes", "--skill-groups", "essentials,geo-seo"]),
+      ).toBe(0);
+      expect(existsSync(join(repoDirectory, ".claude/agents"))).toBe(true);
+
+      expect(await runCli(["nuke", "--yes", "--only", "agents"])).toBe(0);
+
+      expect(existsSync(join(repoDirectory, ".claude/agents"))).toBe(false);
+      expect(existsSync(join(repoDirectory, ".claude/skills"))).toBe(true);
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+      expect(existsSync(join(repoDirectory, ".claude"))).toBe(false);
+    });
+  });
+
+  it("nuke --dry-run prints the footprint decisions and changes nothing", async () => {
+    await withFixtureRepo("no-gitignore", async (repoDirectory) => {
+      expect(await runCli(["--yes"])).toBe(0);
+      const before = await snapshotTree(repoDirectory);
+
+      const printed: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        printed.push(args.map(String).join(" "));
+      };
+      try {
+        expect(await runCli(["nuke", "--dry-run"])).toBe(0);
+      } finally {
+        console.log = originalLog;
+      }
+
+      expect(diffSnapshots(before, await snapshotTree(repoDirectory))).toEqual(
+        [],
+      );
+      const output = printed.join("\n");
+      expect(output).toContain(
+        "Would remove empty directories agemon created: .claude/skills, .claude",
+      );
+      expect(output).toContain(
+        "Would remove from .gitignore: /skills-lock.json, /.agemon/ (added by agemon)",
+      );
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+      expect(existsSync(join(repoDirectory, ".gitignore"))).toBe(false);
+    });
+  });
+
+  it("removes the graph and the pipx install that agemon created", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      const graphPath = join(repoDirectory, ".code-review-graph");
+      const pipxMetadataPath = join(
+        process.env.HOME ?? "",
+        ".agemon/fake-pipx/venvs/code-review-graph/pipx_metadata.json",
+      );
+
+      expect(await runCli(["--yes"])).toBe(0);
+      expect(existsSync(join(graphPath, "graph.db"))).toBe(true);
+      expect(existsSync(pipxMetadataPath)).toBe(true);
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+      expect(existsSync(graphPath)).toBe(false);
+      expect(existsSync(pipxMetadataPath)).toBe(false);
+    });
   });
 
   it("fails install on unsupported non-Ubuntu platform", async () => {
     const { installExitCode, beforeSnapshot, afterSnapshot } =
-      await runInstallFixture("non-ubuntu", "debian");
+      await runInstallFixture("non-ubuntu", "fedora");
     expect(installExitCode).toBe(1);
     expect(diffSnapshots(beforeSnapshot, afterSnapshot)).toEqual([]);
   });
@@ -246,7 +350,7 @@ describe("phase 5 — dedup-safe rule-file reconciliation", () => {
         "utf8",
       );
 
-      expect(await runCli(["--yes"])).toBe(0);
+      expect(await runCli(["--yes"])).toBe(UNRESOLVED_CONFLICT_EXIT_CODE);
 
       const merged = await readFile(agentsPath, "utf8");
       expect(merged.startsWith(originalAgents)).toBe(true);
@@ -258,7 +362,7 @@ describe("phase 5 — dedup-safe rule-file reconciliation", () => {
         originalClaude,
       );
 
-      expect(await runCli(["--yes"])).toBe(0);
+      expect(await runCli(["--yes"])).toBe(UNRESOLVED_CONFLICT_EXIT_CODE);
       expect(await readFile(agentsPath, "utf8")).toBe(merged);
 
       expect(await runCli(["nuke", "--yes"])).toBe(0);
@@ -295,7 +399,7 @@ describe("phase 5 — block-level revert without a backup dependency", () => {
       const agentsPath = join(repoDirectory, "AGENTS.md");
       const originalAgents = await readFile(agentsPath, "utf8");
 
-      expect(await runCli(["--yes"])).toBe(0);
+      expect(await runCli(["--yes"])).toBe(UNRESOLVED_CONFLICT_EXIT_CODE);
       expect(await readFile(agentsPath, "utf8")).not.toBe(originalAgents);
 
       await rm(join(repoDirectory, ".agemon", "backups"), {
@@ -308,19 +412,19 @@ describe("phase 5 — block-level revert without a backup dependency", () => {
     });
   });
 
-  it("falls back to backup restore when the managed block markers are unbalanced", async () => {
+  it("keeps an AGENTS.md with unbalanced markers and saves the original beside it", async () => {
     await withFixtureRepo("messy-agent-rules", async (repoDirectory) => {
       const agentsPath = join(repoDirectory, "AGENTS.md");
       const originalAgents = await readFile(agentsPath, "utf8");
 
-      expect(await runCli(["--yes"])).toBe(0);
+      expect(await runCli(["--yes"])).toBe(UNRESOLVED_CONFLICT_EXIT_CODE);
 
       const merged = await readFile(agentsPath, "utf8");
-      await writeFile(
-        agentsPath,
-        merged.replace("<!-- agemon:end:agent-rules -->", ""),
-        "utf8",
+      const brokenMarkers = merged.replace(
+        "<!-- agemon:end:agent-rules -->",
+        "",
       );
+      await writeFile(agentsPath, brokenMarkers, "utf8");
 
       const printed: string[] = [];
       const originalLog = console.log;
@@ -333,8 +437,13 @@ describe("phase 5 — block-level revert without a backup dependency", () => {
         console.log = originalLog;
       }
 
-      expect(await readFile(agentsPath, "utf8")).toBe(originalAgents);
-      expect(printed.join("\n")).toContain("restoring from backup");
+      expect(await readFile(agentsPath, "utf8")).toBe(brokenMarkers);
+      expect(await readFile(`${agentsPath}.agemon-original`, "utf8")).toBe(
+        originalAgents,
+      );
+      expect(printed.join("\n")).toContain(
+        "manual cleanup needed: AGENTS.md changed since agemon wrote it",
+      );
     });
   });
 });
@@ -375,7 +484,7 @@ describe("phase 6 — re-check, status, and persisted intent", () => {
     });
   });
 
-  it("agemon.toml drives a non-interactive re-run after the ledger is wiped", async () => {
+  it("a non-interactive re-run without --yes reports the pending operations it cannot consent to", async () => {
     await withFixtureRepo("clean-repo", async (repoDirectory) => {
       expect(await runCli(["--yes"])).toBe(0);
       await rm(join(repoDirectory, ".agemon"), {
@@ -383,7 +492,7 @@ describe("phase 6 — re-check, status, and persisted intent", () => {
         force: true,
       });
 
-      expect(await runCli([])).toBe(0);
+      expect(await runCli([])).toBe(2);
     });
   });
 });

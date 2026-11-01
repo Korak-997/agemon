@@ -1,0 +1,59 @@
+---
+import siteData from "../generated/site-data.json";
+
+const { routes, repository, repositoryRef, license } = siteData;
+const items = [
+  { label: "Pinned versions", href: routes.skills },
+  { label: "Checksum-verified installer", href: routes.install },
+  {
+    label: "OpenSSF Scorecard",
+    href: `https://scorecard.dev/viewer/?uri=github.com/${repository}`,
+  },
+  {
+    label: `${license} license`,
+    href: `https://github.com/${repository}/blob/${repositoryRef}/LICENSE`,
+  },
+  { label: "Code of conduct", href: routes.codeOfConduct },
+  { label: "Governance", href: routes.governance },
+];
+---
+
+<ul class="trust-row" aria-label="Trust">
+  {
+    items.map(({ label, href }) => (
+      <li>
+        <a class="ag-label" href={href}>{label}</a>
+      </li>
+    ))
+  }
+</ul>
+
+<style>
+  .trust-row {
+    display: flex;
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-block: 1px solid var(--ag-border);
+  }
+
+  li {
+    flex: 1 1 11rem;
+    margin: 0;
+  }
+
+  li + li {
+    border-inline-start: 1px solid var(--ag-border);
+  }
+
+  a {
+    display: block;
+    padding: 1.5rem;
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--ag-text);
+  }
+</style>

@@ -8,6 +8,9 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { getRegisteredPlugins } from "../../../src/plugins/index.js";
 import { masterPromptPlugin } from "../../../src/plugins/master-prompt/index.js";
 import { testPlugin } from "../../../src/plugins/test-plugin.js";
+import { applyAllPlanned } from "../apply-all-planned.js";
+import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -19,14 +22,35 @@ afterEach(async () => {
 
 function createNoOpServiceManager(): ServiceManager {
   return {
+    kind: "systemd-user",
     async isActive() {
-      return { active: false };
+      return { active: false, failed: false };
+    },
+    async isSandboxEnforced() {
+      return false;
     },
     async registerAutostart() {
-      return { unitPath: "", lingerEnabledByAgemon: false };
+      return {
+        unitPath: "",
+        attemptLabel: "strict",
+        failedAttempts: [],
+      };
     },
-    async unregisterAutostart() {
-      return;
+    async unregisterAutostart() {},
+    async readUnitWorkingDirectory() {
+      return null;
+    },
+    async readUnitEnvironment() {
+      return null;
+    },
+    unitPathFor: (unitName) => `/fake/systemd/user/${unitName}`,
+    async isLingerEnabled() {
+      return false;
+    },
+    async enableLinger() {},
+    async disableLinger() {},
+    async findAgemonDaemonUnit() {
+      return null;
     },
   };
 }
@@ -46,7 +70,8 @@ async function createTestContext(): Promise<Context> {
 
   return {
     cwd: sandboxDirectory,
-    os: "ubuntu",
+    gitConfigGuard: CLEAN_GIT_CONFIG_GUARD,
+    platform: LINUX_TEST_PLATFORM,
     binaries: [],
     dryRun: false,
     yes: true,
@@ -63,6 +88,10 @@ async function createTestContext(): Promise<Context> {
     run: async () => ({ code: 0, stdout: "", stderr: "" }),
     manifest: await StateManifest.load(sandboxDirectory),
     serviceManager: createNoOpServiceManager(),
+    verifiedBinaryInstaller: {
+      install: async () => {},
+      inspect: async () => ({ kind: "absent" }),
+    },
   };
 }
 
@@ -88,7 +117,7 @@ describe("capability plan()", () => {
       freshPlan?.every((operation) => operation.expectedFingerprint === null),
     ).toBe(true);
 
-    await masterPromptPlugin.install(context);
+    await applyAllPlanned(masterPromptPlugin, context);
 
     const settledPlan = await masterPromptPlugin.plan?.(context);
     expect(settledPlan).toEqual([]);

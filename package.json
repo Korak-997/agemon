@@ -1,6 +1,6 @@
 {
   "name": "agemon",
-  "version": "4.7.2",
+  "version": "6.0.0",
   "description": "One command bootstraps an AI coding agent's working environment in any repo.",
   "license": "MIT",
   "author": "Korak-997",
@@ -32,7 +32,10 @@
     "assets"
   ],
   "engines": {
-    "node": ">=24"
+    "node": ">=22.12"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsup",
@@ -48,25 +51,37 @@
     "sandbox:roundtrip": "tsx scripts/sandbox.ts roundtrip",
     "sandbox:reset": "tsx scripts/sandbox.ts reset",
     "ui:preview": "tsx scripts/ui-preview.ts",
-    "deploy": "tsx scripts/deploy.ts"
+    "deploy": "tsx scripts/deploy.ts",
+    "check-pins": "tsx scripts/check-pins.ts",
+    "lint-skills": "tsx scripts/lint-skills.ts",
+    "skills:fingerprints": "tsx scripts/skill-fingerprints.ts",
+    "website:content": "tsx scripts/site-content.ts",
+    "website:build": "sh scripts/build-website.sh"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.0",
     "boxen": "^8.0.1",
     "commander": "^15.0.0",
     "picocolors": "^1.1.1",
-    "smol-toml": "^1.8.0",
-    "string-width": "^8.2.2",
-    "yaml": "^2.9.0"
+    "smol-toml": "^1.9.1",
+    "string-width": "^8.2.2"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
     "@commitlint/config-conventional": "^21.2.2",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^26.2.0",
+    "github-slugger": "^2.0.0",
+    "mdast-util-from-markdown": "^2.1.0",
+    "mdast-util-gfm": "^3.1.0",
+    "mdast-util-to-markdown": "^2.2.1",
+    "micromark-extension-gfm": "^3.0.0",
+    "parse5": "^8.0.1",
     "tsup": "^8.5.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.1"
   },
   "overrides": {
     "esbuild": "^0.28.2"

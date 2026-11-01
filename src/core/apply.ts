@@ -1,22 +1,46 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { IsolationStatus } from "../inspect/discover.js";
 import type {
   AgemonPlugin,
   ProposedOperation,
+  SkippedPluginOperation,
   StagedFile,
 } from "../plugins/types.js";
 import { capabilityLabel } from "../ui/labels.js";
 import { SILENT_PROGRESS } from "../ui/progress.js";
-import { writeImmutableBackup } from "./backups.js";
+import {
+  type ApplyJournal,
+  deleteJournal,
+  type JournalSnapshot,
+  writeJournal,
+} from "./apply-journal.js";
 import type { Context } from "./context.js";
-import { fingerprintContent } from "./fingerprint.js";
-import { writeAgemonGitignoreEntry } from "./gitignore.js";
-import { type Plan, writePlan } from "./plan-store.js";
-import type { LedgerEntry } from "./state-manifest.js";
+import { errorMessage } from "./error-message.js";
+import { readRegularFileIfExists, writeFileAtomic } from "./files.js";
+import { fingerprintContent, sha256Hex } from "./fingerprint.js";
+import {
+  AGEMON_GITIGNORE_ENTRY,
+  writeAgemonGitignoreEntry,
+} from "./gitignore.js";
+import {
+  type ExitProcess,
+  type InterruptionWatch,
+  ignoringTerminalErrors,
+  watchForInterruption,
+} from "./interruption.js";
+import { PLAN_SEGMENTS, type Plan, writePlan } from "./plan-store.js";
+import { resolveInsideRepo, resolveStateDirectory } from "./repo-paths.js";
+import { rollBackApply } from "./rollback.js";
+import { printable } from "./untrusted-text.js";
+import { recordGitignoreLine } from "./workspace-footprint.js";
 
-const FILE_TARGETING_ACTIONS: ReadonlySet<ProposedOperation["action"]> =
+export const FILE_TARGETING_ACTIONS: ReadonlySet<ProposedOperation["action"]> =
   new Set(["create", "replace", "merge-block", "merge-key", "adopt"]);
+
+const STAGED_FILE_NAME_LENGTH = 16;
+const STAGED_MANIFEST_FILE = "manifest.json";
+const INTERRUPTED_MESSAGE =
+  "Interrupted — rolling back after the current step (press Ctrl-C again to stop now, then run 'agemon recover').";
 
 export interface ApplyPlanInput {
   plan: Plan;
@@ -24,48 +48,39 @@ export interface ApplyPlanInput {
   workspaceIsolationApproved: boolean | null;
   isolationStatus: IsolationStatus;
   allowUnignoredState: boolean;
+  exitProcess?: ExitProcess;
+}
+
+export interface SkippedAppliedOperation {
+  operation: ProposedOperation;
+  reason: string;
 }
 
 export interface ApplyPlanResult {
   applied: ProposedOperation[];
+  skipped: SkippedAppliedOperation[];
 }
 
 export interface RollbackDetail {
   message: string;
   restored: string[];
   reverted: string[];
+  kept: string[];
   manualCleanup: string[];
 }
 
 export class ApplyRollbackError extends Error {
   readonly rollback: RollbackDetail;
 
-  constructor(rollback: RollbackDetail) {
-    super(rollback.message);
+  constructor(rollback: RollbackDetail, cause: unknown) {
+    super(rollback.message, { cause });
     this.name = "ApplyRollbackError";
     this.rollback = rollback;
   }
 }
 
-interface FileRollbackSnapshot {
-  targetPath: string;
-  previousContents: string | null;
-}
-
-async function readFileIfExists(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function encodeStagedFileName(targetPath: string): string {
-  return encodeURIComponent(targetPath);
+function stagedFileName(targetPath: string): string {
+  return sha256Hex(targetPath).slice(0, STAGED_FILE_NAME_LENGTH);
 }
 
 function validateManagedMarkerBalance(staged: StagedFile): string | null {
@@ -123,8 +138,8 @@ async function stageApprovedFiles(
   approvedByCapability: Map<string, ProposedOperation[]>,
 ): Promise<Map<string, StagedFile[]>> {
   const stagedByCapability = new Map<string, StagedFile[]>();
-  const stagedRoot = join(ctx.cwd, ".agemon", "plans", planId, "staged");
-  let stagedRootCreated = false;
+  const stagedTargetsByFileName: Record<string, string> = {};
+  let stagedRoot: string | null = null;
 
   for (const [capabilityId, operations] of approvedByCapability) {
     const plugin = pluginById.get(capabilityId);
@@ -137,17 +152,16 @@ async function stageApprovedFiles(
       continue;
     }
 
-    if (!stagedRootCreated) {
-      await mkdir(stagedRoot, { recursive: true });
-      stagedRootCreated = true;
-    }
+    stagedRoot ??= await resolveStateDirectory(
+      ctx.cwd,
+      [...PLAN_SEGMENTS, planId, "staged"],
+      { create: true },
+    );
 
     for (const staged of stagedFiles) {
-      await writeFile(
-        join(stagedRoot, encodeStagedFileName(staged.targetPath)),
-        staged.contents,
-        "utf8",
-      );
+      const fileName = stagedFileName(staged.targetPath);
+      stagedTargetsByFileName[fileName] = staged.targetPath;
+      await writeFileAtomic(join(stagedRoot, fileName), staged.contents);
       const problem = validateStagedFile(staged);
       if (problem !== null) {
         throw new Error(
@@ -159,45 +173,13 @@ async function stageApprovedFiles(
     stagedByCapability.set(capabilityId, stagedFiles);
   }
 
+  if (stagedRoot !== null) {
+    await writeFileAtomic(
+      join(stagedRoot, STAGED_MANIFEST_FILE),
+      `${JSON.stringify(stagedTargetsByFileName, null, 2)}\n`,
+    );
+  }
   return stagedByCapability;
-}
-
-async function revertCommittedCapabilities(
-  ctx: Context,
-  pluginById: Map<string, AgemonPlugin>,
-  appliedCapabilityOrder: string[],
-  ledgerActionIdsBeforeRun: ReadonlySet<string>,
-): Promise<{ reverted: string[]; manualCleanup: string[] }> {
-  const newEntriesByCapability = new Map<string, LedgerEntry[]>();
-  for (const entry of ctx.manifest.getActions()) {
-    if (ledgerActionIdsBeforeRun.has(entry.id)) {
-      continue;
-    }
-    const bucket = newEntriesByCapability.get(entry.plugin);
-    if (bucket) {
-      bucket.push(entry);
-    } else {
-      newEntriesByCapability.set(entry.plugin, [entry]);
-    }
-  }
-
-  const manualCleanup: string[] = [];
-  const reverted: string[] = [];
-  for (const capabilityId of [...appliedCapabilityOrder].reverse()) {
-    const plugin = pluginById.get(capabilityId);
-    const newEntries = newEntriesByCapability.get(capabilityId) ?? [];
-    if (!plugin?.revert || newEntries.length === 0) {
-      continue;
-    }
-    try {
-      await plugin.revert(ctx, newEntries);
-      reverted.push(capabilityId);
-    } catch (revertError) {
-      manualCleanup.push(`${capabilityId}: ${errorMessage(revertError)}`);
-    }
-  }
-
-  return { reverted, manualCleanup };
 }
 
 function fileTargetingOperations(
@@ -222,7 +204,11 @@ async function enforceWorkspaceIsolation(
     return;
   }
   if (input.workspaceIsolationApproved === true) {
-    await writeAgemonGitignoreEntry(ctx.cwd);
+    await recordGitignoreLine(
+      ctx,
+      AGEMON_GITIGNORE_ENTRY,
+      await writeAgemonGitignoreEntry(ctx.cwd),
+    );
     return;
   }
   throw new Error(
@@ -238,8 +224,8 @@ async function assertPlanIsFresh(
   operations: ProposedOperation[],
 ): Promise<void> {
   for (const operation of fileTargetingOperations(operations)) {
-    const currentContents = await readFileIfExists(
-      join(ctx.cwd, operation.targetPath),
+    const currentContents = await readRegularFileIfExists(
+      await resolveInsideRepo(ctx.cwd, operation.targetPath),
     );
     const actualFingerprint =
       currentContents === null ? null : fingerprintContent(currentContents);
@@ -251,49 +237,49 @@ async function assertPlanIsFresh(
   }
 }
 
+function stagedFingerprintsByTarget(
+  stagedByCapability: Map<string, StagedFile[]>,
+): Map<string, string> {
+  const fingerprints = new Map<string, string>();
+  for (const stagedFiles of stagedByCapability.values()) {
+    for (const staged of stagedFiles) {
+      fingerprints.set(staged.targetPath, fingerprintContent(staged.contents));
+    }
+  }
+  return fingerprints;
+}
+
 async function captureRollbackSnapshots(
   ctx: Context,
   operations: ProposedOperation[],
-): Promise<FileRollbackSnapshot[]> {
-  const snapshots: FileRollbackSnapshot[] = [];
+  stagedByCapability: Map<string, StagedFile[]>,
+): Promise<JournalSnapshot[]> {
+  const stagedFingerprints = stagedFingerprintsByTarget(stagedByCapability);
+  const snapshots: JournalSnapshot[] = [];
   for (const operation of fileTargetingOperations(operations)) {
-    const previousContents = await readFileIfExists(
-      join(ctx.cwd, operation.targetPath),
+    const previousContents = await readRegularFileIfExists(
+      await resolveInsideRepo(ctx.cwd, operation.targetPath),
     );
-    snapshots.push({ targetPath: operation.targetPath, previousContents });
-    if (previousContents !== null) {
-      await writeImmutableBackup(
-        ctx.cwd,
-        operation.resourceId,
-        previousContents,
-      );
-    }
+    snapshots.push({
+      targetPath: operation.targetPath,
+      previousContents,
+      stagedFingerprint: stagedFingerprints.get(operation.targetPath) ?? null,
+    });
   }
   return snapshots;
-}
-
-async function restoreRollbackSnapshots(
-  ctx: Context,
-  snapshots: FileRollbackSnapshot[],
-): Promise<void> {
-  for (const snapshot of [...snapshots].reverse()) {
-    const absolutePath = join(ctx.cwd, snapshot.targetPath);
-    if (snapshot.previousContents === null) {
-      await rm(absolutePath, { force: true });
-    } else {
-      await writeFile(absolutePath, snapshot.previousContents, "utf8");
-    }
-  }
 }
 
 function groupApprovedByCapability(
   plan: Plan,
   approved: ProposedOperation[],
 ): Map<string, ProposedOperation[]> {
-  const approvedIds = new Set(approved.map((operation) => operation.id));
+  const approvedById = new Map(
+    approved.map((operation) => [operation.id, operation] as const),
+  );
   const grouped = new Map<string, ProposedOperation[]>();
-  for (const operation of plan.operations) {
-    if (!approvedIds.has(operation.id)) {
+  for (const planned of plan.operations) {
+    const operation = approvedById.get(planned.id);
+    if (operation === undefined) {
       continue;
     }
     const bucket = grouped.get(operation.capabilityId);
@@ -311,16 +297,20 @@ async function runCapabilityWork(
   plugin: AgemonPlugin,
   operations: ProposedOperation[],
   staged: StagedFile[] | undefined,
-): Promise<void> {
+): Promise<SkippedAppliedOperation[]> {
+  let skippedByPlugin: SkippedPluginOperation[] = [];
   if (plugin.apply) {
-    await plugin.apply(ctx, operations, staged);
-  } else {
+    skippedByPlugin =
+      (await plugin.apply(ctx, operations, staged))?.skipped ?? [];
+  } else if (plugin.install) {
     const presence = await plugin.detect(ctx);
     if (presence.present) {
       ctx.ui.info(`${plugin.id} already present — nothing to install`);
     } else {
       await plugin.install(ctx);
     }
+  } else {
+    throw new Error(`Capability '${plugin.id}' has neither apply nor install.`);
   }
 
   const verification = await plugin.verify(ctx);
@@ -330,15 +320,150 @@ async function runCapabilityWork(
         `Verification failed for '${plugin.id}' after apply.`,
     );
   }
+  if (verification.attention) {
+    ctx.ui.info(`${plugin.id}: ${printable(verification.attention)}`);
+  }
 
+  const skipReasonById = new Map(
+    skippedByPlugin.map((skip) => [skip.operationId, skip.reason] as const),
+  );
+  const skipped: SkippedAppliedOperation[] = [];
   for (const operation of operations) {
-    await ctx.manifest.updateResourceEntry(operation.resourceId, {
-      validation: { ok: true },
-    });
+    const skipReason = skipReasonById.get(operation.id);
+    if (skipReason === undefined) {
+      await ctx.manifest.updateResourceEntry(operation.resourceId, {
+        validation: { ok: true },
+      });
+    } else {
+      skipped.push({ operation, reason: skipReason });
+    }
+  }
+  return skipped;
+}
+
+async function rollBackInProcess(
+  ctx: Context,
+  pluginById: Map<string, AgemonPlugin>,
+  journalPath: string,
+  journal: ApplyJournal,
+  cause: unknown,
+): Promise<never> {
+  const outcome = await rollBackApply(ctx, pluginById, journal, {
+    saveFailedRestores: false,
+  });
+  const manualCleanup = [...outcome.manualCleanup];
+  if (manualCleanup.length === 0) {
+    try {
+      await deleteJournal(journalPath);
+    } catch (journalError) {
+      manualCleanup.push(`journal: ${errorMessage(journalError)}`);
+    }
+  }
+
+  const causeMessage = printable(errorMessage(cause));
+  const rolledBackMessage =
+    outcome.kept.length === 0
+      ? `apply rolled back — repo left as it started (${causeMessage})`
+      : `apply rolled back — repo left as it started, except the changes kept below (${causeMessage})`;
+  ignoringTerminalErrors(() => {
+    ctx.ui.fail(
+      manualCleanup.length === 0
+        ? rolledBackMessage
+        : `apply partly rolled back — the journal is kept; fix the items below, then run 'agemon recover' (${causeMessage})`,
+    );
+    for (const line of outcome.kept) {
+      ctx.ui.info(printable(line));
+    }
+    for (const detail of manualCleanup) {
+      ctx.ui.fail(`manual cleanup needed: ${printable(detail)}`);
+    }
+  });
+  throw new ApplyRollbackError(
+    {
+      message: errorMessage(cause),
+      restored: outcome.restored,
+      reverted: outcome.reverted,
+      kept: outcome.kept,
+      manualCleanup,
+    },
+    cause,
+  );
+}
+
+async function deleteJournalAfterSuccess(
+  ctx: Context,
+  journalPath: string,
+): Promise<void> {
+  try {
+    await deleteJournal(journalPath);
+  } catch (journalError) {
+    ignoringTerminalErrors(() =>
+      ctx.ui.fail(
+        `Applied, but could not delete the rollback journal ${journalPath} (${errorMessage(journalError)}). Delete it by hand; do not run 'agemon recover', which would undo this apply.`,
+      ),
+    );
   }
 }
 
-export async function applyPlan(
+async function runJournalledCapabilities(
+  ctx: Context,
+  pluginById: Map<string, AgemonPlugin>,
+  approvedByCapability: Map<string, ProposedOperation[]>,
+  stagedByCapability: Map<string, StagedFile[]>,
+  interruption: InterruptionWatch,
+  { path: journalPath, journal }: { path: string; journal: ApplyJournal },
+): Promise<ApplyPlanResult> {
+  const progress = ctx.progress ?? SILENT_PROGRESS;
+  const capabilityCount = approvedByCapability.size;
+  const applied: ProposedOperation[] = [];
+  const skipped: SkippedAppliedOperation[] = [];
+  progress.start("Applying capabilities", capabilityCount);
+  try {
+    for (const [capabilityId, operations] of approvedByCapability) {
+      interruption.throwIfInterrupted();
+      const plugin = pluginById.get(capabilityId);
+      if (!plugin) {
+        throw new Error(
+          `Plan references capability '${capabilityId}', which is not registered.`,
+        );
+      }
+      const skippedOfCapability = await runCapabilityWork(
+        ctx,
+        plugin,
+        operations,
+        stagedByCapability.get(capabilityId),
+      );
+      progress.advance(`Applied ${capabilityLabel(capabilityId)}`);
+      const skippedIds = new Set(
+        skippedOfCapability.map((skip) => skip.operation.id),
+      );
+      applied.push(
+        ...operations.filter((operation) => !skippedIds.has(operation.id)),
+      );
+      skipped.push(...skippedOfCapability);
+    }
+    interruption.throwIfInterrupted();
+    progress.stop(
+      `Applied ${capabilityCount} ${
+        capabilityCount === 1 ? "capability" : "capabilities"
+      }`,
+    );
+  } catch (error) {
+    progress.stop();
+    return rollBackInProcess(
+      ctx,
+      pluginById,
+      journalPath,
+      journal,
+      interruption.causeOf(error),
+    );
+  }
+
+  await deleteJournalAfterSuccess(ctx, journalPath);
+  return { applied, skipped };
+}
+
+async function applyApprovedOperations(
   ctx: Context,
   allPlugins: AgemonPlugin[],
   input: ApplyPlanInput,
@@ -351,11 +476,9 @@ export async function applyPlan(
     input.approved,
   );
 
-  ctx.manifest.setRecordingAgemonVersion(input.plan.agemonVersion);
-
+  await assertPlanIsFresh(ctx, input.plan.id, input.approved);
   await enforceWorkspaceIsolation(ctx, input);
   await writePlan(ctx.cwd, input.plan);
-  await assertPlanIsFresh(ctx, input.plan.id, input.approved);
 
   const stagedByCapability = await stageApprovedFiles(
     ctx,
@@ -363,67 +486,48 @@ export async function applyPlan(
     input.plan.id,
     approvedByCapability,
   );
-
-  const rollbackSnapshots = await captureRollbackSnapshots(ctx, input.approved);
-  const ledgerActionIdsBeforeRun = new Set(
-    ctx.manifest.getActions().map((action) => action.id),
+  const snapshots = await captureRollbackSnapshots(
+    ctx,
+    input.approved,
+    stagedByCapability,
   );
 
-  const progress = ctx.progress ?? SILENT_PROGRESS;
-  const capabilityCount = approvedByCapability.size;
-  const applied: ProposedOperation[] = [];
-  const appliedCapabilityOrder: string[] = [];
-  progress.start("Applying capabilities", capabilityCount);
+  const interruption = watchForInterruption(() => {
+    ctx.progress?.stop();
+    ctx.ui.fail(INTERRUPTED_MESSAGE);
+  }, input.exitProcess ?? process.exit);
   try {
-    for (const [capabilityId, operations] of approvedByCapability) {
-      const plugin = pluginById.get(capabilityId);
-      if (!plugin) {
-        throw new Error(
-          `Plan references capability '${capabilityId}', which is not registered.`,
-        );
-      }
-      await runCapabilityWork(
-        ctx,
-        plugin,
-        operations,
-        stagedByCapability.get(capabilityId),
-      );
-      progress.advance(`Applied ${capabilityLabel(capabilityId)}`);
-      appliedCapabilityOrder.push(capabilityId);
-      applied.push(...operations);
-    }
-    progress.stop(
-      `Applied ${capabilityCount} ${
-        capabilityCount === 1 ? "capability" : "capabilities"
-      }`,
-    );
-  } catch (error) {
-    progress.stop();
-    await restoreRollbackSnapshots(ctx, rollbackSnapshots);
-    const { reverted, manualCleanup } = await revertCommittedCapabilities(
+    const storedJournal = await writeJournal(ctx.cwd, {
+      planId: input.plan.id,
+      startedAt: new Date().toISOString(),
+      capabilityOrder: [...approvedByCapability.keys()],
+      ledgerBefore: structuredClone(ctx.manifest.getActions()),
+      snapshots,
+    });
+    return await runJournalledCapabilities(
       ctx,
       pluginById,
-      appliedCapabilityOrder,
-      ledgerActionIdsBeforeRun,
+      approvedByCapability,
+      stagedByCapability,
+      interruption,
+      storedJournal,
     );
-    await ctx.manifest.removeActionsAddedSince(ledgerActionIdsBeforeRun);
-    ctx.ui.fail(
-      `apply rolled back — repo left as it started (${errorMessage(error)})`,
-    );
-    for (const detail of manualCleanup) {
-      ctx.ui.fail(`manual cleanup needed: ${detail}`);
-    }
-    throw new ApplyRollbackError({
-      message: errorMessage(error),
-      restored: rollbackSnapshots.map((snapshot) =>
-        snapshot.previousContents === null
-          ? `removed ${snapshot.targetPath}`
-          : `restored ${snapshot.targetPath}`,
-      ),
-      reverted,
-      manualCleanup,
-    });
+  } finally {
+    interruption.dispose();
   }
+}
 
-  return { applied };
+export async function applyPlan(
+  ctx: Context,
+  allPlugins: AgemonPlugin[],
+  input: ApplyPlanInput,
+): Promise<ApplyPlanResult> {
+  ctx.manifest.setRecordingAgemonVersion(input.plan.agemonVersion);
+  ctx.manifest.setRecordingPlanId(input.plan.id);
+  try {
+    return await applyApprovedOperations(ctx, allPlugins, input);
+  } finally {
+    ctx.manifest.setRecordingAgemonVersion(null);
+    ctx.manifest.setRecordingPlanId(null);
+  }
 }
