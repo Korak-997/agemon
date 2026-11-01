@@ -9,6 +9,7 @@ import type { PlatformCapabilities } from "../../src/platform/detect.js";
 const platformOverride = vi.hoisted(() => ({
   value: undefined as Partial<PlatformCapabilities> | undefined,
 }));
+const { LINUX_HOST } = await vi.hoisted(() => import("./linux-host.js"));
 vi.mock("../../src/platform/detect.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../src/platform/detect.js")>();
@@ -17,7 +18,7 @@ vi.mock("../../src/platform/detect.js", async (importOriginal) => {
     detectPlatformCapabilities: async (
       input?: Parameters<typeof actual.detectPlatformCapabilities>[0],
     ) => ({
-      ...(await actual.detectPlatformCapabilities(input)),
+      ...(await actual.detectPlatformCapabilities({ ...LINUX_HOST, ...input })),
       ...platformOverride.value,
     }),
   };
@@ -31,7 +32,7 @@ vi.mock("../../src/core/install-location.js", async (importOriginal) => {
     assertNotRootOnMacOS: () =>
       rootOnMacOS.simulate
         ? actual.assertNotRootOnMacOS("darwin", 0)
-        : actual.assertNotRootOnMacOS(),
+        : actual.assertNotRootOnMacOS(LINUX_HOST.hostPlatform),
   };
 });
 const updateCheck = vi.hoisted(() => ({ startUpdateCheck: vi.fn() }));

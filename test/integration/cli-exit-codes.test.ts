@@ -17,6 +17,11 @@ import { runCli } from "../../src/cli/index.js";
 import { writeJournal } from "../../src/core/apply-journal.js";
 import { resetFakeSubprocessState } from "../../src/core/fake-subprocess.js";
 
+const { mockDetectOnLinuxHost, mockInstallLocationOnLinuxHost } =
+  await vi.hoisted(() => import("./linux-host.js"));
+vi.mock("../../src/platform/detect.js", mockDetectOnLinuxHost);
+vi.mock("../../src/core/install-location.js", mockInstallLocationOnLinuxHost);
+
 const createdTempDirectories: string[] = [];
 const fixturesRoot = join(process.cwd(), "test/fixtures");
 const DRIFT_EXIT_CODE = 2;

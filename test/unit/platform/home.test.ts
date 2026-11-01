@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const userInfoMock = vi.hoisted(() => vi.fn());
@@ -55,7 +56,7 @@ describe("containsHomeDirectory", () => {
     vi.stubEnv("HOME", "/tmp");
     userInfoMock.mockReturnValue({ homedir: "/nonexistent-account-home" });
 
-    expect(await containsHomeDirectory("/tmp")).toBe(true);
+    expect(await containsHomeDirectory(await realpath("/tmp"))).toBe(true);
     expect(await containsHomeDirectory("/")).toBe(true);
     expect(await containsHomeDirectory("/usr")).toBe(false);
   });

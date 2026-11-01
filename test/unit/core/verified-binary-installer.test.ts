@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -42,7 +43,9 @@ let npmRoot: string;
 let packageDirectory: string;
 
 beforeEach(async () => {
-  workDirectory = await mkdtemp(join(tmpdir(), "agemon-verified-binary-"));
+  workDirectory = await realpath(
+    await mkdtemp(join(tmpdir(), "agemon-verified-binary-")),
+  );
   npmRoot = join(workDirectory, "npm-root");
   packageDirectory = join(npmRoot, PACKAGE_NAME);
   await mkdir(join(packageDirectory, "bin"), { recursive: true });

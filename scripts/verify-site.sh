@@ -1,8 +1,5 @@
 #!/bin/sh
-# Runs in the deploy workflow's verify job, which must not run npm or any repository
-# JavaScript: it re-checks the built site outside the job whose dependencies built it.
 set -eu
-# The C locale makes grep read bytes, so no encoding error can switch it to binary mode.
 export LC_ALL=C
 
 usage="usage: verify-site.sh <site-dir> <site-origin> <csp-policy-file> <install.sh> [SHA256SUMS]"
@@ -49,9 +46,6 @@ find "$site_dir" -type f ! -iname '*.html' ! -iname '*.css' ! -iname '*.js' \
   ! -iname '*.pagefind' ! -iname '*.pf_fragment' ! -iname '*.pf_index' ! -iname '*.pf_meta' \
   >"$file_list"
 [ ! -s "$file_list" ] || fail "unexpected file type: $(head -n 1 "$file_list")"
-
-# Pages serves these by extension with a concrete media type, which browsers do not
-# sniff up to HTML; the signature check only catches a misnamed or truncated file.
 check_signature() {
   extension="$1"
   format="$2"
@@ -64,16 +58,13 @@ check_signature() {
 }
 check_signature png PNG 89504e470d0a1a0a
 check_signature webm WebM 1a45dfa3
-
-# A NUL byte makes grep treat a file as binary, which hides matches from any
-# check that forgets -a; an ESC byte lets a file decoded as ISO-2022-JP hide
-# markup from a byte-wise grep.
 find "$site_dir" -type f \( -iname '*.html' -o -iname '*.svg' -o -iname '*.xml' \
   -o -iname '*.css' -o -iname '*.js' -o -iname '*.json' \) >"$file_list"
 while IFS= read -r text_file; do
-  tr -d '\000' <"$text_file" | cmp -s - "$text_file" ||
+  text_size=$(wc -c <"$text_file")
+  [ "$(tr -d '\000' <"$text_file" | wc -c)" -eq "$text_size" ] ||
     fail "$text_file contains a NUL byte"
-  tr -d '\033' <"$text_file" | cmp -s - "$text_file" ||
+  [ "$(tr -d '\033' <"$text_file" | wc -c)" -eq "$text_size" ] ||
     fail "$text_file contains an ESC byte"
 done <"$file_list"
 

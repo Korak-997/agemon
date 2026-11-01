@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   utimes,
@@ -36,7 +37,9 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 async function createDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "agemon-git-guard-"));
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), "agemon-git-guard-")),
+  );
   createdTempDirectories.push(directory);
   return directory;
 }
@@ -313,7 +316,7 @@ describe("findUntrustedGitConfig — each allowlist row", () => {
     ["core.sparseCheckout", "false", "maybe"],
     ["core.sparseCheckoutCone", "true", "maybe"],
   ])(
-    "%s allows %s; git itself refuses %s, so the result is unreadable",
+    "%s allows %s; %s is refused, by git or by the guard",
     async (key, allowed, disallowed) => {
       const repository = await createRepository();
       git(repository, "config", key, allowed);
@@ -321,11 +324,20 @@ describe("findUntrustedGitConfig — each allowlist row", () => {
         kind: "clean",
       });
 
+      // Some git versions parse a key only when they use it, so `git config
+      // --list` may pass the bad value through; then the guard must list it.
       git(repository, "config", key, disallowed);
-      expect(await findUntrustedGitConfig(repository)).toMatchObject({
-        kind: "unreadable",
-        category: "git-failed",
-      });
+      const result = await findUntrustedGitConfig(repository);
+      if (result.kind === "pairs") {
+        expect(result.pairs).toContain(
+          `.git/config: ${key.toLowerCase()}=${disallowed}`,
+        );
+      } else {
+        expect(result).toMatchObject({
+          kind: "unreadable",
+          category: "git-failed",
+        });
+      }
     },
   );
 

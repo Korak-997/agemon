@@ -2,9 +2,14 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { diffSnapshots, snapshotTree } from "../../scripts/sandbox/snapshot.js";
 import { runCli } from "../../src/cli/index.js";
+
+const { mockDetectOnLinuxHost, mockInstallLocationOnLinuxHost } =
+  await vi.hoisted(() => import("./linux-host.js"));
+vi.mock("../../src/platform/detect.js", mockDetectOnLinuxHost);
+vi.mock("../../src/core/install-location.js", mockInstallLocationOnLinuxHost);
 
 const createdTempDirectories: string[] = [];
 const fixturesRoot = join(process.cwd(), "test/fixtures");
