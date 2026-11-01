@@ -16,8 +16,8 @@ function keyElement(key: string): string {
   return `<key>${escapePlistString(key)}</key>`;
 }
 
-function launchAgentEnvironment(): Record<string, string> {
-  const environment = crgUnitEnvironment();
+function launchAgentEnvironment(repoRoot: string): Record<string, string> {
+  const environment = crgUnitEnvironment(repoRoot);
   return {
     PATH: SYSTEM_ONLY_PATH,
     ...environment.set,
@@ -29,12 +29,12 @@ export function buildLaunchAgentPlist(
   label: string,
   paths: LaunchAgentPaths,
 ): string {
-  const environmentEntries = Object.entries(launchAgentEnvironment()).flatMap(
-    ([name, value]) => [
-      `    ${keyElement(name)}`,
-      `    ${stringElement(value)}`,
-    ],
-  );
+  const environmentEntries = Object.entries(
+    launchAgentEnvironment(paths.repoRoot),
+  ).flatMap(([name, value]) => [
+    `    ${keyElement(name)}`,
+    `    ${stringElement(value)}`,
+  ]);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
@@ -36,6 +37,7 @@ import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
 import { describeSharedTools } from "../../../src/plugins/shared-resource.js";
 import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { linkGitInto } from "../git-on-path.js";
 import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
@@ -223,7 +225,7 @@ describe("crg plugin — install, verify, uninstall", () => {
   });
 
   it("crg subprocesses get fsmonitor, hooks and submodule recursion disabled after existing GIT_CONFIG pairs, and no git transport", async () => {
-    const { context, calls, home } = await createTestContext();
+    const { context, calls, home, repo } = await createTestContext();
     vi.stubEnv("GIT_CONFIG_COUNT", "1");
     vi.stubEnv("GIT_CONFIG_KEY_0", "user.name");
     vi.stubEnv("GIT_CONFIG_VALUE_0", "someone");
@@ -233,6 +235,7 @@ describe("crg plugin — install, verify, uninstall", () => {
     const buildCall = calls.find(([, args]) => args[0] === "build");
     expect(buildCall?.[2]?.env).toEqual({
       CRG_HOME: join(home, ".code-review-graph"),
+      CRG_REPO_ROOT: repo,
       CRG_DATA_DIR: "",
       GIT_CONFIG_PARAMETERS: "",
       GIT_CONFIG_COUNT: "4",
@@ -249,6 +252,22 @@ describe("crg plugin — install, verify, uninstall", () => {
       expect.arrayContaining(["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]),
     );
     expect(buildCall?.[2]?.unsetEnv).not.toContain("GIT_CONFIG_COUNT");
+  });
+
+  it("pins build and status to agemon's repository root, overriding CRG_REPO_ROOT from the environment", async () => {
+    const { context, calls, repo } = await createTestContext();
+    vi.stubEnv("CRG_REPO_ROOT", "/somewhere/else");
+
+    await crgPlugin.install(context);
+    await crgPlugin.verify(context);
+
+    const crgRepoRoots = calls
+      .filter(([, args]) => args[0] === "build" || args[0] === "status")
+      .map(([, args, options]) => [args[0], options?.env?.CRG_REPO_ROOT]);
+    expect(crgRepoRoots).toEqual([
+      ["build", repo],
+      ["status", repo],
+    ]);
   });
 
   it("overwrites a GIT_CONFIG_COUNT that is not a number", async () => {
@@ -346,6 +365,63 @@ describe("crg plugin — install edge cases", () => {
       "skipped the graph build: .code-review-graph is a symlink or file, not a directory; remove it, then run code-review-graph build",
     );
     expect(await crgPlugin.verify(context)).toMatchObject({ ok: false });
+    expect(calls.some(([, args]) => args[0] === "status")).toBe(false);
+  });
+
+  it("install skips the build when a file inside .code-review-graph is a symlink, and verify fails without running status", async () => {
+    const { context, calls, repo, home, infos } = await createTestContext();
+    await mkdir(join(repo, ".code-review-graph"));
+    await symlink(
+      join(home, "authorized_keys"),
+      join(repo, ".code-review-graph", "graph.db"),
+    );
+    const problem =
+      ".code-review-graph/graph.db is a symlink, not a regular file or directory; crg would write through it. Remove .code-review-graph (code-review-graph build recreates it) and run agemon again.";
+
+    await crgPlugin.install(context);
+
+    expect(calls.some(([, args]) => args[0] === "build")).toBe(false);
+    expect(infos).toContain(`skipped the graph build: ${problem}`);
+    expect(await crgPlugin.verify(context)).toEqual({
+      ok: false,
+      detail: problem,
+    });
+    expect(calls.some(([, args]) => args[0] === "status")).toBe(false);
+  });
+
+  it("install skips the build when .code-review-graph is tracked by git", async () => {
+    const { context, calls, repo, home, infos } = await createTestContext();
+    const gitOnlyBin = join(home, "git-only-bin");
+    await mkdir(gitOnlyBin);
+    await linkGitInto(gitOnlyBin);
+    vi.stubEnv("PATH", gitOnlyBin);
+    execFileSync("git", ["init", "-q", repo]);
+    await mkdir(join(repo, ".code-review-graph"));
+    await writeFile(join(repo, ".code-review-graph", "graph.db"), "");
+    execFileSync("git", ["-C", repo, "add", "-A"]);
+
+    await crgPlugin.install(context);
+
+    expect(calls.some(([, args]) => args[0] === "build")).toBe(false);
+    expect(infos).toContain(
+      "skipped the graph build: 1 path(s) where crg writes its graph are tracked by git; crg would write through repository content. Remove them from the repository (git rm -r --cached -- '.code-review-graph') and run agemon again.",
+    );
+  });
+
+  it("verify reports a symlink that appears after the build and does not run status", async () => {
+    const { context, calls, repo, home } = await createTestContext();
+    await crgPlugin.install(context);
+    await symlink(
+      join(home, "authorized_keys"),
+      join(repo, ".code-review-graph", "graph.db-wal"),
+    );
+
+    expect(await crgPlugin.verify(context)).toMatchObject({
+      ok: false,
+      detail: expect.stringMatching(
+        /^\.code-review-graph\/graph\.db-wal is a symlink/,
+      ),
+    });
     expect(calls.some(([, args]) => args[0] === "status")).toBe(false);
   });
 

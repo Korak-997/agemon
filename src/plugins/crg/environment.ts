@@ -52,11 +52,17 @@ export function crgSubprocessEnvironment(): Record<string, string> {
   };
 }
 
+export function crgRepositoryEnvironment(
+  repoRoot: string,
+): Record<string, string> {
+  return { ...crgSubprocessEnvironment(), CRG_REPO_ROOT: repoRoot };
+}
+
 export function crgUnitGitSafetyEnvironment(): Record<string, string> {
   return { ...gitSafetyConfiguration(0), ...GIT_TRANSPORTS_DISABLED };
 }
 
-export function crgUnitEnvironment(): {
+export function crgUnitEnvironment(repoRoot: string): {
   set: Record<string, string>;
   unset: string[];
   removedRepositoryLocal: string[];
@@ -64,6 +70,7 @@ export function crgUnitEnvironment(): {
   return {
     set: {
       CRG_HOME: resolveCrgHome(),
+      CRG_REPO_ROOT: repoRoot,
       ...crgUnitGitSafetyEnvironment(),
     },
     unset: VARIABLES_CLEARED_FOR_CRG,

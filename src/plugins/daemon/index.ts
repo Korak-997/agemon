@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import type { Context } from "../../core/context.js";
 import { errorMessage } from "../../core/error-message.js";
@@ -32,6 +32,10 @@ import {
   crgUnitGitSafetyEnvironment,
   resolveCrgHome,
 } from "../crg/environment.js";
+import {
+  graphDirectoryProblem,
+  PATHS_CRG_WRITES_THROUGH,
+} from "../crg/graph-directory.js";
 import { BROKEN_PIPX_VENV_HINT, locateCodeReviewGraph } from "../crg/locate.js";
 import { CODE_REVIEW_GRAPH_PACKAGE_SPEC } from "../pins.js";
 import { describeOperation } from "../proposed-operation.js";
@@ -64,7 +68,6 @@ const LAUNCH_AGENT_LABEL_PREFIX = "dev.agemon.crg";
 const LAUNCHD_HARDENING_LABEL = "launchd";
 const UNIT_NAME_MAX_SLUG_LENGTH = 40;
 const UNIT_NAME_HASH_LENGTH = 8;
-const GRAPH_DIRECTORY = ".code-review-graph";
 const CHARACTERS_SYSTEMD_CANNOT_EXECUTE = /[\\"']/;
 
 const ACTION_TYPE_REGISTERED_SERVICE = "registered-service";
@@ -369,17 +372,12 @@ async function resolveCrgBinaryPath(ctx: Context): Promise<string> {
   return location.binaryPath;
 }
 
-async function assertGraphIsARealDirectory(repoRoot: string): Promise<void> {
-  let graph: Awaited<ReturnType<typeof lstat>>;
-  try {
-    graph = await lstat(join(repoRoot, GRAPH_DIRECTORY));
-  } catch {
-    return;
-  }
-  if (!graph.isDirectory()) {
-    throw new Error(
-      `Can't register the daemon: ${GRAPH_DIRECTORY} in the repository is not a real directory, so the daemon would write through it. Remove it and run agemon again.`,
-    );
+async function assertCrgWritesOnlyIntoTheRepository(
+  repoRoot: string,
+): Promise<void> {
+  const problem = await graphDirectoryProblem(repoRoot);
+  if (problem !== null) {
+    throw new Error(`Can't register the daemon: ${problem}`);
   }
 }
 
@@ -394,7 +392,7 @@ async function resolveUnitPaths(ctx: Context): Promise<UnitPaths> {
   assertUsableInUnit("code-review-graph path", paths.crgBinaryPath);
   assertUsableInUnit("code-review-graph home", paths.crgHome);
   assertUsableInUnit("agemon state directory", paths.agemonState);
-  await assertGraphIsARealDirectory(paths.repoRoot);
+  await assertCrgWritesOnlyIntoTheRepository(paths.repoRoot);
   return paths;
 }
 
@@ -474,7 +472,7 @@ function buildUnitContents(
   paths: UnitPaths,
   profile: HardeningProfile,
 ): string {
-  const environment = crgUnitEnvironment();
+  const environment = crgUnitEnvironment(paths.repoRoot);
   return [
     "[Unit]",
     "Description=agemon code-review-graph daemon",
@@ -483,6 +481,10 @@ function buildUnitContents(
     "[Service]",
     "Type=simple",
     `WorkingDirectory=${escapeSpecifiers(paths.repoRoot)}`,
+    ...PATHS_CRG_WRITES_THROUGH.map(
+      (path) =>
+        `ExecStartPre=/usr/bin/test ! -L ${quoteExecArgument(join(paths.repoRoot, path))}`,
+    ),
     `ExecStart=${quoteUnitValue(paths.crgBinaryPath)} ${quoteExecArgument("watch")}`,
     ...Object.entries(environment.set).map(
       ([name, value]) => `Environment=${quoteUnitValue(`${name}=${value}`)}`,
@@ -799,6 +801,13 @@ async function verifyDaemon(ctx: Context): Promise<PluginVerificationResult> {
   }
 
   const unitName = await resolveUnitName(ctx);
+  const graphProblem = await graphDirectoryProblem(ctx.cwd);
+  if (graphProblem !== null) {
+    return {
+      ok: false,
+      detail: `${graphProblem}; the daemon would write through it on its next start — on systemd its start-time check refuses that, on macOS it does not. Fix it, then run '${restartCommand(ctx, unitName)}'.`,
+    };
+  }
   const status = await ctx.serviceManager.isActive(unitName);
   if (!status.active) {
     return { ok: false, detail: `${unitName} is not active` };
@@ -820,6 +829,12 @@ async function verifyDaemon(ctx: Context): Promise<PluginVerificationResult> {
         : undefined,
     ),
   };
+}
+
+function restartCommand(ctx: Context, unitName: string): string {
+  return runsUnderLaunchd(ctx)
+    ? `launchctl kickstart -k gui/$(id -u)/${launchAgentLabelOf(unitName)}`
+    : `systemctl --user restart ${unitName}`;
 }
 
 async function unitPredatesGitSafeguards(

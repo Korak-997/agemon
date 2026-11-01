@@ -122,7 +122,9 @@ the skill groups this run installs.
 - Finds the installed binary by reading pipx's `pipx_metadata.json` (no pipx subprocess),
   falling back to `code-review-graph` on `PATH` outside the repository.
 - Builds the graph with `<binary> build` and verifies with `<binary> status`, with
-  `CRG_HOME` fixed to `~/.code-review-graph`, git's fsmonitor and hooks disabled,
+  `CRG_HOME` fixed to `~/.code-review-graph`, `CRG_REPO_ROOT` set to agemon's repository
+  root (so crg never walks up into a parent directory agemon refused as the root, whose
+  `.code-review-graph` agemon does not check), git's fsmonitor and hooks disabled,
   `diff.ignoreSubmodules=all`, `GIT_NO_LAZY_FETCH=1` and an empty `GIT_ALLOW_PROTOCOL`
   (no git transport at all). The daemon unit carries the same settings.
 - Before planning, building or registering, reads the repository's own git configuration
@@ -154,6 +156,18 @@ the skill groups this run installs.
   described in [Two Ledgers](#two-ledgers).
 - `verify` skips `<binary> status` in a repository without `.code-review-graph/`, because
   `status` would create that directory.
+- Refuses to let crg write through repository content (`src/plugins/crg/graph-directory.ts`).
+  sqlite follows links, so a committed `.code-review-graph/graph.db` symlink would make
+  crg create and write a file anywhere the user can write. The check refuses, in order:
+  anything git tracks under `.code-review-graph` or the root `.code-review-graph.db`,
+  `-wal`, `-shm`, `-journal` (`git ls-files` with `:(top,icase)` pathspecs, so mixed case
+  and subdirectories are covered; a git failure in a repository refuses too); a
+  `.code-review-graph` that is not a real directory; any entry inside it that is not a
+  regular file or directory (walked without following links, at most 20 000 entries); and
+  any of the four root `.code-review-graph.db*` names that is not a regular file. It runs
+  before every `<binary> build` (the build is skipped, so `verify` fails and the apply
+  rolls back), in `verify` before `<binary> status`, and through `verify` in
+  `agemon status`.
 
 ### `daemon`
 
@@ -198,7 +212,19 @@ the skill groups this run installs.
   the user unit directory. That file check is a safety net for units registered before
   agemon tracked linger. Linger that was already on is recorded `pre-existing`, even when
   a repository ledger claims agemon enabled it.
-- Refuses to register when `.code-review-graph` exists but is not a real directory.
+- Refuses to register when crg's graph-directory check (see [`crg`](#crg)) finds a
+  problem, and `verify` reports that problem before asking the service manager anything,
+  with the restart command for after the fix.
+- systemd units start with one `ExecStartPre=/usr/bin/test ! -L <path>` line for each
+  fixed path crg writes (`.code-review-graph`, its `.gitignore`, `graph.db`,
+  `graph.db-wal`, `-shm`, `-journal`, `graph.html`, `wiki`, and the root
+  `.code-review-graph.db`). systemd runs them on every start and automatic restart, so a
+  link that arrives with a `git pull` stops the next start. Residuals: launchd has no
+  pre-start hook, so on macOS only agemon's own checks at each run apply; a running daemon
+  keeps its open sqlite handles, so the exposure starts at its next start, and between a
+  `git pull` and that start a compat or launchd daemon can still write through a newly
+  checked-out link; units registered before this change get the lines only when
+  re-registered (`agemon nuke --only daemon`, then `agemon`).
 - Runs the `code-review-graph` binary that the crg plugin locates, with the same
   `CRG_HOME` and git safety settings as crg's own commands.
 - Tries a `strict` unit first and falls back to `compat`. `strict` makes the system and

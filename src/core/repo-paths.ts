@@ -24,7 +24,7 @@ interface GitEntry {
   ownerUid: number | null;
 }
 
-function isMissingPathError(error: unknown): boolean {
+export function isMissingPathError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 

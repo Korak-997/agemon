@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplyRollbackError, applyPlan } from "../../../src/core/apply.js";
@@ -46,6 +46,7 @@ import { crgPlugin } from "../../../src/plugins/crg/index.js";
 import { daemonPlugin } from "../../../src/plugins/daemon/index.js";
 import { CODE_REVIEW_GRAPH_VERSION } from "../../../src/plugins/pins.js";
 import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
+import { linkGitInto } from "../git-on-path.js";
 import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
@@ -640,6 +641,14 @@ describe("daemon plugin unit contents", () => {
     );
   });
 
+  it("pins crg to the repository agemon checked", async () => {
+    const { unit, repo } = await installAndReadUnit();
+
+    expect(unitLines(unit, "Environment")).toContain(
+      `Environment="CRG_REPO_ROOT=${repo}"`,
+    );
+  });
+
   it("strict unit hides agemon's machine state, including the ledger key, from crg", async () => {
     const { unit, environment } = await installAndReadUnit();
     const agemonState = join(environment.home, "..", "state", "agemon");
@@ -691,7 +700,8 @@ describe("daemon plugin unit contents", () => {
   it("path with %, $, quotes, backslashes and spaces produces a valid unit", async () => {
     const environment = await stubCrgEnvironment("bin $x %y");
     const repo = await createSandboxDirectory('repo a\\b"c %d');
-    await mkdir(join(repo, ".git"));
+    await linkGitInto(dirname(environment.crgPath));
+    await runExecutable("git", ["init", "-q", repo]);
     const state = createServiceState();
     const { ctx } = await createTestContext({
       cwd: repo,
@@ -729,6 +739,26 @@ describe("daemon plugin unit contents", () => {
       );
       expect(verification.stderr).toBe("");
     }
+  });
+
+  it("refuses a symlink at every path crg writes before each start, with one quoted ExecStartPre line per path", async () => {
+    const { unit, repo } = await installAndReadUnit("repo a %d $x");
+    const quotedPath = (name: string) =>
+      `"${join(repo, name).replaceAll("%", "%%").replaceAll("$", "$$$$")}"`;
+
+    expect(unitLines(unit, "ExecStartPre")).toEqual(
+      [
+        ".code-review-graph",
+        ".code-review-graph/.gitignore",
+        ".code-review-graph/graph.db",
+        ".code-review-graph/graph.db-wal",
+        ".code-review-graph/graph.db-shm",
+        ".code-review-graph/graph.db-journal",
+        ".code-review-graph/graph.html",
+        ".code-review-graph/wiki",
+        ".code-review-graph.db",
+      ].map((name) => `ExecStartPre=/usr/bin/test ! -L ${quotedPath(name)}`),
+    );
   });
 
   it.each([
@@ -1402,6 +1432,18 @@ describe("daemon plugin migration from old unit names", () => {
   });
 });
 
+const SYMLINKED_GRAPH_DB_PROBLEM =
+  ".code-review-graph/graph.db is a symlink, not a regular file or directory; crg would write through it. Remove .code-review-graph (code-review-graph build recreates it) and run agemon again.";
+
+async function plantSymlinkedGraphDatabase(repo: string): Promise<void> {
+  const outside = await createTempDirectory("agemon-daemon-outside-");
+  await mkdir(join(repo, ".code-review-graph"));
+  await symlink(
+    join(outside, "authorized_keys"),
+    join(repo, ".code-review-graph", "graph.db"),
+  );
+}
+
 describe("daemon plugin graph directory guard", () => {
   it("refuses to register when .code-review-graph is a symlink", async () => {
     const { ctx, repo, state } = await createMigrationContext();
@@ -1409,9 +1451,47 @@ describe("daemon plugin graph directory guard", () => {
     await symlink(outside, join(repo, ".code-review-graph"));
 
     await expect(daemonPlugin.install(ctx)).rejects.toThrow(
-      "Can't register the daemon: .code-review-graph in the repository is not a real directory",
+      "Can't register the daemon: .code-review-graph is a symlink or file, not a directory",
     );
     expect(state.offeredAttempts).toEqual([]);
+  });
+
+  it("refuses to register when a file inside .code-review-graph is a symlink", async () => {
+    const { ctx, repo, state } = await createMigrationContext();
+    await plantSymlinkedGraphDatabase(repo);
+
+    await expect(daemonPlugin.install(ctx)).rejects.toThrow(
+      `Can't register the daemon: ${SYMLINKED_GRAPH_DB_PROBLEM}`,
+    );
+    expect(state.offeredAttempts).toEqual([]);
+  });
+
+  it("verify reports the problem with the systemd restart command and never asks whether the unit is active", async () => {
+    const { ctx, repo } = await createMigrationContext();
+    await daemonPlugin.install(ctx);
+    await plantSymlinkedGraphDatabase(repo);
+    const isActive = vi.spyOn(ctx.serviceManager, "isActive");
+
+    expect(await daemonPlugin.verify(ctx)).toEqual({
+      ok: false,
+      detail: `${SYMLINKED_GRAPH_DB_PROBLEM}; the daemon would write through it on its next start — on systemd its start-time check refuses that, on macOS it does not. Fix it, then run 'systemctl --user restart ${unitNameFor(repo, "loyl")}'.`,
+    });
+    expect(isActive).not.toHaveBeenCalled();
+  });
+
+  it("verify under launchd names the launchctl kickstart command", async () => {
+    await stubCrgEnvironment();
+    const repo = await createSandboxDirectory("loyl");
+    const state = createServiceState();
+    const { ctx } = await createTestContext({
+      cwd: repo,
+      serviceManager: createFakeServiceManager(state, "launchd"),
+    });
+    await plantSymlinkedGraphDatabase(repo);
+
+    expect((await daemonPlugin.verify(ctx)).detail).toMatch(
+      /Fix it, then run 'launchctl kickstart -k gui\/\$\(id -u\)\/dev\.agemon\.crg\.loyl-[0-9a-f]{8}'\.$/,
+    );
   });
 });
 
@@ -1782,6 +1862,8 @@ describe("daemon plugin under launchd", () => {
           <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
           <key>CRG_HOME</key>
           <string><home>/.code-review-graph</string>
+          <key>CRG_REPO_ROOT</key>
+          <string><repo></string>
           <key>GIT_CONFIG_COUNT</key>
           <string>3</string>
           <key>GIT_CONFIG_KEY_0</key>

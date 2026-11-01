@@ -1,8 +1,10 @@
 import {
+  closeSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -450,22 +452,45 @@ function writeFakeCrgVenv(pipArgs: string[]): void {
   });
 }
 
-function buildFakeGraph(cwd: string | undefined): void {
-  if (cwd === undefined) {
-    return;
+function findProjectRootLikeCrg(
+  cwd: string,
+  repoRootOverride?: string,
+): string {
+  if (repoRootOverride && existsSync(repoRootOverride)) {
+    return repoRootOverride;
   }
-  const graphDirectory = join(cwd, ".code-review-graph");
-  if (existsSync(graphDirectory)) {
-    return;
+  for (let directory = cwd; ; directory = dirname(directory)) {
+    if (existsSync(join(directory, ".git"))) {
+      return directory;
+    }
+    if (directory === dirname(directory)) {
+      return cwd;
+    }
   }
-  mkdirSync(graphDirectory);
-  writeFileSync(join(graphDirectory, "graph.db"), "fake graph\n", "utf8");
+}
+
+function fakeGraphDatabasePath(projectRoot: string): string {
+  const graphDirectory = join(projectRoot, ".code-review-graph");
+  mkdirSync(graphDirectory, { recursive: true });
+  return join(graphDirectory, "graph.db");
+}
+
+function buildFakeGraph(projectRoot: string | undefined): void {
+  if (projectRoot !== undefined) {
+    writeFileSync(fakeGraphDatabasePath(projectRoot), "fake graph\n", "utf8");
+  }
+}
+
+function openFakeGraph(projectRoot: string | undefined): void {
+  if (projectRoot !== undefined) {
+    closeSync(openSync(fakeGraphDatabasePath(projectRoot), "a"));
+  }
 }
 
 function buildFakeCrgResponse(
   command: string,
   args: string[],
-  cwd: string | undefined,
+  projectRoot: string | undefined,
 ): SubprocessResult {
   const installed =
     fakeCrgInstalledState || (isAbsolute(command) && existsSync(command));
@@ -478,6 +503,7 @@ function buildFakeCrgResponse(
   }
 
   if (args[0] === "status") {
+    openFakeGraph(projectRoot);
     return {
       code: 0,
       stdout: "Files: 1\nNodes: 1\nEdges: 1\n",
@@ -486,7 +512,7 @@ function buildFakeCrgResponse(
   }
 
   if (args[0] === "build") {
-    buildFakeGraph(cwd);
+    buildFakeGraph(projectRoot);
     return {
       code: 0,
       stdout: "Graph build complete\n",
@@ -706,7 +732,7 @@ function buildFakeAgentResponse(
 export function runFakeSubprocess(
   command: string,
   args: string[],
-  options: { cwd?: string } = {},
+  options: { cwd?: string; env?: Record<string, string> } = {},
 ): SubprocessResult {
   initializeFakeStateIfNeeded();
 
@@ -753,7 +779,12 @@ export function runFakeSubprocess(
 
   const commandBinaryName = basename(command);
   if (commandBinaryName === "code-review-graph") {
-    return buildFakeCrgResponse(command, args, options.cwd);
+    return buildFakeCrgResponse(
+      command,
+      args,
+      options.cwd &&
+        findProjectRootLikeCrg(options.cwd, options.env?.CRG_REPO_ROOT),
+    );
   }
 
   if (FAKE_AGENT_BINARY_NAMES.has(commandBinaryName)) {

@@ -32,10 +32,11 @@ import type {
 } from "../types.js";
 import { ensureCrgConstraintsFile, hashLockedPipArgs } from "./constraints.js";
 import {
-  crgSubprocessEnvironment,
+  crgRepositoryEnvironment,
   REPOSITORY_LOCAL_VARIABLES_REMOVED_FOR_CRG,
   resolveCrgHome,
 } from "./environment.js";
+import { GRAPH_DIRECTORY, graphDirectoryProblem } from "./graph-directory.js";
 import {
   BROKEN_PIPX_VENV_HINT,
   type CrgLocation,
@@ -46,7 +47,6 @@ import {
 
 const PLUGIN_ID = "crg";
 const PACKAGE_NAME = "code-review-graph";
-const GRAPH_DIRECTORY = ".code-review-graph";
 
 const INSTALL_TIMEOUT_MS = 180_000;
 const BUILD_TIMEOUT_MS = 300_000;
@@ -56,7 +56,6 @@ const UNINSTALL_TIMEOUT_MS = 120_000;
 const ACTION_TYPE_INSTALLED_BINARY = "installed-binary";
 const ACTION_TYPE_GRAPH_BUILT = "graph-built";
 
-const GRAPH_ENTRY_NOT_DIRECTORY = `${GRAPH_DIRECTORY} is a symlink or file, not a directory; remove it, then run code-review-graph build`;
 const PIPX_NOT_FOUND = /process spawn error: spawn pipx ENOENT/;
 const NOT_ON_PATH_HINT =
   "not on PATH — run 'pipx ensurepath' and open a new shell";
@@ -197,21 +196,23 @@ async function planCrgOperations(ctx: Context): Promise<ProposedOperation[]> {
   ];
 }
 
-type GraphEntryKind = "missing" | "directory" | "other";
-
-async function graphEntryKind(ctx: Context): Promise<GraphEntryKind> {
+async function graphDirectoryExists(ctx: Context): Promise<boolean> {
   try {
-    const stats = await lstat(join(ctx.cwd, GRAPH_DIRECTORY));
-    return stats.isDirectory() ? "directory" : "other";
+    await lstat(join(ctx.cwd, GRAPH_DIRECTORY));
+    return true;
   } catch {
-    return "missing";
+    return false;
   }
 }
 
 function reportIgnoredCrgEnvironment(ctx: Context): void {
-  if (process.env.CRG_HOME || process.env.CRG_DATA_DIR) {
+  if (
+    process.env.CRG_HOME ||
+    process.env.CRG_DATA_DIR ||
+    process.env.CRG_REPO_ROOT
+  ) {
     ctx.ui.info(
-      `CRG_HOME and CRG_DATA_DIR from your environment are not used here: agemon's managed graph lives in ${GRAPH_DIRECTORY}/ and code-review-graph's home is ${printable(resolveCrgHome())}`,
+      `CRG_HOME, CRG_DATA_DIR and CRG_REPO_ROOT from your environment are not used here: agemon's managed graph lives in ${GRAPH_DIRECTORY}/ and code-review-graph's home is ${printable(resolveCrgHome())}`,
     );
   }
 }
@@ -291,9 +292,9 @@ async function installCrg(
     );
   }
 
-  const graphEntry = await graphEntryKind(ctx);
-  if (graphEntry === "other") {
-    ctx.ui.info(`skipped the graph build: ${GRAPH_ENTRY_NOT_DIRECTORY}`);
+  const graphProblem = await graphDirectoryProblem(ctx.cwd);
+  if (graphProblem !== null) {
+    ctx.ui.info(`skipped the graph build: ${graphProblem}`);
     return;
   }
 
@@ -303,11 +304,11 @@ async function installCrg(
     plugin: PLUGIN_ID,
     type: ACTION_TYPE_GRAPH_BUILT,
     target: GRAPH_DIRECTORY,
-    preExisting: graphEntry === "directory",
+    preExisting: await graphDirectoryExists(ctx),
   });
   const buildResult = await ctx.run(location.binaryPath, ["build"], {
     timeoutMs: BUILD_TIMEOUT_MS,
-    env: crgSubprocessEnvironment(),
+    env: crgRepositoryEnvironment(ctx.cwd),
     unsetEnv: REPOSITORY_LOCAL_VARIABLES_REMOVED_FOR_CRG,
   });
   if (buildResult.code !== 0) {
@@ -363,11 +364,11 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
       ? `this repository's git config has keys agemon does not trust by default: ${gitConfig.untrustedKeys}; ${PACKAGE_NAME} runs git here. ${UNTRUSTED_GIT_CONFIG_REMEDY}`
       : undefined;
 
-  const graphEntry = await graphEntryKind(ctx);
-  if (graphEntry === "other") {
-    return { ok: false, detail: GRAPH_ENTRY_NOT_DIRECTORY };
+  const graphProblem = await graphDirectoryProblem(ctx.cwd);
+  if (graphProblem !== null) {
+    return { ok: false, detail: graphProblem };
   }
-  if (graphEntry === "missing") {
+  if (!(await graphDirectoryExists(ctx))) {
     return entriesHaveBuiltGraph(confirmedPluginActions(ctx))
       ? {
           ok: false,
@@ -395,7 +396,7 @@ async function verifyCrg(ctx: Context): Promise<PluginVerificationResult> {
 
   const statusResult = await ctx.run(location.binaryPath, ["status"], {
     timeoutMs: STATUS_TIMEOUT_MS,
-    env: crgSubprocessEnvironment(),
+    env: crgRepositoryEnvironment(ctx.cwd),
     unsetEnv: REPOSITORY_LOCAL_VARIABLES_REMOVED_FOR_CRG,
   });
   if (statusResult.code !== 0) {
