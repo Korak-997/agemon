@@ -21,3 +21,6 @@ researches/
 /website/src/content/docs/project/
 /website/src/generated/
 /website/public/install.sh
+/docs/reviews/p[0-9]*.md
+/docs/plan.md
+/docs/plan-2.md

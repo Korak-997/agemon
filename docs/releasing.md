@@ -91,6 +91,11 @@ Important:
 
 ## Maintainer release workflow
 
+Before a stable release, re-record the website's terminal recordings so they show the
+release's output: run `sh website/recordings/record.sh` and commit the new media, the
+recorded ledger and `website/recordings/recordings.sha256` (see
+[website/recordings/README.md](../website/recordings/README.md)).
+
 ### Easiest path: one-click from GitHub Actions
 
 For a stable `patch`/`minor`/`major` release, run the **Cut release** workflow
@@ -220,6 +225,26 @@ The release workflow validates all of the following before creating the GitHub R
 
 If any check fails, the release is blocked and no GitHub Release is created.
 
+### Bundled skill fingerprints
+
+`src/plugins/skills/bundle-fingerprints.ts` lists the content fingerprint of every version
+of a bundled skill agemon has shipped, so `status` can tell an unmodified older copy from a
+user's edit. After changing a skill under `assets/skills/` or bumping the Essentials pin,
+run `npm run skills:fingerprints` and commit the result in the same pull request:
+
+- a unit test fails while a vendored skill's current fingerprint, or the pinned Essentials
+  fingerprints, are missing;
+- the `sandbox` CI job runs `npm run skills:fingerprints -- --check`, which recomputes the
+  fingerprints of `assets/skills` at every `v*` tag and fails if any is missing.
+
+The script only adds fingerprints; never remove one by hand, or users with that version
+stop getting updates. Bumping the Essentials pin needs network access: the script uses the
+cached `skills-src/<commit>` checkout only when its `HEAD` is exactly the pinned commit and
+`git status --porcelain --ignored` is empty, and otherwise fetches the commit into a fresh
+temporary directory. The pinned fingerprints are trusted as they are at generation time
+(CI cannot re-check them without the network); the real-mode Docker check compares a real
+Essentials install with them.
+
 ## What gets published where
 
 - **GitHub Release**: the tag, generated release notes, and three assets:
@@ -235,6 +260,14 @@ If any check fails, the release is blocked and no GitHub Release is created.
   prereleases, with an npm provenance statement. If the `latest` guard refuses (a newer
   version already holds `latest`), that version stays off npm; an older version never
   takes `latest` after a newer one, and the GitHub Release stays the source of truth.
+
+- **Website** (stable releases only): `release.yml` calls `website.yml`, which builds
+  <https://agemon.korak-kurani.com> from the release tag and deploys it to GitHub Pages.
+  The site serves that release's `install.sh` byte for byte. The build job checks the file
+  against `SHA256SUMS` and its attestation before building. A separate verify job runs no
+  npm and checks the built site again (the served `install.sh`, the displayed checksum,
+  the install commands and every page's Content-Security-Policy) before deploying. To
+  redeploy the latest release by hand, run the **Website** workflow from `master`.
 
 `install.sh` refuses a release that has no `SHA256SUMS`, so releases up to 4.7.2 can no
 longer be installed with it.
@@ -264,6 +297,22 @@ case-sensitive.
 5. Add `quality (node 22.x)` to the required status checks of the `master` branch ruleset.
 6. After the first npm release, deprecate the old placeholder:
    `npm deprecate agemon@0.1.0 "use the latest agemon"`.
+
+## One-time website setup (owner)
+
+Do this before the first stable release that carries `website/` (v6). Until then the
+website job fails at its first step that needs Pages, after npm has already published.
+
+1. **Pages source** (Settings → Pages → Build and deployment): "GitHub Actions".
+2. **`github-pages` environment** (created by step 1): deployment branches and tags →
+   branch `master` (manual redeploys and **Cut release**) and tag pattern `v*` (tag pushes).
+   Prereleases are kept off the site by the workflow itself.
+3. **Custom domain**: verify `korak-kurani.com` under your account's Settings → Pages →
+   Verified domains, so no other account can claim the subdomain. Add a DNS `CNAME`
+   record `agemon` → `korak-997.github.io`, then set `agemon.korak-kurani.com` as the
+   repository's custom domain and turn on "Enforce HTTPS".
+4. **Domain hygiene** at the registrar: registrar lock, auto-renew, and a CAA record that
+   allows only the CA GitHub Pages uses (`letsencrypt.org`).
 
 ## Rolling out installer changes
 
@@ -328,6 +377,7 @@ gh attestation verify agemon.tgz --repo Korak-997/agemon \
 Before pushing a release tag:
 
 1. Quality checks pass (`lint`, `typecheck`, `test`, `build`).
-2. `package.json` version bumped and `CHANGELOG.md` updated by hand.
-3. Both committed.
-4. Correct tag/channel selected (`alpha`, `beta`, or stable).
+2. Website recordings re-recorded for a stable release (`sh website/recordings/record.sh`).
+3. `package.json` version bumped and `CHANGELOG.md` updated by hand.
+4. All three committed.
+5. Correct tag/channel selected (`alpha`, `beta`, or stable).

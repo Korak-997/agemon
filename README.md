@@ -431,6 +431,17 @@ uninstalling a global npm package or disabling user linger. It then asks once. N
   only if it matched its source at install time, which agemon recorded then; a copy with
   no such record is kept and named. It never deletes `.agents/skills/<name>`, which other
   tools may use, and removes only agemon's skills from `skills-lock.json`.
+- `.gitignore` and directories: every `nuke` removes the `.claude`, `.claude/skills` and
+  `.claude/agents` directories agemon created once they are empty (never their contents).
+  When the last capability goes, it also removes the `/.agemon/` and `/skills-lock.json`
+  lines agemon added (only the exact lines it appended and recorded; your own equivalent
+  lines stay), even in a committed `.gitignore`, and deletes a `.gitignore` agemon created
+  once it is empty. `/skills-lock.json` stays while `skills-lock.json` exists, and
+  `/.agemon/` stays while `.agemon/` exists. Installs made before agemon recorded these
+  lines keep them, and `nuke` says so.
+
+> **Downgrading:** an older agemon's `nuke` does not know these records, so it keeps
+> `agemon.toml` and `.agemon/`; a newer agemon's `nuke` then finishes the cleanup.
 
 Restore the files an interrupted apply changed (see
 [Interrupted applies](#interrupted-applies)):
@@ -625,6 +636,8 @@ its usual health/drift output.
 	what to remove by hand; `status` counts them. See
 	[Ledger receipts](docs/architecture-and-operations.md#ledger-receipts).
 - Pre-existing tools/files are detected and preserved.
+- The `.gitignore` lines and empty directories agemon added are recorded too, so a full
+	`nuke` leaves the repository as it was before agemon (see `nuke` above).
 - Master-prompt file edits are backed up in `.agemon/backups/` and restored on uninstall,
 	but only when the backup provably matches the file agemon found (checksum check).
 - A managed file you edited after agemon wrote it is never overwritten or deleted: agemon
