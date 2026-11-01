@@ -37,7 +37,7 @@ Context is created in `src/core/context.ts` and includes:
   the fake subprocess backend throws on any `npm` call without one of them.
 - `manifest`: `.agemon/state.json` handler.
 - `serviceManager`: platform-specific daemon manager, with a `kind`: `systemd-user`
-  (`systemctl --user`, `loginctl` linger), `launchd` (`/bin/launchctl` in the `gui/<uid>`
+  (`systemctl --user`, `loginctl` linger for the numeric user id, never `USER`), `launchd` (`/bin/launchctl` in the `gui/<uid>`
   domain, no linger) or `none`. Without systemd it is an unavailable manager: reads
   answer "not active", and changes fail with a message naming the unit file to remove by
   hand.
@@ -202,8 +202,18 @@ the skill groups this run installs.
   is confirmed (see [Ledger receipts](#ledger-receipts)).
 - The `strict` profile also hides `<stateRoot>/agemon` (and with it `ledger-key`) from
   crg with `InaccessiblePaths=-…`, unless the repository, crg's binary or crg's home lies
-  inside it. Units registered before this change keep their old contents until agemon
-  registers them again.
+  inside it (all compared by real path, so a symlinked crg binary that resolves into the
+  state directory counts). Units registered before this change keep their old contents
+  until agemon registers them again.
+- `strict` is reported only when it is in force. The sandbox needs an unprivileged user
+  namespace, and on Ubuntu with `kernel.apparmor_restrict_unprivileged_userns=1` the
+  systemd user manager can skip it without failing the unit. After a strict unit is
+  ready, agemon compares `/proc/<MainPID>/ns/mnt` with the mount namespace of the unit's
+  parent, the systemd user manager (not agemon's own, which differs when agemon runs in a
+  container or sandbox); when they are equal or unreadable it prints `daemon hardening: strict requested, not
+  enforced on this host`, and `status` and `inspect` show the same in the daemon row. The
+  unit keeps running and agemon does not fall back to `compat`: crg then runs without
+  the read-only system and home and can read agemon's ledger key.
 - Units recorded under an old name are migrated by the next `agemon` run: the new unit is
   registered and recorded first, then each old unit this repo owns is removed.
 - Linger is a shared resource (see [Two Ledgers](#two-ledgers)). It is disabled only by
@@ -236,9 +246,22 @@ the skill groups this run installs.
   records the unit, `enabled-linger` (when linger is off) and the machine linger record.
   Only then does it enable linger and, for each profile, write the unit atomically, enable
   it and watch it until it has stayed `active` without restarts for 2 seconds (10-second
-  limit). A failed attempt removes its own unit. Any later failure, or an interrupted run,
-  is undone by the apply rollback or `agemon recover` from those entries, which also
-  switches linger back off when this registration switched it on.
+  limit). On systemd each attempt runs `daemon-reload`, `reset-failed <unit>` (clears
+  the start limit left by earlier failures; only "Unit <unit> not loaded." is tolerated),
+  `enable` and `restart`; a unit that exits and waits for its automatic restart fails the
+  attempt at once. A failed attempt removes its own unit and resets its start limit. Any
+  later failure, or an interrupted run, is undone by the apply rollback or `agemon
+  recover` from those entries, which also switches linger back off when this
+  registration switched it on.
+- Bounded restarts. systemd units use `Restart=always`, `RestartSec=10`,
+  `StartLimitIntervalSec=600` and `StartLimitBurst=5`, so a crg that keeps dying soon
+  after it starts (and a failing `ExecStartPre`) is stopped after five starts and the
+  unit ends `failed`. The plist sets `ThrottleInterval` 60: launchd has no start limit,
+  so on macOS a crash loop is slowed to one respawn a minute, not stopped. A failed unit
+  (systemd: `is-active` prints `failed`; launchd: loaded, not running, non-zero last
+  exit code) shows as `absent` in `status` with a `failed: …` detail naming
+  `journalctl --user -u <unit>` (macOS: `launchctl print`), `verify` is not ok, and the
+  next `agemon` registers it again.
 - Verifies service active; `verify`'s detail includes the resolved unit name. It reads
   the unit's environment (systemd `Environment=` lines, or the plist's
   `EnvironmentVariables`) and reports a unit that lacks agemon's git safeguards as needing

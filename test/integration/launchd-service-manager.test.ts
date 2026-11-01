@@ -75,12 +75,18 @@ describe.runIf(RUNS_AGAINST_REAL_LAUNCHD)("real launchd", () => {
       });
 
       expect(registration.attemptLabel).toBe("launchd");
-      expect(await manager.isActive(unitName)).toEqual({ active: true });
+      expect(await manager.isActive(unitName)).toEqual({
+        active: true,
+        failed: false,
+      });
       expect(await manager.readUnitWorkingDirectory(unitName)).toBe(home);
 
       await manager.unregisterAutostart({ unitName });
 
-      expect(await manager.isActive(unitName)).toEqual({ active: false });
+      expect(await manager.isActive(unitName)).toEqual({
+        active: false,
+        failed: false,
+      });
       await expect(stat(manager.unitPathFor(unitName))).rejects.toThrow();
     },
     REAL_LAUNCHD_TIMEOUT_MS,
@@ -104,7 +110,10 @@ describe.runIf(RUNS_AGAINST_REAL_LAUNCHD)("real launchd", () => {
         }),
       ).rejects.toThrow(`Could not start ${label}`);
 
-      expect(await manager.isActive(unitName)).toEqual({ active: false });
+      expect(await manager.isActive(unitName)).toEqual({
+        active: false,
+        failed: false,
+      });
       await expect(stat(manager.unitPathFor(unitName))).rejects.toThrow();
     },
     REAL_LAUNCHD_TIMEOUT_MS,

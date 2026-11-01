@@ -531,7 +531,10 @@ describe("crg plugin — install edge cases", () => {
       yes: true,
       serviceManager: {
         async isActive() {
-          return { active: true };
+          return { active: true, failed: false };
+        },
+        async isSandboxEnforced() {
+          return false;
         },
         async registerAutostart() {
           throw new Error("not used");

@@ -19,6 +19,7 @@ describe("createUnavailableServiceManager", () => {
   it("answers read paths without systemd", async () => {
     expect(await serviceManager.isActive(UNIT_NAME)).toEqual({
       active: false,
+      failed: false,
     });
     expect(await serviceManager.readUnitWorkingDirectory(UNIT_NAME)).toBe(
       "/home/user/repo",
@@ -64,7 +65,10 @@ describe("createUnavailableServiceManager", () => {
       run: async () => ({ code: 0, stdout: "", stderr: "" }),
     });
 
-    expect(await manager.isActive(UNIT_NAME)).toEqual({ active: false });
+    expect(await manager.isActive(UNIT_NAME)).toEqual({
+      active: false,
+      failed: false,
+    });
     await expect(
       manager.unregisterAutostart({ unitName: UNIT_NAME }),
     ).rejects.toThrow("systemd is not running on this machine");

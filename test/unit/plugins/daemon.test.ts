@@ -71,6 +71,8 @@ interface FakeServiceManagerState {
   usedAttemptLabel?: string;
   onRegister?: () => void;
   unreadableUnitNames?: Set<string>;
+  failedUnitNames?: Set<string>;
+  sandboxEnforced?: boolean;
 }
 
 function createServiceState(
@@ -94,7 +96,13 @@ function createFakeServiceManager(
   return {
     kind,
     async isActive(unitName) {
-      return { active: state.activeUnitNames.has(unitName) };
+      return {
+        active: state.activeUnitNames.has(unitName),
+        failed: state.failedUnitNames?.has(unitName) ?? false,
+      };
+    },
+    async isSandboxEnforced() {
+      return state.sandboxEnforced ?? true;
     },
     async registerAutostart(input) {
       state.onRegister?.();
@@ -658,6 +666,46 @@ describe("daemon plugin unit contents", () => {
     ]);
   });
 
+  it("strict unit does not hide agemon's state directory when a symlinked crg binary resolves inside it", async () => {
+    const environment = await stubCrgEnvironment();
+    const agemonState = join(environment.home, "..", "state", "agemon");
+    const crgInsideState = join(agemonState, "tools", "code-review-graph");
+    await writeExecutable(crgInsideState);
+    await rm(environment.crgPath);
+    await symlink(crgInsideState, environment.crgPath);
+    const repo = await createSandboxDirectory("loyl");
+    const state = createServiceState();
+    const { ctx } = await createTestContext({
+      cwd: repo,
+      serviceManager: createFakeServiceManager(state),
+    });
+
+    await daemonPlugin.install(ctx);
+
+    const unit = [...state.unitContentsByName.values()][0];
+    expect(unitLines(unit, "ExecStart")).toEqual([
+      `ExecStart="${environment.crgPath}" "watch"`,
+    ]);
+    expect(unitLines(unit, "InaccessiblePaths")).toEqual([]);
+  });
+
+  it("unit stops restarting after five quick failures and waits 10 s between restarts", async () => {
+    const { unit } = await installAndReadUnit();
+    const [unitSection, serviceSection] = unit
+      .split("\n[Service]\n")
+      .map((section) => section.split("\n[Install]\n")[0]);
+
+    expect(unitLines(unitSection, "StartLimitIntervalSec")).toEqual([
+      "StartLimitIntervalSec=600",
+    ]);
+    expect(unitLines(unitSection, "StartLimitBurst")).toEqual([
+      "StartLimitBurst=5",
+    ]);
+    expect(unitLines(serviceSection, "Restart")).toEqual(["Restart=always"]);
+    expect(unitLines(serviceSection, "RestartSec")).toEqual(["RestartSec=10"]);
+    expect(serviceSection).not.toContain("StartLimit");
+  });
+
   it("strict unit does not hide agemon's state directory when the repository lies inside it", async () => {
     await stubCrgEnvironment();
     const repo = await createSandboxDirectory("agemon");
@@ -807,6 +855,71 @@ describe("daemon plugin hardening", () => {
         .filter((action) => action.type === "hardening-profile")
         .map((action) => action.target),
     ).toEqual(["strict"]);
+  });
+
+  it("says strict is not enforced when the unit shares agemon's mount namespace, and keeps the unit", async () => {
+    await stubCrgEnvironment();
+    const repo = await createSandboxDirectory("loyl");
+    const state = createServiceState({ sandboxEnforced: false });
+    const { ctx, infos } = await createTestContext({
+      cwd: repo,
+      serviceManager: createFakeServiceManager(state),
+    });
+
+    await daemonPlugin.install(ctx);
+
+    expect(infos).toContain(
+      "daemon hardening: strict requested, not enforced on this host",
+    );
+    expect(infos).not.toContain("daemon hardening: strict");
+    expect(state.offeredAttempts).toHaveLength(1);
+    expect(state.unregistered).toEqual([]);
+    expect(await daemonPlugin.describeState?.(ctx)).toEqual([
+      expect.objectContaining({
+        state: "present-managed",
+        detail:
+          "registered by agemon; daemon hardening: strict requested, not enforced on this host",
+      }),
+    ]);
+  });
+
+  it("status shows nothing extra once strict is enforced", async () => {
+    await stubCrgEnvironment();
+    const repo = await createSandboxDirectory("loyl");
+    const state = createServiceState();
+    const { ctx } = await createTestContext({
+      cwd: repo,
+      serviceManager: createFakeServiceManager(state),
+    });
+
+    await daemonPlugin.install(ctx);
+
+    expect(await daemonPlugin.describeState?.(ctx)).toEqual([
+      expect.objectContaining({ detail: "registered by agemon" }),
+    ]);
+  });
+
+  it("never checks the sandbox of a compat unit", async () => {
+    await stubCrgEnvironment();
+    vi.stubEnv("AGEMON_DAEMON_HARDENING", "compat");
+    const repo = await createSandboxDirectory("loyl");
+    const state = createServiceState({ sandboxEnforced: false });
+    const { ctx, infos } = await createTestContext({
+      cwd: repo,
+      serviceManager: createFakeServiceManager(state),
+    });
+    const isSandboxEnforced = vi.spyOn(ctx.serviceManager, "isSandboxEnforced");
+
+    await daemonPlugin.install(ctx);
+    const rows = await daemonPlugin.describeState?.(ctx);
+
+    expect(isSandboxEnforced).not.toHaveBeenCalled();
+    expect(infos).toContain(
+      "daemon hardening: compat (AGEMON_DAEMON_HARDENING=compat)",
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({ detail: "registered by agemon" }),
+    ]);
   });
 
   it("says why compat was used when the strict unit did not start", async () => {
@@ -1048,6 +1161,54 @@ describe("daemon plugin detection", () => {
 
     expect(presence).toEqual({ present: true, preExisting: true });
     expect(ctx.manifest.getActions()).toEqual([]);
+  });
+});
+
+describe("daemon plugin and a failed unit", () => {
+  async function installThenFail(kind: ServiceManagerKind = "systemd-user") {
+    await stubCrgEnvironment();
+    const repo = await createSandboxDirectory("loyl");
+    const state = createServiceState();
+    const { ctx } = await createTestContext({
+      cwd: repo,
+      serviceManager: createFakeServiceManager(state, kind),
+    });
+    await daemonPlugin.install(ctx);
+    const [unitName] = state.activeUnitNames;
+    state.activeUnitNames.delete(unitName);
+    state.failedUnitNames = new Set([unitName]);
+    return { ctx, state, unitName };
+  }
+
+  it("status shows the failed unit as absent with the journalctl hint, and plan registers it again", async () => {
+    const { ctx, unitName } = await installThenFail();
+    const detail = `failed: crg kept exiting and the service manager stopped restarting it — see 'journalctl --user -u ${unitName}'; running agemon registers it again`;
+
+    expect(await daemonPlugin.describeState?.(ctx)).toEqual([
+      expect.objectContaining({ label: unitName, state: "absent", detail }),
+    ]);
+    expect(await daemonPlugin.plan?.(ctx)).toEqual([
+      expect.objectContaining({ action: "register-service" }),
+    ]);
+    expect(await daemonPlugin.verify(ctx)).toEqual({ ok: false, detail });
+  });
+
+  it("running agemon registers a failed unit again", async () => {
+    const { ctx, state, unitName } = await installThenFail();
+
+    await daemonPlugin.install(ctx);
+
+    expect(state.offeredAttempts).toHaveLength(2);
+    expect(state.activeUnitNames.has(unitName)).toBe(true);
+  });
+
+  it("under launchd the hint names launchctl print", async () => {
+    const { ctx, unitName } = await installThenFail("launchd");
+    const label = unitName.slice(0, -".plist".length);
+
+    expect((await daemonPlugin.verify(ctx)).detail).toBe(
+      `failed: crg exited with an error; launchd restarts it at most once a minute — see 'launchctl print gui/$(id -u)/${label}'; running agemon registers it again`,
+    );
   });
 });
 
@@ -1891,6 +2052,8 @@ describe("daemon plugin under launchd", () => {
         <true/>
         <key>KeepAlive</key>
         <true/>
+        <key>ThrottleInterval</key>
+        <integer>60</integer>
         <key>ProcessType</key>
         <string>Background</string>
       </dict>

@@ -693,6 +693,7 @@ function previewContext(
     serviceManager: {
       kind: ctx.serviceManager.kind,
       isActive: refuseCommand,
+      isSandboxEnforced: refuseCommand,
       registerAutostart: refuseCommand,
       unregisterAutostart: refuseCommand,
       readUnitWorkingDirectory: (unitName) =>

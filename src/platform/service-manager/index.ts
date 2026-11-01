@@ -25,6 +25,7 @@ export type RunCommand = (
 
 export interface ServiceStatus {
   active: boolean;
+  failed: boolean;
 }
 
 export interface AutostartAttempt {
@@ -50,6 +51,7 @@ export interface UnregisterAutostartInput {
 export interface ServiceManager {
   readonly kind: ServiceManagerKind;
   isActive(unitName: string): Promise<ServiceStatus>;
+  isSandboxEnforced(unitName: string): Promise<boolean>;
   registerAutostart(
     input: RegisterAutostartInput,
   ): Promise<RegisterAutostartResult>;

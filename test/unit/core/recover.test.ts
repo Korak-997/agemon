@@ -57,7 +57,10 @@ function createNoOpServiceManager(): ServiceManager {
   return {
     kind: "systemd-user",
     async isActive() {
-      return { active: false };
+      return { active: false, failed: false };
+    },
+    async isSandboxEnforced() {
+      return false;
     },
     async registerAutostart() {
       return {

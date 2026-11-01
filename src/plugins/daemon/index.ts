@@ -69,6 +69,11 @@ const LAUNCHD_HARDENING_LABEL = "launchd";
 const UNIT_NAME_MAX_SLUG_LENGTH = 40;
 const UNIT_NAME_HASH_LENGTH = 8;
 const CHARACTERS_SYSTEMD_CANNOT_EXECUTE = /[\\"']/;
+const RESTART_DELAY_SECONDS = 10;
+const START_LIMIT_INTERVAL_SECONDS = 600;
+const START_LIMIT_BURST = 5;
+const STRICT_NOT_ENFORCED =
+  "daemon hardening: strict requested, not enforced on this host";
 
 const ACTION_TYPE_REGISTERED_SERVICE = "registered-service";
 const ACTION_TYPE_ENABLED_LINGER = "enabled-linger";
@@ -325,6 +330,7 @@ interface UnitPaths {
 interface HardeningChoice {
   profiles: HardeningProfile[];
   compatReason: string | null;
+  hidesAgemonState: boolean;
 }
 
 const STRICT_FAILED_NOTE =
@@ -405,33 +411,46 @@ async function realpathOrSelf(path: string): Promise<string> {
 }
 
 async function chooseHardening(paths: UnitPaths): Promise<HardeningChoice> {
+  const compatOnly = (compatReason: string): HardeningChoice => ({
+    profiles: ["compat"],
+    compatReason,
+    hidesAgemonState: false,
+  });
   if (process.env.AGEMON_DAEMON_HARDENING === "compat") {
-    return {
-      profiles: ["compat"],
-      compatReason: "AGEMON_DAEMON_HARDENING=compat",
-    };
+    return compatOnly("AGEMON_DAEMON_HARDENING=compat");
   }
   if (await containsHomeDirectory(paths.repoRoot)) {
-    return {
-      profiles: ["compat"],
-      compatReason: "the repository is or contains your home directory",
-    };
+    return compatOnly("the repository is or contains your home directory");
   }
   if (await containsHomeDirectory(await realpathOrSelf(paths.crgHome))) {
-    return {
-      profiles: ["compat"],
-      compatReason: "crg's home is or contains your home directory",
-    };
+    return compatOnly("crg's home is or contains your home directory");
   }
-  return { profiles: ["strict", "compat"], compatReason: null };
+  return {
+    profiles: ["strict", "compat"],
+    compatReason: null,
+    hidesAgemonState: !(await crgNeedsAgemonState(paths)),
+  };
 }
 
-function describeHardening(
+async function crgNeedsAgemonState(paths: UnitPaths): Promise<boolean> {
+  const [agemonState, ...crgPaths] = await Promise.all(
+    [paths.agemonState, paths.repoRoot, paths.crgBinaryPath, paths.crgHome].map(
+      realpathOrSelf,
+    ),
+  );
+  return crgPaths.some((path) => isSameOrInside(path, agemonState));
+}
+
+async function describeHardening(
+  ctx: Context,
+  unitName: string,
   registration: RegisterAutostartResult,
   choice: HardeningChoice,
-): string {
+): Promise<string> {
   if (registration.attemptLabel === "strict") {
-    return "daemon hardening: strict";
+    return (await ctx.serviceManager.isSandboxEnforced(unitName))
+      ? "daemon hardening: strict"
+      : STRICT_NOT_ENFORCED;
   }
   const reason =
     choice.compatReason ??
@@ -442,6 +461,7 @@ function describeHardening(
 function getHardeningDirectives(
   profile: HardeningProfile,
   paths: UnitPaths,
+  hidesAgemonState: boolean,
 ): string[] {
   if (profile === "compat") {
     return ["NoNewPrivileges=yes", "RestrictSUIDSGID=yes"];
@@ -455,28 +475,24 @@ function getHardeningDirectives(
     "PrivateTmp=yes",
     `ReadWritePaths=${quoteUnitValue(paths.repoRoot)} ${quoteUnitValue(`-${paths.crgHome}`)}`,
     `ReadOnlyPaths=${quoteUnitValue(`-${join(paths.repoRoot, ".git")}`)}`,
-    ...hideAgemonStateDirective(paths),
+    ...(hidesAgemonState
+      ? [`InaccessiblePaths=${quoteUnitValue(`-${paths.agemonState}`)}`]
+      : []),
   ];
-}
-
-function hideAgemonStateDirective(paths: UnitPaths): string[] {
-  const crgNeedsIt = [paths.repoRoot, paths.crgBinaryPath, paths.crgHome].some(
-    (path) => isSameOrInside(path, paths.agemonState),
-  );
-  return crgNeedsIt
-    ? []
-    : [`InaccessiblePaths=${quoteUnitValue(`-${paths.agemonState}`)}`];
 }
 
 function buildUnitContents(
   paths: UnitPaths,
   profile: HardeningProfile,
+  hidesAgemonState: boolean,
 ): string {
   const environment = crgUnitEnvironment(paths.repoRoot);
   return [
     "[Unit]",
     "Description=agemon code-review-graph daemon",
     "After=network-online.target",
+    `StartLimitIntervalSec=${START_LIMIT_INTERVAL_SECONDS}`,
+    `StartLimitBurst=${START_LIMIT_BURST}`,
     "",
     "[Service]",
     "Type=simple",
@@ -490,9 +506,9 @@ function buildUnitContents(
       ([name, value]) => `Environment=${quoteUnitValue(`${name}=${value}`)}`,
     ),
     `UnsetEnvironment=${[...environment.unset, ...environment.removedRepositoryLocal].join(" ")}`,
-    ...getHardeningDirectives(profile, paths),
+    ...getHardeningDirectives(profile, paths, hidesAgemonState),
     "Restart=always",
-    "RestartSec=3",
+    `RestartSec=${RESTART_DELAY_SECONDS}`,
     "",
     "[Install]",
     "WantedBy=default.target",
@@ -550,7 +566,7 @@ async function describeDaemonState(
         resourceId,
         label: unitName,
         state: "absent",
-        detail: null,
+        detail: status.failed ? failedUnitDetail(ctx, unitName) : null,
       },
     ];
   }
@@ -562,9 +578,33 @@ async function describeDaemonState(
       resourceId,
       label: unitName,
       state: managed ? "present-managed" : "present-adopted",
-      detail: managed ? "registered by agemon" : "pre-existing unit",
+      detail: managed
+        ? await describeManagedUnit(ctx, unitName)
+        : "pre-existing unit",
     },
   ];
+}
+
+function failedUnitDetail(ctx: Context, unitName: string): string {
+  const failure = runsUnderLaunchd(ctx)
+    ? `crg exited with an error; launchd restarts it at most once a minute — see 'launchctl print gui/$(id -u)/${launchAgentLabelOf(unitName)}'`
+    : `crg kept exiting and the service manager stopped restarting it — see 'journalctl --user -u ${unitName}'`;
+  return `failed: ${failure}; running agemon registers it again`;
+}
+
+async function describeManagedUnit(
+  ctx: Context,
+  unitName: string,
+): Promise<string> {
+  const recordedProfile = getPluginActions(ctx).find(
+    (action) => action.type === ACTION_TYPE_HARDENING_PROFILE,
+  )?.target;
+  const strictNotEnforced =
+    recordedProfile === "strict" &&
+    !(await ctx.serviceManager.isSandboxEnforced(unitName));
+  return strictNotEnforced
+    ? `registered by agemon; ${STRICT_NOT_ENFORCED}`
+    : "registered by agemon";
 }
 
 function ledgerRecordsLingerUse(ctx: Context, entries: LedgerEntry[]): boolean {
@@ -726,10 +766,14 @@ async function registerSystemdUnit(
     unitName,
     attempts: hardening.profiles.map((profile) => ({
       label: profile,
-      unitContents: buildUnitContents(paths, profile),
+      unitContents: buildUnitContents(
+        paths,
+        profile,
+        hardening.hidesAgemonState,
+      ),
     })),
   });
-  ctx.ui.info(describeHardening(registration, hardening));
+  ctx.ui.info(await describeHardening(ctx, unitName, registration, hardening));
   return registration;
 }
 
@@ -810,7 +854,12 @@ async function verifyDaemon(ctx: Context): Promise<PluginVerificationResult> {
   }
   const status = await ctx.serviceManager.isActive(unitName);
   if (!status.active) {
-    return { ok: false, detail: `${unitName} is not active` };
+    return {
+      ok: false,
+      detail: status.failed
+        ? failedUnitDetail(ctx, unitName)
+        : `${unitName} is not active`,
+    };
   }
 
   const gitConfig = await verifyRepositoryGitConfig(ctx.gitConfigGuard);

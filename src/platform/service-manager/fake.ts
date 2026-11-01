@@ -26,6 +26,7 @@ interface FakeServiceState {
   attemptLabel: string;
   user: string;
   active: boolean;
+  failed?: boolean;
 }
 
 function resolveUser(user?: string): string {
@@ -63,7 +64,10 @@ export function createFakeServiceManager(
 
   const isActive = async (unitName: string): Promise<ServiceStatus> => {
     const marker = await readMarker(homeDir, unitName);
-    return { active: marker?.active === true };
+    return {
+      active: marker?.active === true,
+      failed: marker?.failed === true,
+    };
   };
 
   const registerAutostart = async (
@@ -126,6 +130,7 @@ export function createFakeServiceManager(
   return {
     kind: "systemd-user",
     isActive,
+    isSandboxEnforced: async () => true,
     registerAutostart,
     unregisterAutostart,
     readUnitWorkingDirectory,

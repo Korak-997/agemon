@@ -55,7 +55,10 @@ function createNoOpServiceManager(): ServiceManager {
   return {
     kind: "systemd-user",
     async isActive() {
-      return { active: false };
+      return { active: false, failed: false };
+    },
+    async isSandboxEnforced() {
+      return false;
     },
     async registerAutostart() {
       return {
@@ -1388,6 +1391,13 @@ describe("uninstallPlugins", () => {
       "isActive",
       (previewCtx: Context) =>
         previewCtx.serviceManager.isActive(
+          "agemon-crg-daemon-x-01234567.service",
+        ),
+    ],
+    [
+      "isSandboxEnforced",
+      (previewCtx: Context) =>
+        previewCtx.serviceManager.isSandboxEnforced(
           "agemon-crg-daemon-x-01234567.service",
         ),
     ],

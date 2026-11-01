@@ -146,7 +146,6 @@ export async function createContext(
     serviceManager: createServiceManager({
       kind: input.platform.serviceManager,
       run: runSubprocess,
-      user: process.env.USER,
     }),
     verifiedBinaryInstaller: await selectVerifiedBinaryInstaller(run),
     confirm: createConfirmer({ yes: input.yes }),

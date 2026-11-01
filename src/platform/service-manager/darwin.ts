@@ -335,10 +335,14 @@ export function createLaunchdServiceManager(
   const isActive = async (unitName: string): Promise<ServiceStatus> => {
     const label = launchAgentLabelOf(unitName);
     const result = await printJob(label);
+    if (result.code !== 0) {
+      return { active: false, failed: false };
+    }
+    const job = parseLaunchdJobState(result.stdout);
+    const running = job.state === "running";
     return {
-      active:
-        result.code === 0 &&
-        parseLaunchdJobState(result.stdout).state === "running",
+      active: running,
+      failed: !running && job.lastExitCode !== null && job.lastExitCode !== 0,
     };
   };
 
@@ -376,6 +380,7 @@ export function createLaunchdServiceManager(
   return {
     kind: "launchd",
     isActive,
+    isSandboxEnforced: async () => false,
     registerAutostart,
     unregisterAutostart,
     readUnitWorkingDirectory,

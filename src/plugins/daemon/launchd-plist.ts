@@ -2,6 +2,7 @@ import { escapePlistString } from "../../platform/service-manager/launch-agent-f
 import { crgUnitEnvironment } from "../crg/environment.js";
 
 const SYSTEM_ONLY_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+const RESPAWN_THROTTLE_SECONDS = 60;
 
 export interface LaunchAgentPaths {
   repoRoot: string;
@@ -57,6 +58,8 @@ export function buildLaunchAgentPlist(
     "  <true/>",
     `  ${keyElement("KeepAlive")}`,
     "  <true/>",
+    `  ${keyElement("ThrottleInterval")}`,
+    `  <integer>${RESPAWN_THROTTLE_SECONDS}</integer>`,
     `  ${keyElement("ProcessType")}`,
     `  ${stringElement("Background")}`,
     "</dict>",

@@ -1,7 +1,8 @@
-import { mkdir, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, readlink, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { errorMessage } from "../../core/error-message.js";
 import { RefusedFileError, writeFileAtomic } from "../../core/files.js";
+import { currentUid } from "../../core/install-location.js";
 import { describeSubprocessFailure } from "../../core/subprocess-runner.js";
 import { quoteForShlex } from "../../core/untrusted-text.js";
 import { resolveHomeDirectory } from "../home.js";
@@ -27,25 +28,30 @@ interface CreateLinuxServiceManagerInput {
   homeDir?: string;
   user?: string;
   clock?: ServiceClock;
+  procRoot?: string;
 }
 
 const SYSTEM_COMMAND_TIMEOUT_MS = 20_000;
 const UNIT_FILE_MODE = 0o644;
+const UNKNOWN_UID = -1;
+const PROCESS_ID = /^[1-9]\d*$/;
+const PARENT_PID_LINE = /^PPid:\s*([1-9]\d*)$/m;
 
 function resolveUser(user?: string): string {
-  const resolvedUser = user ?? process.env.USER;
-  if (!resolvedUser) {
-    try {
-      const fallbackUser = process.env.LOGNAME ?? process.env.USERNAME;
-      if (fallbackUser) {
-        return fallbackUser;
-      }
-    } catch {}
-    throw new Error(
-      "Unable to resolve current user for loginctl commands. Set USER, LOGNAME, or pass an explicit user.",
-    );
+  if (user !== undefined) {
+    return user;
   }
-  return resolvedUser;
+  const uid = currentUid();
+  if (uid === UNKNOWN_UID) {
+    throw new Error("cannot determine the current user id");
+  }
+  return String(uid);
+}
+
+function reportsUnitNotLoaded(stderr: string, unitName: string): boolean {
+  const notLoaded = `Unit ${unitName} not loaded.`;
+  const message = stderr.trim();
+  return message === notLoaded || message.endsWith(`: ${notLoaded}`);
 }
 
 function isMissingUnitError(stderr: string): boolean {
@@ -96,6 +102,7 @@ export function createLinuxServiceManager(
   );
   const lingerUser = (): string => resolveUser(input.user);
   const clock = input.clock ?? systemClock;
+  const procRoot = input.procRoot ?? "/proc";
 
   const isActive = async (unitName: string): Promise<ServiceStatus> => {
     const result = await input.run(
@@ -105,7 +112,46 @@ export function createLinuxServiceManager(
         timeoutMs: SYSTEM_COMMAND_TIMEOUT_MS,
       },
     );
-    return { active: result.code === 0 };
+    return {
+      active: result.code === 0,
+      failed: result.stdout.trim() === "failed",
+    };
+  };
+
+  const readMountNamespace = (pid: string): Promise<string> =>
+    readlink(join(procRoot, pid, "ns", "mnt"));
+
+  const readParentPid = async (pid: string): Promise<string> => {
+    const status = await readFile(join(procRoot, pid, "status"), "utf8");
+    const parentPid = PARENT_PID_LINE.exec(status)?.[1];
+    if (parentPid === undefined) {
+      throw new Error(`no parent process id in ${pid}'s status`);
+    }
+    return parentPid;
+  };
+
+  // The unit's parent is the systemd user manager. Comparing with it rather than with
+  // agemon keeps the answer right when agemon itself runs in another mount namespace
+  // (a toolbox container or an agent sandbox).
+  const isSandboxEnforced = async (unitName: string): Promise<boolean> => {
+    const mainPid = await input.run(
+      "systemctl",
+      ["--user", "show", "-p", "MainPID", "--value", unitName],
+      { timeoutMs: SYSTEM_COMMAND_TIMEOUT_MS },
+    );
+    const pid = mainPid.stdout.trim();
+    if (mainPid.code !== 0 || !PROCESS_ID.test(pid)) {
+      return false;
+    }
+    try {
+      const [unitNamespace, userManagerNamespace] = await Promise.all([
+        readMountNamespace(pid),
+        readParentPid(pid).then(readMountNamespace),
+      ]);
+      return unitNamespace !== userManagerNamespace;
+    } catch {
+      return false;
+    }
   };
 
   const readLingerIsOn = async (): Promise<boolean> => {
@@ -126,7 +172,7 @@ export function createLinuxServiceManager(
 
   const readUnitState = async (
     unitName: string,
-  ): Promise<{ activeState: string; restarts: number }> => {
+  ): Promise<{ activeState: string; subState: string; restarts: number }> => {
     const show = await assertSucceeded(
       input.run,
       "systemctl",
@@ -135,6 +181,7 @@ export function createLinuxServiceManager(
         "show",
         unitName,
         "--property=ActiveState",
+        "--property=SubState",
         "--property=NRestarts",
       ],
       `Unable to read the state of ${unitName}.`,
@@ -142,6 +189,7 @@ export function createLinuxServiceManager(
     const properties = parseProperties(show.stdout);
     return {
       activeState: properties.get("ActiveState") ?? "unknown",
+      subState: properties.get("SubState") ?? "unknown",
       restarts: Number(properties.get("NRestarts") ?? "0") || 0,
     };
   };
@@ -149,11 +197,17 @@ export function createLinuxServiceManager(
   const observeUnit = async (
     unitName: string,
   ): Promise<ReadinessObservation> => {
-    const { activeState, restarts } = await readUnitState(unitName);
+    const { activeState, subState, restarts } = await readUnitState(unitName);
     if (restarts > 0) {
       return {
         kind: "failed",
         reason: `${unitName} restarted ${restarts} time(s) after it started`,
+      };
+    }
+    if (subState === "auto-restart") {
+      return {
+        kind: "failed",
+        reason: `${unitName} exited and is waiting to restart`,
       };
     }
     if (activeState === "failed" || activeState === "inactive") {
@@ -162,6 +216,22 @@ export function createLinuxServiceManager(
     return activeState === "active"
       ? { kind: "running" }
       : { kind: "pending", state: activeState };
+  };
+
+  const runResetFailed = (unitName: string) =>
+    input.run("systemctl", ["--user", "reset-failed", unitName], {
+      timeoutMs: SYSTEM_COMMAND_TIMEOUT_MS,
+    });
+
+  const resetStartLimit = async (unitName: string): Promise<void> => {
+    const result = await runResetFailed(unitName);
+    if (result.code !== 0 && !reportsUnitNotLoaded(result.stderr, unitName)) {
+      throw new Error(
+        result.stderr.trim()
+          ? describeSubprocessFailure(result, "systemctl")
+          : `Unable to reset the start limit of ${unitName}.`,
+      );
+    }
   };
 
   const startAttempt = async (
@@ -178,11 +248,18 @@ export function createLinuxServiceManager(
       ["--user", "daemon-reload"],
       "Unable to reload systemd user units.",
     );
+    await resetStartLimit(unitName);
     await assertSucceeded(
       input.run,
       "systemctl",
-      ["--user", "enable", "--now", unitName],
-      "Unable to enable/start the daemon unit.",
+      ["--user", "enable", unitName],
+      "Unable to enable the daemon unit.",
+    );
+    await assertSucceeded(
+      input.run,
+      "systemctl",
+      ["--user", "restart", unitName],
+      "Unable to start the daemon unit.",
     );
     await waitUntilSteadilyRunning(
       unitName,
@@ -221,6 +298,7 @@ export function createLinuxServiceManager(
     } catch {
       manualCleanup.push(`systemctl --user disable --now ${unitName}`);
     }
+    await runResetFailed(unitName).catch(() => undefined);
     try {
       await rm(unitPath, { force: true });
     } catch {
@@ -300,6 +378,7 @@ export function createLinuxServiceManager(
   return {
     kind: "systemd-user",
     isActive,
+    isSandboxEnforced,
     registerAutostart,
     unregisterAutostart,
     readUnitWorkingDirectory: unitFiles.readUnitWorkingDirectory,

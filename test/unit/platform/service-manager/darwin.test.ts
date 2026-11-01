@@ -438,30 +438,43 @@ describe("launchd service manager — unregister and state", () => {
     expect(fake.calls.some((call) => call.startsWith("bootout"))).toBe(false);
   });
 
-  it("reports active only for a running job", async () => {
-    const running = createFakeLaunchd({ initiallyLoaded: true });
-    const stopped = createFakeLaunchd({
+  it.each([
+    ["a running job", printOutput("running", 1), true, false],
+    [
+      "a stopped job that exited cleanly",
+      printOutput("not running", 1, "0"),
+      false,
+      false,
+    ],
+    ["a job that never ran", printOutput("not running", 0), false, false],
+    [
+      "a stopped job with a non-zero exit",
+      printOutput("not running", 4, "1"),
+      false,
+      true,
+    ],
+    [
+      "a running job whose last run failed",
+      printOutput("running", 4, "1"),
+      true,
+      false,
+    ],
+  ])("isActive reports %s", async (_case, stdout, active, failed) => {
+    const fake = createFakeLaunchd({
       initiallyLoaded: true,
-      print: () => ({
-        code: 0,
-        stdout: printOutput("not running", 1),
-        stderr: "",
-      }),
+      print: () => ({ code: 0, stdout, stderr: "" }),
     });
 
-    expect(
-      await (await createManager(running)).manager.isActive(PLIST),
-    ).toEqual({
-      active: true,
+    expect(await (await createManager(fake)).manager.isActive(PLIST)).toEqual({
+      active,
+      failed,
     });
-    expect(
-      await (await createManager(stopped)).manager.isActive(PLIST),
-    ).toEqual({
-      active: false,
-    });
+  });
+
+  it("isActive reports an unloaded job as neither active nor failed", async () => {
     expect(
       await (await createManager(createFakeLaunchd())).manager.isActive(PLIST),
-    ).toEqual({ active: false });
+    ).toEqual({ active: false, failed: false });
   });
 
   it("reads WorkingDirectory back, and never treats an unreadable plist as missing", async () => {
