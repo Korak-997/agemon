@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { isPlainSkillName } from "../../core/config.js";
 import { CUSTOM_SKILL_GROUP_RESOURCE_PREFIX } from "../../core/consent.js";
 import type { Context } from "../../core/context.js";
+import { errorMessage } from "../../core/error-message.js";
 import { RefusedPathError, readRegularFileIfExists } from "../../core/files.js";
 import { fingerprintJson } from "../../core/fingerprint.js";
 import {
@@ -275,17 +276,39 @@ function latestConfirmedSkillRecord(
     .at(-1);
 }
 
+function isManagedInstall(ctx: Context, entry: SkillBundleEntry): boolean {
+  return (
+    hasManagedInstallRecord(ctx, entry.skillName) &&
+    latestConfirmedSkillRecord(ctx, entry.skillName)?.type !==
+      ACTION_TYPE_PREEXISTING_SKILL
+  );
+}
+
 function isUpdatableBundledSkill(
   ctx: Context,
   group: SkillGroup,
   entry: SkillBundleEntry,
 ): boolean {
-  return (
-    !group.definedByRepository &&
-    hasManagedInstallRecord(ctx, entry.skillName) &&
-    latestConfirmedSkillRecord(ctx, entry.skillName)?.type !==
-      ACTION_TYPE_PREEXISTING_SKILL
-  );
+  return !group.definedByRepository && isManagedInstall(ctx, entry);
+}
+
+async function describeLocalSourceDrift(
+  ctx: Context,
+  skillName: string,
+  localSourcePath: string,
+): Promise<string | null> {
+  const installed = await installedSkillFingerprint(ctx, skillName);
+  if (installed === null) {
+    return null;
+  }
+  try {
+    const source = await readLocalSkill(ctx.cwd, localSourcePath, skillName);
+    return source.fingerprint === installed
+      ? null
+      : `it no longer matches ${localSourcePath}`;
+  } catch (error) {
+    return errorMessage(error);
+  }
 }
 
 interface KeptSkill {
@@ -296,14 +319,35 @@ interface KeptSkill {
 interface GroupRevisionReport {
   outdatedNames: string[];
   kept: KeptSkill[];
+  driftedCustomSkills: KeptSkill[];
 }
 
 async function reportGroupRevisions(
   ctx: Context,
   group: SkillGroup,
 ): Promise<GroupRevisionReport> {
-  const report: GroupRevisionReport = { outdatedNames: [], kept: [] };
+  const report: GroupRevisionReport = {
+    outdatedNames: [],
+    kept: [],
+    driftedCustomSkills: [],
+  };
   for (const entry of group.skills) {
+    if (entry.localSourcePath !== undefined) {
+      const drift = isManagedInstall(ctx, entry)
+        ? await describeLocalSourceDrift(
+            ctx,
+            entry.skillName,
+            entry.localSourcePath,
+          )
+        : null;
+      if (drift !== null) {
+        report.driftedCustomSkills.push({
+          name: entry.skillName,
+          reason: drift,
+        });
+      }
+      continue;
+    }
     if (!isUpdatableBundledSkill(ctx, group, entry)) {
       continue;
     }
@@ -332,6 +376,11 @@ function describeGroupRevisions(report: GroupRevisionReport): string[] {
       `agemon keeps ${report.kept.map(({ name }) => name).join(", ")}`,
     );
   }
+  if (report.driftedCustomSkills.length > 0) {
+    fragments.push(
+      `source differs for ${report.driftedCustomSkills.map(({ name }) => name).join(", ")}`,
+    );
+  }
   return fragments;
 }
 
@@ -339,12 +388,18 @@ function describeKeptSkill({ name, reason }: KeptSkill): string {
   return `skills: agemon keeps ${name} (${reason}); to get agemon's version, delete ${CLAUDE_SKILLS_DIRECTORY}/${name} and run agemon`;
 }
 
+function describeDriftedCustomSkill({ name, reason }: KeptSkill): string {
+  return printable(
+    `custom skill ${name} is out of step with its source (${reason}); to reinstall it, delete ${CLAUDE_SKILLS_DIRECTORY}/${name} and run agemon`,
+  );
+}
+
 function presentGroupState(
   ctx: Context,
   group: SkillGroup,
   revisions: GroupRevisionReport,
 ): CapabilityState {
-  if (revisions.kept.length > 0) {
+  if (revisions.kept.length > 0 || revisions.driftedCustomSkills.length > 0) {
     return "present-modified";
   }
   const allManaged = group.skills.every((skill) =>
@@ -1056,20 +1111,27 @@ async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
   }
 
   const outdatedNames: string[] = [];
+  const attentionNotes: string[] = [];
   for (const group of recordedGroups) {
     const revisions = await reportGroupRevisions(ctx, group);
     outdatedNames.push(...revisions.outdatedNames);
+    attentionNotes.push(
+      ...revisions.driftedCustomSkills.map(describeDriftedCustomSkill),
+    );
     for (const keptSkill of revisions.kept) {
       ctx.ui.info(printable(describeKeptSkill(keptSkill)));
     }
   }
+  if (outdatedNames.length > 0) {
+    attentionNotes.unshift(
+      `a newer bundled version of ${outdatedNames.join(", ")} is available; run agemon`,
+    );
+  }
   return {
     ok: true,
     detail: `${recordedGroups.length} skill group(s), ${recordedEntries.length} skill(s) present`,
-    ...(outdatedNames.length > 0
-      ? {
-          attention: `a newer bundled version of ${outdatedNames.join(", ")} is available; run agemon`,
-        }
+    ...(attentionNotes.length > 0
+      ? { attention: attentionNotes.join("; ") }
       : {}),
   };
 }

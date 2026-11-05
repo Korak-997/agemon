@@ -139,9 +139,11 @@ Skills recorded for a custom group that `agemon.toml` no longer defines are list
 
 #### Project-defined skill groups
 
-A project can define its own groups in `agemon.toml`:
+A project can define its own groups in `agemon.toml`. The first run writes that file; if you
+create it by hand, `capabilities` is required:
 
 ```toml
+capabilities = ["skills"]
 skill_groups = "essentials,house-style"
 
 [custom_skill_groups.house-style]
@@ -161,6 +163,10 @@ skills = [
 - Each skill's `SKILL.md` must declare the same `name`.
 - A group id must not reuse a built-in group id, or be `all`/`none`; a skill name must not
   reuse a built-in skill name or appear twice.
+- agemon does not reinstall a skill when its local source changes. `agemon status` reports an
+  installed copy that no longer matches its source, or a source agemon can no longer read, and
+  needs attention (exit 2) until they match. To install the new version, delete
+  `.claude/skills/<name>` and run `agemon`.
 
 A custom group is installed only when you pick it in the interactive question or name it in
 `--skill-groups` or `skill_groups`; `--yes` and `--skill-groups all` cover agemon's own groups

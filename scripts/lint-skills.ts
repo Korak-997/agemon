@@ -1,18 +1,28 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { SKILL_GROUPS } from "../src/plugins/skills/catalog.js";
 import {
   bundledCatalogSkillDirectories,
+  findReadmeGroupTableMismatches,
   findRegistryMismatches,
   lintSkillAssets,
 } from "./lint-skills/rules.js";
 
 const SKILLS_ROOT = fileURLToPath(new URL("../assets/skills", import.meta.url));
+const README_PATH = fileURLToPath(new URL("../README.md", import.meta.url));
 
 const problems = [
-  ...lintSkillAssets(SKILLS_ROOT),
-  ...findRegistryMismatches(SKILLS_ROOT, bundledCatalogSkillDirectories()),
+  ...[
+    ...lintSkillAssets(SKILLS_ROOT),
+    ...findRegistryMismatches(SKILLS_ROOT, bundledCatalogSkillDirectories()),
+  ].map((problem) => `assets/skills/${problem}`),
+  ...findReadmeGroupTableMismatches(
+    readFileSync(README_PATH, "utf8"),
+    SKILL_GROUPS,
+  ),
 ];
 for (const problem of problems) {
-  console.log(`assets/skills/${problem}`);
+  console.log(problem);
 }
 if (problems.length === 0) {
   console.log("lint-skills: every bundled skill passes");

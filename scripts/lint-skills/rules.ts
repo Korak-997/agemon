@@ -373,6 +373,31 @@ export function bundledCatalogSkillDirectories(): string[] {
     .map((skill) => skill.source);
 }
 
+export function findReadmeGroupTableMismatches(
+  readme: string,
+  groups: readonly {
+    id: string;
+    skills: readonly { skillName: string }[];
+  }[],
+): string[] {
+  const rows = readme.split("\n");
+  return groups.flatMap((group) => {
+    const row = rows.find((line) => line.startsWith(`| \`${group.id}\``));
+    if (row === undefined) {
+      return [
+        `README.md: the Skill Groups table has no row for \`${group.id}\``,
+      ];
+    }
+    const skillsCell = row.split("|")[2] ?? "";
+    return group.skills
+      .filter(({ skillName }) => !skillsCell.includes(`\`${skillName}\``))
+      .map(
+        ({ skillName }) =>
+          `README.md: the Skill Groups row for \`${group.id}\` does not list \`${skillName}\``,
+      );
+  });
+}
+
 export function findRegistryMismatches(
   skillsRoot: string,
   catalogSkillDirectories: readonly string[],

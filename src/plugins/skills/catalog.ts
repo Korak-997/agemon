@@ -175,7 +175,7 @@ export const SKILL_GROUPS: SkillGroup[] = [
     id: "teamlead",
     label: "Team Lead",
     description:
-      "Team-lead workflows: structured RFC planning and PRD generation for major features or architectural changes.",
+      "Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync.",
     defaultSelected: false,
     skills: [
       vendoredSkill("team-lead", "agemon-plan-rfc"),

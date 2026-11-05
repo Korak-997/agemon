@@ -10,10 +10,71 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   bundledCatalogSkillDirectories,
+  findReadmeGroupTableMismatches,
   findRegistryMismatches,
   lintSkillAssets,
 } from "../../../scripts/lint-skills/rules.js";
 import { resolveVendoredSkillPath } from "../../../src/core/package-assets.js";
+
+describe("findReadmeGroupTableMismatches", () => {
+  const SECURITY_GROUP = {
+    id: "security",
+    skills: [{ skillName: "agemon-security" }, { skillName: "agemon-example" }],
+  };
+
+  it("accepts a row that lists every skill of its group", () => {
+    const readme =
+      "| `security` | `agemon-security`, `agemon-example` | Review. |\n";
+
+    expect(findReadmeGroupTableMismatches(readme, [SECURITY_GROUP])).toEqual(
+      [],
+    );
+  });
+
+  it("accepts a first cell with a note after the group id", () => {
+    const readme =
+      "| `security` (always on) | `agemon-security`, `agemon-example` | Review. |\n";
+
+    expect(findReadmeGroupTableMismatches(readme, [SECURITY_GROUP])).toEqual(
+      [],
+    );
+  });
+
+  it("reports a skill missing from its group's row", () => {
+    const readme = "| `security` | `agemon-security` | Review. |\n";
+
+    expect(findReadmeGroupTableMismatches(readme, [SECURITY_GROUP])).toEqual([
+      "README.md: the Skill Groups row for `security` does not list `agemon-example`",
+    ]);
+  });
+
+  it("does not count a skill that only another group's row lists", () => {
+    const readme = [
+      "| `security` | `agemon-security` | Review. |",
+      "| `design` | `agemon-example` | Design. |",
+      "",
+    ].join("\n");
+
+    expect(findReadmeGroupTableMismatches(readme, [SECURITY_GROUP])).toEqual([
+      "README.md: the Skill Groups row for `security` does not list `agemon-example`",
+    ]);
+  });
+
+  it("does not count a longer name that contains the skill name", () => {
+    const readme =
+      "| `security` | `agemon-security`, `agemon-example-two` | Review. |\n";
+
+    expect(findReadmeGroupTableMismatches(readme, [SECURITY_GROUP])).toEqual([
+      "README.md: the Skill Groups row for `security` does not list `agemon-example`",
+    ]);
+  });
+
+  it("reports a group with no row", () => {
+    expect(findReadmeGroupTableMismatches("", [SECURITY_GROUP])).toEqual([
+      "README.md: the Skill Groups table has no row for `security`",
+    ]);
+  });
+});
 
 const THIRD_PARTY_SKILL = "third/vendored-skill";
 const FIRST_PARTY_SKILL = "commit/agemon-commit";
