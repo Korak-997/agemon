@@ -4,8 +4,9 @@ import { intro, outro } from "@clack/prompts";
 import { Command, CommanderError } from "commander";
 import {
   addCapabilitiesToConfig,
-  capabilitiesToAutoAdd,
+  findCapabilityOffers,
   outcomeUpdatesConfig,
+  promptForNewCapabilities,
 } from "../core/capability-migration.js";
 import {
   type AgemonConfig,
@@ -13,7 +14,7 @@ import {
   loadConfig,
   SKILL_GROUPS_WHEN_ABSENT,
 } from "../core/config.js";
-import { createContext } from "../core/context.js";
+import { type Context, createContext } from "../core/context.js";
 import { assertFakeBackendsAreDevOnly } from "../core/dev-mode.js";
 import {
   assertNotRootOnMacOS,
@@ -24,6 +25,7 @@ import {
   resolveInstallMethod,
 } from "../core/install-method.js";
 import { ApplyInterruptedError } from "../core/interruption.js";
+import { describeOffers, findOffers } from "../core/offers.js";
 import {
   buildPlan,
   exitCodeForOutcome,
@@ -58,8 +60,12 @@ import {
   pinnedArchiveKeyFor,
 } from "../plugins/cli-tool/index.js";
 import { CORE_CAPABILITY_IDS, getRegisteredPlugins } from "../plugins/index.js";
-import { assertCustomSkillGroupsAreValid } from "../plugins/skills/catalog.js";
-import type { AgemonPlugin } from "../plugins/types.js";
+import {
+  assertCustomSkillGroupsAreValid,
+  findSkillGroup,
+} from "../plugins/skills/catalog.js";
+import { SKILLS_PLUGIN_ID } from "../plugins/skills/ledger-view.js";
+import type { AgemonPlugin, Offer } from "../plugins/types.js";
 import { renderBanner } from "../ui/banner.js";
 import { box } from "../ui/box.js";
 import { renderPlan } from "../ui/plan-view.js";
@@ -251,89 +257,126 @@ function assertConfiguredCapabilitiesAreKnown(config: AgemonConfig): void {
   }
 }
 
-const ADDED_CAPABILITY_PURPOSE =
-  "installs Claude Code subagents for your skill groups";
-
 interface DesiredStateDefaults {
   config: AgemonConfig | null;
   only: string[] | undefined;
   skillGroups: string | undefined;
   customSkillGroups: CustomSkillGroupConfig[];
-  addedCapabilityIds: string[];
 }
+
+interface CapabilityChoice {
+  chosenIds: string[];
+  leftOutIds: string[];
+}
+
+const NO_CAPABILITY_CHOICE: CapabilityChoice = {
+  chosenIds: [],
+  leftOutIds: [],
+};
 
 function quoteCapabilityIds(capabilityIds: string[]): string {
   return capabilityIds.map((id) => `'${id}'`).join(", ");
 }
 
-function announceAddedCapabilities(
-  options: CliOptions,
-  addedCapabilityIds: string[],
-  willUpdateConfig: boolean,
-): void {
-  if (addedCapabilityIds.length === 0 || options.quiet) {
-    return;
-  }
-  const when = willUpdateConfig
-    ? "agemon.toml is updated when this run completes"
-    : "agemon.toml is updated on the next interactive or --yes run";
-  console.error(
-    theme.dim(
-      `agemon.toml does not list the new capability ${quoteCapabilityIds(addedCapabilityIds)} (${ADDED_CAPABILITY_PURPOSE}) yet; this run includes it (${when}).`,
-    ),
+function canAskAboutNewCapabilities(options: CliOptions): boolean {
+  return (
+    isInteractiveTerminal() &&
+    !options.yes &&
+    !options.dryRun &&
+    !options.plan &&
+    options.only === undefined
   );
 }
 
-async function updateConfigWithAddedCapabilities(
+async function chooseNewCapabilities(
+  options: CliOptions,
+  config: AgemonConfig | null,
+  plugins: AgemonPlugin[],
+): Promise<CapabilityChoice> {
+  if (config === null || !canAskAboutNewCapabilities(options)) {
+    return NO_CAPABILITY_CHOICE;
+  }
+  const newIds = findCapabilityOffers(config, plugins)
+    .filter((offer) => offer.state === "new")
+    .map((offer) => offer.id);
+  if (newIds.length === 0) {
+    return NO_CAPABILITY_CHOICE;
+  }
+  const chosenIds = await promptForNewCapabilities(
+    plugins.filter((plugin) => newIds.includes(plugin.id)),
+  );
+  return {
+    chosenIds,
+    leftOutIds: newIds.filter((id) => !chosenIds.includes(id)),
+  };
+}
+
+function describeCapabilityChoice({
+  chosenIds,
+  leftOutIds,
+}: CapabilityChoice): string {
+  return [
+    ...(chosenIds.length > 0
+      ? [
+          `added ${quoteCapabilityIds(chosenIds)} to capabilities; remove it there to opt out`,
+        ]
+      : []),
+    ...(leftOutIds.length > 0
+      ? [
+          `left ${quoteCapabilityIds(leftOutIds)} out; 'agemon add <name>' installs it later`,
+        ]
+      : []),
+  ].join("; ");
+}
+
+async function updateConfigWithCapabilityChoice(
   repoRoot: string,
   config: AgemonConfig,
-  addedCapabilityIds: string[],
+  choice: CapabilityChoice,
   allowUnignoredState: boolean,
 ): Promise<string> {
-  const added = quoteCapabilityIds(addedCapabilityIds);
   const update = await addCapabilitiesToConfig(
     repoRoot,
     config,
-    addedCapabilityIds,
+    choice.chosenIds,
     { knownCapabilities: CORE_CAPABILITY_IDS, allowUnignoredState },
   );
   if (update.kind === "state-not-ignored") {
-    return `Left agemon.toml unchanged: /.agemon/ is not git-ignored, so agemon keeps no backup of it there. Add /.agemon/ to .gitignore (or pass --allow-unignored-state) and run agemon again to add ${added}.`;
+    return "Left agemon.toml unchanged: /.agemon/ is not git-ignored, so agemon keeps no backup of it there. Add /.agemon/ to .gitignore (or pass --allow-unignored-state) and run agemon again to record this choice.";
   }
   if (update.kind === "not-written") {
-    return `Left agemon.toml unchanged: ${update.reason}. The next run tries again, or add ${added} to capabilities by hand.`;
+    return `Left agemon.toml unchanged: ${update.reason}. The next run asks again.`;
   }
   const savedOriginal =
     update.backupPath === null
       ? ""
       : ` Comments and layout were not kept; the original is saved at ${update.backupPath} (a full 'agemon nuke' deletes .agemon/, so keep a copy if you need it).`;
-  return `Updated agemon.toml: added ${added} (${ADDED_CAPABILITY_PURPOSE}) to capabilities; remove it there to opt out.${savedOriginal} Commit agemon.toml; older agemon versions reject it, so upgrade agemon in CI first.`;
+  return `Updated agemon.toml: ${describeCapabilityChoice(choice)}.${savedOriginal} Commit agemon.toml; older agemon versions reject it, so upgrade agemon in CI first.`;
 }
 
-async function recordAddedCapabilities(
+async function recordCapabilityChoice(
   repoRoot: string,
-  defaults: DesiredStateDefaults,
-  run: {
-    outcome: RunOutcome;
-    approvable: boolean;
-    allowUnignoredState: boolean;
-  },
+  config: AgemonConfig | null,
+  choice: CapabilityChoice,
+  run: { outcome: RunOutcome; allowUnignoredState: boolean },
 ): Promise<void> {
-  const { config, addedCapabilityIds } = defaults;
-  if (config === null || addedCapabilityIds.length === 0 || !run.approvable) {
+  if (
+    config === null ||
+    (choice.chosenIds.length === 0 && choice.leftOutIds.length === 0)
+  ) {
     return;
   }
   if (!outcomeUpdatesConfig(run.outcome)) {
     console.log(
-      "Left agemon.toml unchanged: this run applied nothing that was approved. The next run tries again.",
+      "Left agemon.toml unchanged: this run applied nothing that was approved. The next run asks again.",
     );
     return;
   }
   console.log(
-    await updateConfigWithAddedCapabilities(
+    await updateConfigWithCapabilityChoice(
       repoRoot,
       config,
-      addedCapabilityIds,
+      choice,
       run.allowUnignoredState,
     ),
   );
@@ -349,26 +392,28 @@ async function resolveDesiredStateDefaults(
     assertCustomSkillGroupsAreValid(config.customSkillGroups);
   }
 
-  const addedCapabilityIds =
-    config === null
-      ? []
-      : capabilitiesToAutoAdd(config, getRegisteredPlugins());
   const excludedIds = excludedPluginIds(options);
-  const configuredIds = config?.capabilities
-    .concat(addedCapabilityIds)
-    .filter((id) => !excludedIds.includes(id));
-  const only = parseOnlyOption(options);
+  const configuredIds = config?.capabilities.filter(
+    (id) => !excludedIds.includes(id),
+  );
 
   return {
     config,
-    only: only ?? configuredIds,
+    only: parseOnlyOption(options) ?? configuredIds,
     skillGroups: options.skillGroups ?? config?.skillGroups ?? undefined,
     customSkillGroups: config?.customSkillGroups ?? [],
-    addedCapabilityIds: only === undefined ? addedCapabilityIds : [],
   };
 }
 
+function withChosenCapabilities(
+  only: string[] | undefined,
+  choice: CapabilityChoice,
+): string[] | undefined {
+  return only?.concat(choice.chosenIds);
+}
+
 interface ReportConfig {
+  config: AgemonConfig | null;
   customSkillGroups: CustomSkillGroupConfig[];
   configError: string | null;
 }
@@ -378,12 +423,27 @@ async function loadConfigForReport(repoRoot: string): Promise<ReportConfig> {
     const config = await loadConfig(repoRoot);
     const customSkillGroups = config?.customSkillGroups ?? [];
     assertCustomSkillGroupsAreValid(customSkillGroups);
-    return { customSkillGroups, configError: null };
+    return { config, customSkillGroups, configError: null };
   } catch (error) {
     return {
+      config: null,
       customSkillGroups: [],
       configError: error instanceof Error ? error.message : String(error),
     };
+  }
+}
+
+async function reportOffers(
+  options: CliOptions,
+  context: Context,
+  plugins: AgemonPlugin[],
+): Promise<void> {
+  if (options.quiet) {
+    return;
+  }
+  const { config } = await loadConfigForReport(context.cwd);
+  for (const line of describeOffers(findOffers(context, plugins, config))) {
+    console.log(theme.dim(line));
   }
 }
 
@@ -411,11 +471,15 @@ async function runInspectCommand(options: CliOptions): Promise<number> {
 
 async function runStatusCommand(options: CliOptions): Promise<number> {
   const repoRoot = await resolveRepositoryRootFor(options);
-  const { customSkillGroups, configError } =
+  const { config, customSkillGroups, configError } =
     await loadConfigForReport(repoRoot);
+  const platform = await detectPlatformCapabilities();
+  const unrunnableIds = findWhatThisMachineCannotRun(options, platform).map(
+    ({ id }) => id,
+  );
   const context = await createContext({
     repoRoot,
-    platform: await detectPlatformCapabilities(),
+    platform,
     dryRun: false,
     yes: Boolean(options.yes),
     ui: SILENT_SPINNER,
@@ -425,6 +489,10 @@ async function runStatusCommand(options: CliOptions): Promise<number> {
 
   const report = await runStatus(context, getRegisteredPlugins(), {
     configError,
+    config,
+    offerablePlugins: getRegisteredPlugins().filter(
+      (plugin) => !unrunnableIds.includes(plugin.id),
+    ),
   });
   return report.configError === null &&
     (report.healthy || !report.hasAgemonState)
@@ -438,9 +506,8 @@ async function runPlanCommand(requested: CliOptions): Promise<number> {
   const options = skippingWhatThisMachineCannotRun(requested, platform);
   const repoRoot = await resolveRepositoryRootFor(options);
   const plugins = selectPlugins(options);
-  const { only, skillGroups, customSkillGroups, addedCapabilityIds } =
+  const { only, skillGroups, customSkillGroups } =
     await resolveDesiredStateDefaults(options, repoRoot);
-  announceAddedCapabilities(options, addedCapabilityIds, false);
   const context = await createContext({
     repoRoot,
     platform,
@@ -460,6 +527,7 @@ async function runPlanCommand(requested: CliOptions): Promise<number> {
 
   context.log.log(renderPlan(plan));
   context.log.log(`\nPlan written to ${relative(context.cwd, planPath)}`);
+  await reportOffers(options, context, plugins);
   return 0;
 }
 
@@ -469,19 +537,16 @@ async function runInstall(requested: CliOptions): Promise<number> {
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
-  const defaults = await resolveDesiredStateDefaults(options, repoRoot);
-  const { config, only, skillGroups, customSkillGroups } = defaults;
+  const { config, only, skillGroups, customSkillGroups } =
+    await resolveDesiredStateDefaults(options, repoRoot);
   const dryRun = Boolean(options.dryRun);
-  const approvable = Boolean(options.yes) || isInteractiveTerminal();
-  announceAddedCapabilities(
-    options,
-    defaults.addedCapabilityIds,
-    approvable && !dryRun,
-  );
   openInteractiveFrame(options);
+  let choice: CapabilityChoice;
+  let context: Context;
   let outcome: RunOutcome;
   try {
-    const context = await createContext({
+    choice = await chooseNewCapabilities(options, config, plugins);
+    context = await createContext({
       repoRoot,
       platform,
       dryRun,
@@ -494,7 +559,7 @@ async function runInstall(requested: CliOptions): Promise<number> {
     });
 
     outcome = await reconcile(context, plugins, {
-      only,
+      only: withChosenCapabilities(only, choice),
       agemonVersion: VERSION,
       allowUnignoredState: Boolean(options.allowUnignoredState),
       trustRepoGitConfig: Boolean(options.trustRepoGitConfig),
@@ -507,12 +572,12 @@ async function runInstall(requested: CliOptions): Promise<number> {
     throw error;
   }
   closeInteractiveFrame(options);
-  if (!dryRun) {
-    await recordAddedCapabilities(repoRoot, defaults, {
-      outcome,
-      approvable,
-      allowUnignoredState: Boolean(options.allowUnignoredState),
-    });
+  await recordCapabilityChoice(repoRoot, config, choice, {
+    outcome,
+    allowUnignoredState: Boolean(options.allowUnignoredState),
+  });
+  if (config !== null) {
+    await reportOffers(options, context, plugins);
   }
   return exitCodeForOutcome(outcome);
 }
@@ -526,14 +591,15 @@ async function runApply(requested: CliOptions): Promise<number> {
   const repoRoot = await resolveRepositoryRootFor(options);
   const spinner = selectSpinner(options);
   const plugins = selectPlugins(options);
-  const defaults = await resolveDesiredStateDefaults(options, repoRoot);
-  const { config, only, skillGroups, customSkillGroups } = defaults;
-  const approvable = Boolean(options.yes) || isInteractiveTerminal();
-  announceAddedCapabilities(options, defaults.addedCapabilityIds, approvable);
+  const { config, only, skillGroups, customSkillGroups } =
+    await resolveDesiredStateDefaults(options, repoRoot);
   openInteractiveFrame(options);
+  let choice: CapabilityChoice;
+  let context: Context;
   let outcome: RunOutcome;
   try {
-    const context = await createContext({
+    choice = await chooseNewCapabilities(options, config, plugins);
+    context = await createContext({
       repoRoot,
       platform,
       dryRun: false,
@@ -550,7 +616,7 @@ async function runApply(requested: CliOptions): Promise<number> {
       : undefined;
 
     outcome = await reconcile(context, plugins, {
-      only,
+      only: withChosenCapabilities(only, choice),
       agemonVersion: VERSION,
       allowUnignoredState: Boolean(options.allowUnignoredState),
       trustRepoGitConfig: Boolean(options.trustRepoGitConfig),
@@ -564,11 +630,182 @@ async function runApply(requested: CliOptions): Promise<number> {
     throw error;
   }
   closeInteractiveFrame(options);
-  await recordAddedCapabilities(repoRoot, defaults, {
+  await recordCapabilityChoice(repoRoot, config, choice, {
     outcome,
-    approvable,
     allowUnignoredState: Boolean(options.allowUnignoredState),
   });
+  if (config !== null) {
+    await reportOffers(options, context, plugins);
+  }
+  return exitCodeForOutcome(outcome);
+}
+
+const OUTCOMES_THAT_INSTALLED_THE_ADDITION: ReadonlySet<RunOutcome> = new Set([
+  "applied",
+  "nothing-to-do",
+  "partial",
+]);
+
+function explainNothingToAdd(name: string, config: AgemonConfig): string {
+  const capability = getRegisteredPlugins().find(
+    (plugin) => plugin.id === name,
+  );
+  if (capability !== undefined) {
+    if (config.capabilities.includes(name)) {
+      return `'${name}' is already enabled.`;
+    }
+    const missingIds = (capability.dependsOn ?? []).filter(
+      (id) => !config.capabilities.includes(id),
+    );
+    throw new Error(
+      missingIds.length > 0
+        ? `'${name}' needs ${missingIds.join(", ")}; run 'agemon add ${missingIds.join(" ")}' first.`
+        : `'${name}' cannot run here.`,
+    );
+  }
+  const isSkillGroup =
+    findSkillGroup(name) !== undefined ||
+    config.customSkillGroups.some((group) => group.id === name);
+  if (!isSkillGroup) {
+    throw new Error(
+      `Unknown capability or skill group '${printable(name)}'. 'agemon status' lists what can be added.`,
+    );
+  }
+  if (!config.capabilities.includes(SKILLS_PLUGIN_ID)) {
+    throw new Error(
+      `Skill group '${printable(name)}' needs skills; run 'agemon add ${SKILLS_PLUGIN_ID}' first.`,
+    );
+  }
+  return `Skill group '${printable(name)}' is already installed.`;
+}
+
+function resolveAdditions(
+  names: string[],
+  offers: Offer[],
+  config: AgemonConfig,
+): { capabilityIds: string[]; skillGroupIds: string[]; notes: string[] } {
+  const capabilityIds: string[] = [];
+  const skillGroupIds: string[] = [];
+  const notes: string[] = [];
+  for (const name of new Set(names)) {
+    const matches = offers.filter((offer) => offer.id === name);
+    if (matches.length > 1) {
+      throw new Error(
+        `'${printable(name)}' names both a capability and a skill group; rename the skill group in agemon.toml.`,
+      );
+    }
+    const [offer] = matches;
+    if (offer === undefined) {
+      notes.push(explainNothingToAdd(name, config));
+    } else if (offer.kind === "capability") {
+      capabilityIds.push(name);
+    } else {
+      skillGroupIds.push(name);
+    }
+  }
+  return { capabilityIds, skillGroupIds, notes };
+}
+
+function capabilitiesInstallingSkillGroups(
+  config: AgemonConfig,
+  plugins: AgemonPlugin[],
+): string[] {
+  return [
+    SKILLS_PLUGIN_ID,
+    ...plugins
+      .filter(
+        (plugin) =>
+          config.capabilities.includes(plugin.id) &&
+          plugin.dependsOn?.includes(SKILLS_PLUGIN_ID),
+      )
+      .map((plugin) => plugin.id),
+  ];
+}
+
+async function runAdd(names: string[], requested: CliOptions): Promise<number> {
+  if (requested.dryRun) {
+    throw new Error(
+      "'agemon add' has no --dry-run; it shows what it will change and asks first.",
+    );
+  }
+  const platform = await detectPlatformCapabilities();
+  const options = skippingWhatThisMachineCannotRun(requested, platform);
+  const repoRoot = await resolveRepositoryRootFor(options);
+  const { config, skillGroups, customSkillGroups } =
+    await resolveDesiredStateDefaults(options, repoRoot);
+  if (config === null) {
+    throw new Error(
+      "This repository has no agemon.toml. Run 'agemon' first, then 'agemon add'.",
+    );
+  }
+  const plugins = selectPlugins(options);
+  const scanContext = await createContext({
+    repoRoot,
+    platform,
+    dryRun: false,
+    yes: Boolean(options.yes),
+    ui: selectSpinner(options),
+    verbose: Boolean(options.verbose),
+    progress: selectProgress(options),
+    skillGroups,
+    customSkillGroups,
+  });
+  const { capabilityIds, skillGroupIds, notes } = resolveAdditions(
+    names,
+    findOffers(scanContext, plugins, config),
+    config,
+  );
+  for (const note of notes) {
+    console.log(note);
+  }
+  if (capabilityIds.length === 0 && skillGroupIds.length === 0) {
+    return 0;
+  }
+
+  const context: Context = {
+    ...scanContext,
+    requestedSkillGroupIds: new Set(skillGroupIds),
+  };
+  openInteractiveFrame(options);
+  let outcome: RunOutcome;
+  try {
+    outcome = await reconcile(context, plugins, {
+      only: [
+        ...new Set([
+          ...capabilityIds,
+          ...(skillGroupIds.length > 0
+            ? capabilitiesInstallingSkillGroups(config, plugins)
+            : []),
+        ]),
+      ],
+      agemonVersion: VERSION,
+      allowUnignoredState: Boolean(options.allowUnignoredState),
+      trustRepoGitConfig: Boolean(options.trustRepoGitConfig),
+      conflictDecisions: config.conflictDecisions,
+    });
+  } catch (error) {
+    closeInteractiveFrame(options, "failure");
+    throw error;
+  }
+  closeInteractiveFrame(options);
+  const approvable = Boolean(options.yes) || isInteractiveTerminal();
+  if (capabilityIds.length > 0) {
+    if (approvable && OUTCOMES_THAT_INSTALLED_THE_ADDITION.has(outcome)) {
+      console.log(
+        await updateConfigWithCapabilityChoice(
+          repoRoot,
+          config,
+          { chosenIds: capabilityIds, leftOutIds: [] },
+          Boolean(options.allowUnignoredState),
+        ),
+      );
+    } else {
+      console.log(
+        "Left agemon.toml unchanged: this run applied nothing that was approved.",
+      );
+    }
+  }
+  await reportOffers(options, context, plugins);
   return exitCodeForOutcome(outcome);
 }
 
@@ -838,6 +1075,27 @@ export function createProgram(recordExitCode: (code: number) => void): Command {
     .action((_options: CliOptions, command: Command) =>
       refusingUnsupportedPlatforms(
         recordWithUpdateCheck(lockingTheRepository(runApply)),
+      )({
+        ...command.parent?.opts(),
+        ...command.opts(),
+      }),
+    );
+
+  program
+    .command("add")
+    .description(
+      "Install a capability or skill group this repository left out or has not chosen yet",
+    )
+    .argument("<names...>", "capability or skill group names")
+    .option("--yes", "skip confirmation prompts")
+    .option(
+      "--allow-unignored-state",
+      "write .agemon/ state even when it cannot be git-ignored (discouraged)",
+    )
+    .option("--trust-repo-git-config", TRUST_REPO_GIT_CONFIG_HELP)
+    .action((names: string[], _options: CliOptions, command: Command) =>
+      refusingUnsupportedPlatforms(
+        record(lockingTheRepository((options) => runAdd(names, options))),
       )({
         ...command.parent?.opts(),
         ...command.opts(),

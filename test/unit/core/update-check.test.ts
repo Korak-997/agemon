@@ -182,6 +182,16 @@ describe("checkForUpdate offers the update the way this copy was installed", () 
     );
   });
 
+  it("after updating, links the release notes and says repositories need a run", async () => {
+    await checkForUpdate({ currentVersion: CURRENT_VERSION, dryRun: false });
+
+    const printed = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(printed).toContain(
+      `https://github.com/Korak-997/agemon/releases/tag/v${LATEST_VERSION}`,
+    );
+    expect(printed).toContain("Run 'agemon' in each repository");
+  });
+
   it("installs an npm-global copy through npm's own route, never install.sh", async () => {
     installMethod.resolveInstallMethod.mockResolvedValueOnce(NPM_GLOBAL);
 

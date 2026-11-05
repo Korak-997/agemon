@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resolveImmutableBackupPath } from "../../../src/core/backups.js";
 import {
   addCapabilitiesToConfig,
-  capabilitiesToAutoAdd,
+  findCapabilityOffers,
   outcomeUpdatesConfig,
 } from "../../../src/core/capability-migration.js";
 import {
@@ -64,41 +64,70 @@ async function configOf(cwd: string): Promise<AgemonConfig> {
   return config;
 }
 
-describe("capabilities added to an existing agemon.toml", () => {
-  it("adds agents to a file written before agemon knew it, when skills is listed", async () => {
+describe("capabilities an existing agemon.toml can still take", () => {
+  it("calls a capability the file never heard of new, and a known one it left out declined", async () => {
     const config = await configOf(await repoWithConfig(PRE_AGENTS_CONFIG));
 
-    expect(capabilitiesToAutoAdd(config, getRegisteredPlugins())).toEqual([
-      "agents",
+    expect(findCapabilityOffers(config, getRegisteredPlugins())).toEqual([
+      { kind: "capability", id: "agents", state: "new" },
+      { kind: "capability", id: "cli-tool", state: "declined" },
     ]);
   });
 
-  it("never adds agents without skills, so skills cannot come back", async () => {
+  it("does not offer a capability whose dependency is not listed", async () => {
     const config = await configOf(
-      await repoWithConfig('capabilities = ["crg", "master-prompt"]\n'),
+      await repoWithConfig('capabilities = ["master-prompt"]\n'),
     );
 
-    expect(capabilitiesToAutoAdd(config, getRegisteredPlugins())).toEqual([]);
+    expect(
+      findCapabilityOffers(config, getRegisteredPlugins()).map(
+        (offer) => offer.id,
+      ),
+    ).toEqual(["crg", "skills", "cli-tool"]);
   });
 
-  it("keeps agents removed once the file says agemon knew it", async () => {
+  it("keeps a capability declined once the file says agemon knew it", async () => {
     const config = await configOf(
       await repoWithConfig(
         'capabilities = ["skills"]\nknown_capabilities = ["skills", "agents"]\n',
       ),
     );
 
-    expect(capabilitiesToAutoAdd(config, getRegisteredPlugins())).toEqual([]);
+    expect(
+      findCapabilityOffers(config, getRegisteredPlugins()).find(
+        (offer) => offer.id === "agents",
+      ),
+    ).toEqual({ kind: "capability", id: "agents", state: "declined" });
   });
 
-  it("adds only capabilities on the explicit list, whatever the file has not seen", async () => {
+  it("treats every capability the file has not seen as new, without a maintained list", async () => {
     const config = await configOf(
       await repoWithConfig(
         'capabilities = ["crg"]\nknown_capabilities = ["crg"]\n',
       ),
     );
 
-    expect(capabilitiesToAutoAdd(config, getRegisteredPlugins())).toEqual([]);
+    expect(
+      findCapabilityOffers(config, getRegisteredPlugins()).map(
+        (offer) => `${offer.id}:${offer.state}`,
+      ),
+    ).toEqual([
+      "daemon:new",
+      "skills:new",
+      "cli-tool:new",
+      "master-prompt:new",
+    ]);
+  });
+
+  it("offers nothing this run cannot use", async () => {
+    const config = await configOf(await repoWithConfig(PRE_AGENTS_CONFIG));
+    const withoutAgents = getRegisteredPlugins().filter(
+      (plugin) => plugin.id !== "agents",
+    );
+
+    expect(findCapabilityOffers(config, withoutAgents)).toEqual([
+      { kind: "capability", id: "cli-tool", state: "declined" },
+    ]);
   });
 
   it("rejects a malformed known_capabilities", async () => {
@@ -349,6 +378,28 @@ describe("when agemon records an added capability", () => {
       }),
     ).toEqual({ kind: "state-not-ignored" });
     expect(await readFile(join(cwd, "agemon.toml"), "utf8")).toBe(
+      PRE_AGENTS_CONFIG,
+    );
+  });
+
+  it("records a declined capability as known, backing up the original, without listing it", async () => {
+    const cwd = await repoWithConfig(PRE_AGENTS_CONFIG);
+
+    const update = await addCapabilitiesToConfig(cwd, await configOf(cwd), [], {
+      knownCapabilities: ["agents"],
+      allowUnignoredState: true,
+    });
+
+    const rewritten = await configOf(cwd);
+    expect(rewritten.capabilities).toEqual([
+      "crg",
+      "daemon",
+      "skills",
+      "master-prompt",
+    ]);
+    expect(rewritten.knownCapabilities).toEqual(["agents"]);
+    const backupPath = update.kind === "written" ? update.backupPath : null;
+    expect(await readFile(join(cwd, backupPath ?? ""), "utf8")).toBe(
       PRE_AGENTS_CONFIG,
     );
   });

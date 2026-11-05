@@ -83,6 +83,10 @@ export function releaseAssetUrl(version: string, assetName: string): string {
   return `${RELEASE_DOWNLOAD_BASE_URL}/v${version}/${assetName}`;
 }
 
+export function describeStepsAfterUpgrade(version: string): string {
+  return `Release notes: https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${version}\nRun 'agemon' in each repository to pick up new skills and updates.`;
+}
+
 export async function downloadReleaseAsset(
   version: string,
   assetName: string,

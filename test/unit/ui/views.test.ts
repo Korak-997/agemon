@@ -213,6 +213,7 @@ describe("renderStatusReport", () => {
       },
     ],
     sharedResources: [],
+    offers: [],
     duplication: [],
     trackedAgemonPaths: [],
     trackingCheckError: null,
@@ -284,6 +285,26 @@ describe("renderStatusReport", () => {
     expect(rendered).toContain("d?]0;x");
   });
 
+  it("status lists new and declined items with how to get each, and stays quiet with none", () => {
+    expect(renderStatusReport(base)).not.toContain("Available");
+
+    const rendered = renderStatusReport({
+      ...base,
+      offers: [
+        { kind: "skill-group", id: "security", state: "new" },
+        { kind: "capability", id: "cli-tool", state: "declined" },
+      ],
+    });
+
+    expect(rendered).toContain("Available");
+    expect(rendered).toContain(
+      "New: skill group 'security'. Run 'agemon' to choose.",
+    );
+    expect(rendered).toContain(
+      "Declined: capability 'cli-tool'. Run 'agemon add <name>' to install.",
+    );
+  });
+
   it('status renders present-modified as "present · changed"', () => {
     const rendered = renderStatusReport({
       ...base,
@@ -308,6 +329,7 @@ describe("renderStatusReport — shared tools", () => {
   const report: StatusReport = {
     managedResources: [],
     capabilities: [],
+    offers: [],
     sharedResources: [
       {
         tool: "code-review-graph",

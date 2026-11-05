@@ -8,6 +8,7 @@ import { sha256Hex } from "./fingerprint.js";
 import {
   CHECKSUMS_ASSET_NAME,
   compareReleaseVersions,
+  describeStepsAfterUpgrade,
   downloadReleaseAsset,
   fetchLatestReleaseVersion,
   GITHUB_REPOSITORY,
@@ -352,6 +353,9 @@ export async function runUpgrade(request: UpgradeRequest): Promise<number> {
   );
   await installRelease(method, targetVersion, latestVersion);
   console.log(theme.ok(`agemon ${targetVersion} is installed.`));
+  if (direction > 0) {
+    console.log(describeStepsAfterUpgrade(targetVersion));
+  }
   return 0;
 }
 

@@ -70,6 +70,7 @@ export interface Context {
     },
   ) => Promise<ApprovedOperationSet>;
   skillGroupsOption?: string;
+  requestedSkillGroupIds?: ReadonlySet<string>;
   customSkillGroups?: CustomSkillGroupConfig[];
   removeSharedTools?: ReadonlySet<string>;
   gitConfigGuard: GitConfigGuard;

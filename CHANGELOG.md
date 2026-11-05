@@ -1,5 +1,31 @@
 # agemon
 
+## 6.1.0
+
+agemon now shows or asks about everything a repository could use but does not have yet, and a
+choice you made can be undone.
+
+### Added
+
+- **Runs list what's new.** `agemon`, `agemon apply`, `agemon plan`, `--dry-run` and
+  `agemon status` list new and declined skill groups and capabilities, with how to get each.
+  Exit codes don't change.
+- **`agemon add <names...>`** installs a skill group or capability, including one you declined,
+  behind the usual consent step.
+- **Any new capability is now offered.** agemon finds it by comparing with
+  `known_capabilities`, so a later release can't forget to tell existing repositories.
+- After an upgrade, agemon links the release notes and reminds you to run `agemon` in each
+  repository.
+
+### Changed
+
+- **`--yes` no longer decides about new skill groups.** Named groups still install. Others
+  used to be declined without a terminal and installed with one; both now wait and are listed.
+  A first install with `--yes` still installs every group. Earlier declines stay declined and
+  now appear in the reminder.
+- **The `agents` capability is no longer added automatically.** It is asked about like any other
+  new capability, so scripted `--yes` runs don't add it. Use `agemon add agents`.
+
 ## 6.0.0
 
 agemon 6 is a rework focused on safety: it can always undo what it did, it never removes

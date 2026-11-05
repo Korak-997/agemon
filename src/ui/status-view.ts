@@ -1,3 +1,4 @@
+import { describeOffers } from "../core/offers.js";
 import { printable } from "../core/untrusted-text.js";
 import { describeOverlap } from "../inspect/duplication.js";
 import type {
@@ -162,6 +163,11 @@ export function renderStatusReport(report: StatusReport): string {
       ),
     );
     lines.push(...attentionNotes);
+  }
+
+  if (report.offers.length > 0) {
+    lines.push(section("Available"));
+    lines.push(...describeOffers(report.offers).map((line) => `  ${line}`));
   }
 
   lines.push(section("Shared tools"));

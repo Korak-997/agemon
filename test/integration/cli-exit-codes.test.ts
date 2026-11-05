@@ -22,6 +22,18 @@ const { mockDetectOnLinuxHost, mockInstallLocationOnLinuxHost } =
 vi.mock("../../src/platform/detect.js", mockDetectOnLinuxHost);
 vi.mock("../../src/core/install-location.js", mockInstallLocationOnLinuxHost);
 
+const clack = vi.hoisted(() => ({
+  multiselect: vi.fn(),
+  select: vi.fn(),
+}));
+vi.mock("@clack/prompts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@clack/prompts")>()),
+  multiselect: clack.multiselect,
+  select: clack.select,
+  intro: vi.fn(),
+  outro: vi.fn(),
+}));
+
 const createdTempDirectories: string[] = [];
 const fixturesRoot = join(process.cwd(), "test/fixtures");
 const DRIFT_EXIT_CODE = 2;
@@ -572,19 +584,98 @@ describe("adding the agents capability to an existing agemon.toml", () => {
     return readFile(join(repoDirectory, "agemon.toml"), "utf8");
   }
 
-  it("includes agents, then records it once with a backup of the original", async () => {
+  const NEW_AGENTS_LINE = "New: capability 'agents'. Run 'agemon' to choose.";
+
+  async function withTerminal(body: () => Promise<void>): Promise<void> {
+    const original = {
+      stdin: process.stdin.isTTY,
+      stdout: process.stdout.isTTY,
+    };
+    process.stdin.isTTY = true;
+    process.stdout.isTTY = true;
+    try {
+      await body();
+    } finally {
+      process.stdin.isTTY = original.stdin;
+      process.stdout.isTTY = original.stdout;
+      clack.multiselect.mockReset();
+      clack.select.mockReset();
+    }
+  }
+
+  it("leaves it waiting under --yes and says so", async () => {
     await withCleanRepo(async ({ repoDirectory, runFrom }) => {
       await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
 
       const run = await runFrom(repoDirectory, ["--yes", "--skip-daemon"]);
 
       expect(run.exitCode).toBe(0);
-      expect(run.stderr).toContain(
-        "agemon.toml does not list the new capability 'agents' (installs Claude Code subagents for your skill groups) yet; this run includes it (agemon.toml is updated when this run completes).",
+      expect(run.stdout).toContain(NEW_AGENTS_LINE);
+      expect(await readConfig(repoDirectory)).toBe(PRE_AGENTS_CONFIG);
+      expect(
+        await exists(
+          join(repoDirectory, ".claude/agents/geo-audit-technical.md"),
+        ),
+      ).toBe(false);
+    });
+  });
+
+  it.each([
+    ["a dry run", ["--dry-run"]],
+    ["agemon plan", ["plan"]],
+  ])("lists it in %s", async (_label, argv) => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
+
+      const run = await runFrom(repoDirectory, argv);
+
+      expect(run.stdout).toMatch(
+        /New: capability 'agents'.*Run 'agemon' to choose\./u,
       );
-      expect(run.stdout).toContain(
-        "Updated agemon.toml: added 'agents' (installs Claude Code subagents for your skill groups) to capabilities; remove it there to opt out. Comments and layout were not kept; the original is saved at .agemon/backups/",
-      );
+    });
+  });
+
+  it("prints nothing about it with --quiet", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
+
+      const run = await runFrom(repoDirectory, ["--dry-run", "--quiet"]);
+
+      expect(run.stdout).not.toContain("capability 'agents'");
+    });
+  });
+
+  it("lists it in status without changing the exit code", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
+      await runFrom(repoDirectory, ["--yes", "--skip-daemon"]);
+
+      const status = await runFrom(repoDirectory, ["status"]);
+
+      expect(status.stdout).toContain(NEW_AGENTS_LINE);
+      expect(status.exitCode).toBe(0);
+    });
+  });
+
+  it("asks in a terminal, installs what was picked and records it once", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
+      await withTerminal(async () => {
+        clack.multiselect
+          .mockResolvedValueOnce(["agents"])
+          .mockResolvedValueOnce(["geo-seo"]);
+        clack.select.mockResolvedValue("approve");
+
+        const run = await runFrom(repoDirectory, ["--skip-daemon"]);
+
+        expect(run.exitCode).toBe(0);
+        expect(clack.multiselect.mock.calls[0][0].options[0].value).toBe(
+          "agents",
+        );
+        expect(run.stdout).toContain(
+          "Updated agemon.toml: added 'agents' to capabilities; remove it there to opt out. Comments and layout were not kept; the original is saved at .agemon/backups/",
+        );
+      });
       const rewritten = await readConfig(repoDirectory);
       expect(rewritten).toContain(
         'capabilities = [ "crg", "daemon", "skills", "master-prompt", "agents" ]',
@@ -598,20 +689,41 @@ describe("adding the agents capability to an existing agemon.toml", () => {
     });
   });
 
-  it("keeps agents out once the user removes it after the rewrite", async () => {
+  it("asks in a terminal and turns what was not picked into a reminder", async () => {
     await withCleanRepo(async ({ repoDirectory, runFrom }) => {
       await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
-      expect((await runFrom(repoDirectory, ["--yes"])).exitCode).toBe(0);
-      const optedOut = (await readConfig(repoDirectory)).replace(
-        ', "agents" ]',
-        " ]",
-      );
-      await writeFile(join(repoDirectory, "agemon.toml"), optedOut);
+      await withTerminal(async () => {
+        clack.multiselect.mockResolvedValue([]);
+        clack.select.mockResolvedValue("approve");
 
-      const run = await runFrom(repoDirectory, ["--yes"]);
+        const run = await runFrom(repoDirectory, ["--skip-daemon"]);
 
-      expect(run.stderr).not.toContain("new capability");
-      expect(await readConfig(repoDirectory)).toBe(optedOut);
+        expect(run.exitCode).toBe(0);
+        expect(run.stdout).toContain("left 'agents' out");
+        expect(run.stdout).toContain("capability 'agents'");
+        expect(run.stdout).not.toContain(NEW_AGENTS_LINE);
+      });
+      const rewritten = await readConfig(repoDirectory);
+      expect(rewritten).not.toMatch(/^capabilities = .*"agents"/mu);
+      expect(rewritten).toMatch(/^known_capabilities = .*"agents"/mu);
+      expect(
+        await exists(
+          join(repoDirectory, ".claude/agents/geo-audit-technical.md"),
+        ),
+      ).toBe(false);
+
+      clack.multiselect.mockClear();
+      await withTerminal(async () => {
+        clack.select.mockResolvedValue("approve");
+        const again = await runFrom(repoDirectory, ["--skip-daemon"]);
+        expect(again.stdout).toContain("Run 'agemon add <name>' to install.");
+        const askedAboutAgents = clack.multiselect.mock.calls.some(([prompt]) =>
+          prompt.options.some(
+            (option: { value: string }) => option.value === "agents",
+          ),
+        );
+        expect(askedAboutAgents).toBe(false);
+      });
     });
   });
 
@@ -636,6 +748,167 @@ describe("adding the agents capability to an existing agemon.toml", () => {
       expect(await readConfig(repoDirectory)).toContain(
         'known_capabilities = [ "crg", "daemon", "skills", "agents", "cli-tool", "master-prompt" ]',
       );
+    });
+  });
+});
+
+describe("agemon add", () => {
+  const PRE_AGENTS_CONFIG =
+    '# team config\ncapabilities = ["crg", "skills", "master-prompt"]\nskill_groups = "essentials"\n';
+
+  async function readConfig(repoDirectory: string): Promise<string> {
+    return readFile(join(repoDirectory, "agemon.toml"), "utf8");
+  }
+
+  async function setUpRepo(
+    repoDirectory: string,
+    runFrom: FixtureRepo["runFrom"],
+  ): Promise<void> {
+    await writeFile(join(repoDirectory, "agemon.toml"), PRE_AGENTS_CONFIG);
+    expect((await runFrom(repoDirectory, ["--yes"])).exitCode).toBe(0);
+  }
+
+  it("adds a capability, installing it and recording it in agemon.toml", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await setUpRepo(repoDirectory, runFrom);
+
+      const run = await runFrom(repoDirectory, ["add", "agents", "--yes"]);
+
+      expect(run.exitCode).toBe(0);
+      expect(await readConfig(repoDirectory)).toContain(
+        'capabilities = [ "crg", "skills", "master-prompt", "agents" ]',
+      );
+      const status = await runFrom(repoDirectory, ["status"]);
+      expect(status.stdout).not.toContain("capability 'agents'");
+    });
+  });
+
+  it("adds a skill group that was waiting, and stops listing it", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await setUpRepo(repoDirectory, runFrom);
+      const before = await runFrom(repoDirectory, ["status"]);
+      expect(before.stdout).toContain("skill group 'security'");
+
+      const run = await runFrom(repoDirectory, ["add", "security", "--yes"]);
+
+      expect(run.exitCode).toBe(0);
+      const after = await runFrom(repoDirectory, ["status"]);
+      expect(after.stdout).not.toContain("skill group 'security'");
+    });
+  });
+
+  it("installs a group's subagents too when the agents capability is on", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(
+        join(repoDirectory, "agemon.toml"),
+        'capabilities = ["skills", "agents"]\nskill_groups = "essentials"\n',
+      );
+      expect((await runFrom(repoDirectory, ["--yes"])).exitCode).toBe(0);
+
+      const run = await runFrom(repoDirectory, ["add", "geo-seo", "--yes"]);
+
+      expect(run.exitCode).toBe(0);
+      expect(
+        await exists(
+          join(repoDirectory, ".claude/agents/geo-audit-technical.md"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("changes nothing without consent", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await setUpRepo(repoDirectory, runFrom);
+      const configBefore = await readConfig(repoDirectory);
+
+      await runFrom(repoDirectory, ["add", "agents"]);
+      const addGroup = await runFrom(repoDirectory, ["add", "security"]);
+
+      expect(addGroup.exitCode).toBe(DRIFT_EXIT_CODE);
+      expect(await readConfig(repoDirectory)).toBe(configBefore);
+      const status = await runFrom(repoDirectory, ["status"]);
+      expect(status.stdout).toContain("capability 'agents'");
+      expect(status.stdout).toContain("skill group 'security'");
+    });
+  });
+
+  it("succeeds quietly for what is already there", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await setUpRepo(repoDirectory, runFrom);
+      const configBefore = await readConfig(repoDirectory);
+
+      const run = await runFrom(repoDirectory, [
+        "add",
+        "crg",
+        "essentials",
+        "--yes",
+      ]);
+
+      expect(run.exitCode).toBe(0);
+      expect(run.stdout).toContain("'crg' is already enabled.");
+      expect(run.stdout).toContain(
+        "Skill group 'essentials' is already installed.",
+      );
+      expect(await readConfig(repoDirectory)).toBe(configBefore);
+    });
+  });
+
+  it.each([
+    [
+      "an unknown name",
+      ["add", "nope", "--yes"],
+      "Unknown capability or skill group 'nope'",
+    ],
+    [
+      "--dry-run",
+      ["--dry-run", "add", "agents"],
+      "'agemon add' has no --dry-run",
+    ],
+  ])("refuses %s", async (_label, argv, message) => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await setUpRepo(repoDirectory, runFrom);
+
+      const run = await runFrom(repoDirectory, argv);
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain(message);
+    });
+  });
+
+  it("refuses a capability whose dependency is not enabled", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(
+        join(repoDirectory, "agemon.toml"),
+        'capabilities = ["master-prompt"]\n',
+      );
+
+      const run = await runFrom(repoDirectory, ["add", "agents", "--yes"]);
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("'agents' needs skills");
+    });
+  });
+
+  it("refuses a skill group while skills is not enabled", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      await writeFile(
+        join(repoDirectory, "agemon.toml"),
+        'capabilities = ["master-prompt"]\n',
+      );
+
+      const run = await runFrom(repoDirectory, ["add", "security", "--yes"]);
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("agemon add skills");
+    });
+  });
+
+  it("needs a repository agemon already set up", async () => {
+    await withCleanRepo(async ({ repoDirectory, runFrom }) => {
+      const run = await runFrom(repoDirectory, ["add", "agents", "--yes"]);
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("Run 'agemon' first");
     });
   });
 });

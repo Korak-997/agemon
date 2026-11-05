@@ -1,8 +1,10 @@
 import { detectAgents } from "../adapters/detect.js";
 import { readJournals } from "../core/apply-journal.js";
+import type { AgemonConfig } from "../core/config.js";
 import type { Context } from "../core/context.js";
 import { RefusedFileError, readRegularFileIfExists } from "../core/files.js";
 import { fingerprintContent } from "../core/fingerprint.js";
+import { findOffers } from "../core/offers.js";
 import { resolveInsideRepo } from "../core/repo-paths.js";
 import type { LedgerEntry } from "../core/state-manifest.js";
 import { printable } from "../core/untrusted-text.js";
@@ -11,7 +13,11 @@ import {
   describeSharedTools,
   type SharedToolStatus,
 } from "../plugins/shared-resource.js";
-import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
+import type {
+  AgemonPlugin,
+  CapabilityStateRow,
+  Offer,
+} from "../plugins/types.js";
 import { renderStatusReport } from "../ui/status-view.js";
 import { collectCapabilityStates } from "./capabilities.js";
 import { TEMPLATE_DRIFT_DETAIL, USER_DRIFT_DETAIL } from "./classify.js";
@@ -58,6 +64,7 @@ export interface InterruptedApplySummary {
 export interface StatusReport {
   managedResources: ManagedResourceStatus[];
   capabilities: CapabilityStatusRow[];
+  offers: Offer[];
   sharedResources: SharedToolStatus[];
   duplication: OverlapFinding[];
   trackedAgemonPaths: string[];
@@ -246,6 +253,8 @@ export async function verifyManagedState(
 
 export interface StatusOptions {
   configError?: string | null;
+  config?: AgemonConfig | null;
+  offerablePlugins?: AgemonPlugin[];
 }
 
 export async function buildStatusReport(
@@ -293,6 +302,11 @@ export async function buildStatusReport(
   return {
     managedResources,
     capabilities,
+    offers: findOffers(
+      ctx,
+      options.offerablePlugins ?? plugins,
+      options.config ?? null,
+    ),
     sharedResources,
     duplication,
     trackedAgemonPaths,

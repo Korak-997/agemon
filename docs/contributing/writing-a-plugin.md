@@ -53,6 +53,8 @@ As defined in `src/plugins/types.ts`:
 | `detect(ctx)` | yes | Returns `{ present, preExisting }`: is the capability already there, and was it there before agemon? |
 | `desiredRevision(ctx, resourceId)` | no | The version or revision agemon wants for a resource; stored on its ledger entry. |
 | `describeState(ctx)` | no | Rows for `status`/`inspect`: one per resource, with a `CapabilityState`. |
+| `listOffers(ctx)` | no | What a repository could still choose from this capability, each `new` or `declined` (the skills plugin lists its groups). |
+| `summary` | no | One line shown when agemon asks whether to add the capability. |
 | `plan(ctx, plannedSoFar?)` | no | Proposed operations (step 1). Without it, the plugin is never part of a plan. |
 | `materialize(ctx, operations)` | no | Staged files for approved operations (step 3). |
 | `apply(ctx, operations, staged?)` | no | Makes the approved changes (step 4). May return `{ skipped }` (step 4). |
@@ -159,9 +161,9 @@ a tool, `src/plugins/cli-tool/index.ts`.
 1. Add the plugin to `capabilityRegistry` in `src/plugins/index.ts`. The order there is the
    default order; `dependsOn` overrides it.
 2. A repository whose `agemon.toml` lists `capabilities` explicitly never gets a new id on
-   its own. If existing repositories should get the capability, add its id to
-   `AUTO_ADDED_TO_EXISTING_CONFIGS` in `src/core/capability-migration.ts` (the `agents`
-   capability is the example).
+   its own. agemon finds the new capability by itself: an interactive run asks about it once,
+   and other runs and `agemon status` list it, so there is no list to update. Set `summary` so
+   the question explains what it does (the `agents` capability is the example).
 3. Document it in the README ("What It Does") and in `docs/architecture-and-operations.md`.
 
 ## Tests

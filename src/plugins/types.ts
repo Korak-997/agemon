@@ -116,14 +116,22 @@ export interface PluginApplyReport {
   skipped: SkippedPluginOperation[];
 }
 
+export interface Offer {
+  kind: "capability" | "skill-group";
+  id: string;
+  state: "new" | "declined";
+}
+
 export interface AgemonPlugin {
   id: string;
+  summary?: string;
   dependsOn?: string[];
   riskClass?: RiskClass;
   sharedResources?: SharedResourceDeclaration[];
   detect(ctx: Context): Promise<PluginPresence>;
   desiredRevision?(ctx: Context, resourceId: string): string | null;
   describeState?(ctx: Context): Promise<CapabilityStateRow[]>;
+  listOffers?(ctx: Context): Offer[];
   plan?(
     ctx: Context,
     plannedSoFar?: readonly ProposedOperation[],

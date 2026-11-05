@@ -890,6 +890,7 @@ async function uninstallAgents(ctx: Context): Promise<void> {
 
 export const agentsPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  summary: "installs Claude Code subagents for your skill groups",
   dependsOn: [SKILLS_PLUGIN_ID],
   riskClass: "writes-config",
   detect: detectAgents,

@@ -92,10 +92,10 @@ the install gate. Ctrl-C at the question leaves the repository untouched.
 
 Re-running `agemon` in a repo only re-verifies the groups that repo already selected — it never
 asks you about, or installs, groups you previously declined, even when `--skill-groups` or
-`skill_groups` names them. A group added later (to agemon or to `agemon.toml`) is installed
-when `--skill-groups` or `skill_groups` names it; otherwise it is offered once in an
-interactive run. A non-interactive run without `--yes` leaves it pending; a non-interactive
-`--yes` run records new agemon groups as declined and leaves project-defined groups pending.
+`skill_groups` names them; `agemon add <group>` installs one. A group added later (to agemon or
+to `agemon.toml`) is installed when `--skill-groups` or `skill_groups` names it; otherwise it is
+offered once in an interactive run. A `--yes` or non-interactive run leaves it waiting and lists
+it. See [What a new version brings to a repository](#what-a-new-version-brings-to-a-repository).
 
 #### Subagents
 
@@ -382,6 +382,53 @@ reports that agemon is up to date. It refuses to replace an install another user
 run as root with another user's environment (`sudo -E`). Don't run two upgrades or
 rollbacks of the same install at once.
 
+After an upgrade, agemon prints the link to the release notes and reminds you to run
+`agemon` in each repository: upgrading replaces the program and changes no repository.
+
+### What a new version brings to a repository
+
+The next `agemon` run in a repository shows or asks about everything it could use but does not
+have yet. Only skill groups and capabilities need a decision; an updated skill or subagent, or a
+new skill in a group you already installed, appears at the usual consent step.
+
+- **New** means this repository has not decided yet: a skill group it was never offered, or a
+  capability `known_capabilities` does not name and whose dependencies are listed.
+- **Declined** means it decided against: a skill group you did not pick, or a capability in
+  `known_capabilities` that `capabilities` leaves out.
+
+| Run | New | Declined |
+|---|---|---|
+| `agemon` or `agemon apply` in a terminal | Asks once | One-line reminder |
+| With `--yes` or without a terminal | Lists it and leaves it waiting | One-line reminder |
+| `agemon --dry-run`, `agemon plan` | Lists it | One-line reminder |
+| `agemon status` | Listed under "Available" | Listed under "Available" |
+| `--quiet` | Nothing | Nothing |
+
+```text
+New: skill group 'security', capability 'agents'. Run 'agemon' to choose.
+Declined: skill group 'seo'. Run 'agemon add <name>' to install.
+```
+
+Neither changes the exit code, so a new release doesn't fail a CI job that runs `agemon status`.
+A first install doesn't print the reminder, because you just made those choices.
+
+Install anything listed with `agemon add`:
+
+```bash
+agemon add security agents
+```
+
+`add` takes skill group and capability names and shows the usual consent step. It changes
+nothing else in the repository, apart from installing subagents for a group when `agents` is
+on, and bringing skills up to date when it adds a group. A decline is cleared only after the
+install succeeds. A capability
+is added to `capabilities` in `agemon.toml` (see [`agemon.toml`](#agemontoml)) unless you refuse
+it. It refuses a capability or group whose dependency is not enabled, and a repository with no
+`agemon.toml`; run `agemon` there first.
+
+Skill group declines are kept per clone in `.agemon/`, so a teammate is still asked. Capability
+choices are in the committed `agemon.toml`, so they apply to the whole team.
+
 ### Uninstalling agemon itself
 
 `agemon nuke` reverses changes `agemon` made *inside a repository* — it does not remove
@@ -434,6 +481,13 @@ There is no check at all for `inspect`, `status`, `plan` or `recover`, with `--d
 
 ```bash
 agemon [options]
+```
+
+Install a capability or skill group the repository doesn't have yet (see
+[What a new version brings to a repository](#what-a-new-version-brings-to-a-repository)):
+
+```bash
+agemon add <names...> [--yes]
 ```
 
 Reverse managed changes:
@@ -562,19 +616,21 @@ skills = [{ source = "./tools/skills/house-rules" }]
 "rule-file:CLAUDE.md" = "keep"         # keep | replace | skip
 ```
 
-`known_capabilities` lists the capabilities the agemon that wrote the file knew about. When
-a later release adds a capability that existing repositories should get (so far only
-`agents`, and only when `skills` is listed), agemon includes it in the run and then adds
-it to `capabilities` once, rewriting `agemon.toml`. All values are kept, but comments and
-layout are not; if anything like that would be lost, the original is saved under
-`.agemon/backups/` and the message names the file. Each such rewrite keeps its own saved
-original; a later one never overwrites an earlier one. The rewrite happens only in an
-interactive or `--yes` run that did not roll back, and never with `--dry-run`, `--only` or
-`agemon plan`. To opt out, remove the capability from `capabilities` afterwards; because it
-is now in `known_capabilities`, agemon does not add it again. Older agemon releases reject a
-file with `known_capabilities` or `agents`, so upgrade agemon in CI before committing it. The
-rewrite is skipped while `/.agemon/` is not git-ignored, and a full `agemon nuke` deletes
-`.agemon/`, including that saved original.
+`known_capabilities` lists the capabilities the agemon that wrote the file knew about. A
+capability a later release adds is new to the file: an interactive `agemon` or `agemon apply`
+asks about it once, when everything it depends on is listed. What you pick is installed and added to
+`capabilities`, and everything agemon knows goes into `known_capabilities`, so what you
+did not pick becomes a declined reminder instead of another question. `agemon add <name>`
+installs a capability the same way, and `--yes` never decides for you.
+
+Recording this rewrites `agemon.toml`. All values are kept, but comments and layout are not; if
+anything like that would be lost, the original is saved under `.agemon/backups/` and the message
+names the file. Each such rewrite keeps its own saved original; a later one never overwrites an
+earlier one. It never happens with `--dry-run`, `--only` or `agemon plan`, or after a rollback. To
+opt out later, remove the capability from `capabilities`; because it is in `known_capabilities`,
+agemon does not ask again. Older agemon releases reject a file with `known_capabilities` or
+`agents`, so upgrade agemon in CI before committing it. The rewrite is skipped while `/.agemon/` is
+not git-ignored, and a full `agemon nuke` deletes `.agemon/`, including that saved original.
 
 A conflict is a rule file that holds your own rules where agemon would write a pointer.
 It needs a decision. `--yes` never picks one for you, so record it under

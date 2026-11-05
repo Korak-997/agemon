@@ -23,6 +23,7 @@ import type {
   AgemonPlugin,
   CapabilityState,
   CapabilityStateRow,
+  Offer,
   PluginPresence,
   PluginVerificationResult,
   ProposedOperation,
@@ -139,6 +140,23 @@ function getUnofferedGroups(ctx: Context): SkillGroup[] {
   return getAvailableGroups(ctx).filter(
     (group) => !offeredGroupIds.has(group.id) && !decidedGroupIds.has(group.id),
   );
+}
+
+function listSkillGroupOffers(ctx: Context): Offer[] {
+  const declinedIds = declinedSkillGroupIds(ctx);
+  const offerOf = (state: Offer["state"]) => (group: SkillGroup) => ({
+    kind: "skill-group" as const,
+    id: group.id,
+    state,
+  });
+  return [
+    ...getUnofferedGroups(ctx)
+      .filter((group) => !declinedIds.has(group.id))
+      .map(offerOf("new")),
+    ...getAvailableGroups(ctx)
+      .filter((group) => declinedIds.has(group.id))
+      .map(offerOf("declined")),
+  ];
 }
 
 function hasManagedInstallRecord(ctx: Context, skillName: string): boolean {
@@ -661,6 +679,15 @@ function selectGroups(
   ctx: Context,
   recordedGroups: SkillGroup[],
 ): Promise<GroupSelection> {
+  const requestedIds = ctx.requestedSkillGroupIds;
+  if (requestedIds !== undefined && requestedIds.size > 0) {
+    return Promise.resolve({
+      chosen: getAvailableGroups(ctx).filter((group) =>
+        requestedIds.has(group.id),
+      ),
+      offered: [],
+    });
+  }
   const customGroups = getCustomGroups(ctx);
   return recordedGroups.length === 0
     ? selectGroupsForFreshInstall(ctx, customGroups)
@@ -727,6 +754,26 @@ async function recordDeclinedGroups(
       });
     }
   }
+}
+
+async function forgetDeclinesOfRequestedGroups(
+  ctx: Context,
+  installedGroups: SkillGroup[],
+): Promise<void> {
+  const requestedAndInstalledIds = new Set(
+    installedGroups
+      .map((group) => group.id)
+      .filter((id) => ctx.requestedSkillGroupIds?.has(id)),
+  );
+  await ctx.manifest.removeActionIds(
+    skillsLedgerEntries(ctx)
+      .filter(
+        (action) =>
+          action.type === ACTION_TYPE_DECLINED_SKILL_GROUP &&
+          requestedAndInstalledIds.has(action.target),
+      )
+      .map((action) => action.id),
+  );
 }
 
 async function fetchPinnedSources(
@@ -1084,6 +1131,10 @@ async function applySkills(
     await withSkillsStage((stageDirectory) =>
       installGroups(ctx, groupInstalls, stageDirectory),
     );
+    await forgetDeclinesOfRequestedGroups(
+      ctx,
+      groupInstalls.map(({ group }) => group),
+    );
   }
 }
 
@@ -1274,6 +1325,7 @@ export const skillsPlugin: AgemonPlugin = {
   riskClass: "executes",
   detect: detectSkills,
   describeState: describeSkillsState,
+  listOffers: listSkillGroupOffers,
   plan: planSkills,
   apply: applySkills,
   verify: verifySkills,
