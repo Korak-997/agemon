@@ -145,7 +145,11 @@ group, add a `SkillGroup` object with a new `id`, `label`, `description` and
 A first-party skill is also added, by `<group-folder>/<skill-name>`, to `FIRST_PARTY_SKILLS`
 in `scripts/skill-provenance.ts`. Third-party skills are not.
 
-## 7. Update the README
+## 7. Update the README and the marketplace
+
+- **Plugin marketplace**: if you added a group or changed a group's description, run
+  `npm run marketplace` and commit `.claude-plugin/marketplace.json`. Adding a skill to an
+  existing group needs no change, because each plugin reads its group's whole folder.
 
 - **Skill Groups** table: add the skill to its group's row (or add a row for a new group),
   and update the row's description if the group now covers more. The group's
@@ -180,7 +184,7 @@ restore `bundle-fingerprints.ts` from your base branch and run it once more.
 
 ```bash
 npm run lint          # formatting and code lint, as in CI
-npm run lint-skills   # the rules above, "every skill folder is in the catalog", the README group table
+npm run lint-skills   # the rules above, "every skill folder is in the catalog", the README group table, the marketplace
 npm run skills:fingerprints -- --check
 npm run typecheck
 npm test

@@ -7,9 +7,16 @@ import {
   findRegistryMismatches,
   lintSkillAssets,
 } from "./lint-skills/rules.js";
+import {
+  findMarketplaceMismatch,
+  MARKETPLACE_MANIFEST_PATH,
+} from "./marketplace/manifest.js";
 
 const SKILLS_ROOT = fileURLToPath(new URL("../assets/skills", import.meta.url));
 const README_PATH = fileURLToPath(new URL("../README.md", import.meta.url));
+const MARKETPLACE_PATH = fileURLToPath(
+  new URL(`../${MARKETPLACE_MANIFEST_PATH}`, import.meta.url),
+);
 
 const problems = [
   ...[
@@ -18,6 +25,10 @@ const problems = [
   ].map((problem) => `assets/skills/${problem}`),
   ...findReadmeGroupTableMismatches(
     readFileSync(README_PATH, "utf8"),
+    SKILL_GROUPS,
+  ),
+  ...findMarketplaceMismatch(
+    readFileSync(MARKETPLACE_PATH, "utf8"),
     SKILL_GROUPS,
   ),
 ];

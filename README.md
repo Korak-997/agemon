@@ -22,6 +22,8 @@ Documentation, the skill library and the installer: <https://agemon.korak-kurani
   writes, and rolls back the whole run if any step fails.
 - **Fully reversible.** Every change is recorded, and `agemon nuke` removes exactly what
   agemon added, leaving your own files alone.
+- **Works on the web too.** Add agemon's skill groups to claude.ai as plugins, and check a
+  repository is ready for Claude Code on the web. See [Claude on the web](#claude-on-the-web).
 
 Want to help? Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -245,6 +247,70 @@ only agemon's own checks at each run apply.
 
 Daemon units registered before 6.0.0 get the start-time checks, the restart limit and the
 current hardening only after `agemon nuke --only daemon` and a fresh `agemon` run.
+
+## Claude on the web
+
+The `agemon` CLI runs on your machine, so it can't install into Claude on the web directly.
+There are two products to set up, and each gets agemon's work in a different way.
+
+| agemon installs | Claude Code on the web | claude.ai chat |
+|---|---|---|
+| Rules (`AGENTS.md`, `CLAUDE.md`) | Yes, once committed | No |
+| Skills | Yes, once committed | Yes, as plugins, except `essentials` |
+| Subagents | Yes, once committed | No |
+| Hooks and `.mcp.json` | Yes, once committed; the tools they run need installing | No |
+| `code-review-graph` | Through a setup script | No |
+| Daemon and global CLI tools | No | No |
+
+### Claude Code on the web
+
+A cloud session clones your repository and reads its agent config, so run `agemon`, commit
+the result and push it. It doesn't read `~/.claude`.
+
+`agemon inspect` has a **Claude on the web** section that lists:
+
+- agent config that is uncommitted or gitignored
+- commits changing agent config that aren't pushed yet
+- a setup script, if your hooks or MCP servers run `code-review-graph` directly
+
+To use the setup script, open [claude.ai/code](https://claude.ai/code), select the
+environment under the message box, open its settings, and paste the script into **Setup
+script**. It installs the pinned version of `code-review-graph`, but unlike a local agemon
+install, its dependencies are not hash-locked.
+
+Cloud sessions in a project's threads are different: they don't use the repository's
+`.claude/skills/` or run its hooks. They use the skills enabled on your claude.ai account.
+
+### claude.ai chat
+
+agemon's repository is also a plugin marketplace with one plugin per skill group:
+
+1. In claude.ai, open **Customize** > **Plugins**.
+2. Select **Add** > **Add marketplace** > **Add from a repository**.
+3. Enter `Korak-997/agemon`.
+4. Add the groups you want, such as `agemon-security` or `agemon-design`.
+
+The same marketplace works in Claude Code:
+
+```bash
+claude plugin marketplace add Korak-997/agemon
+claude plugin install agemon-security@agemon
+```
+
+Plugins differ from an `agemon` install in these ways:
+
+- **No agemon safety net.** Claude manages plugins, so there is no agemon plan, diff, rollback
+  or `nuke`, and `agemon status` doesn't see them. Remove them where you added them.
+- **Latest skills, not pinned.** The marketplace follows this repository's default branch
+  rather than a release. Claude Code doesn't auto-update third-party marketplaces by default;
+  run `claude plugin marketplace update agemon`, or turn on auto-update under `/plugin`.
+- **No `essentials`.** Its upstream repository has no license, so agemon can't redistribute
+  it. Install those skills from [their source](https://github.com/vercel-labs/agent-skills).
+- **Prefixed names.** A skill is named `<plugin>:<skill>`, such as
+  `agemon-security:agemon-security`. In a repository that also has an `agemon` install, you
+  would see both copies, so use one or the other there.
+- **Skills and commands only in chat.** Subagents and hooks don't run there, and local tools
+  can't. `geo-audit` expects subagents, so use it in Claude Code rather than chat.
 
 ## Requirements
 
@@ -721,6 +787,9 @@ agemon inspect --json
 
 `agemon status` includes a one-line agent summary (counts configured/installed) alongside
 its usual health/drift output.
+
+`agemon inspect` also reports what stops a repository working with Claude Code on the web,
+under `cloud` in the JSON report. See [Claude on the web](#claude-on-the-web).
 
 ## Reversibility Guarantees
 

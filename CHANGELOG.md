@@ -16,6 +16,11 @@ choice you made can be undone.
   `known_capabilities`, so a later release can't forget to tell existing repositories.
 - After an upgrade, agemon links the release notes and reminds you to run `agemon` in each
   repository.
+- **agemon's skills in claude.ai.** This repository is now a plugin marketplace with one plugin
+  per skill group, except `essentials`. Add `Korak-997/agemon` under Customize > Plugins, or
+  with `claude plugin marketplace add`.
+- **`agemon inspect` checks Claude Code on the web.** A new section lists agent config that a
+  cloud session won't see, and prints a setup script when hooks need `code-review-graph`.
 
 ### Changed
 

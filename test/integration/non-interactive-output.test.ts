@@ -605,7 +605,15 @@ describe("non-interactive output contract", () => {
               "evidence": []
             }
           }
-        ]
+        ],
+        "cloud": {
+          "uncommittedPaths": [],
+          "ignoredPaths": [],
+          "unpushedCommits": null,
+          "gitCheckError": "not a git repository, so Claude Code on the web can't clone it",
+          "toolsToInstall": [],
+          "setupScript": null
+        }
       }"
     `);
   });

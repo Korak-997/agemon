@@ -7,6 +7,11 @@ import type { AgemonPlugin, CapabilityStateRow } from "../plugins/types.js";
 import { renderInspectReport } from "../ui/inspect-view.js";
 import { collectCapabilityStates } from "./capabilities.js";
 import { type ClassifiedResource, classifyResources } from "./classify.js";
+import {
+  type CloudReadiness,
+  CONFIG_READ_FROM_THE_CLONE,
+  checkCloudReadiness,
+} from "./cloud.js";
 import { discoverRepository } from "./discover.js";
 import { type DuplicationReport, detectDuplication } from "./duplication.js";
 import { redactJsonValue } from "./redact.js";
@@ -38,6 +43,7 @@ export interface InspectReport {
   binaries: { name: string; present: boolean }[];
   duplication: DuplicationReport;
   agents: AgentDetectionRow[];
+  cloud: CloudReadiness;
 }
 
 export interface InspectOptions {
@@ -123,6 +129,12 @@ export async function inspectRepository(
     })),
     duplication,
     agents,
+    cloud: await checkCloudReadiness(
+      ctx.cwd,
+      discovery.structuredConfigs
+        .filter((config) => CONFIG_READ_FROM_THE_CLONE.includes(config.path))
+        .map((config) => config.parsed),
+    ),
   };
 }
 

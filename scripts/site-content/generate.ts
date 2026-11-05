@@ -72,9 +72,10 @@ const README_PAGES: ReadmePage[] = [
     routeName: "gettingStarted",
     route: "/start/getting-started/",
     title: "Getting started",
-    description: "Requirements and the ways to install agemon.",
+    description:
+      "Requirements, the ways to install agemon, and using it with Claude on the web.",
     sidebarOrder: 1,
-    headings: ["Requirements", INSTALL_HEADING],
+    headings: ["Requirements", INSTALL_HEADING, "Claude on the web"],
   },
   {
     routeName: "configuration",
