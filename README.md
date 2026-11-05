@@ -37,7 +37,7 @@ agemon is plugin-driven and runs its plugins in this order:
    [Daemon naming](#daemon-naming).
 3. `skills`: installs bundled skills with a pinned copy of the `skills` CLI. Always installs the `essentials` group;
    additional groups (design, security, code quality, architecture, self-review, performance,
-   team lead) are selected interactively, via `--skill-groups`, or skipped entirely in a
+   commit, workflow, output style, founder, team lead, GEO) are selected interactively, via `--skill-groups`, or skipped entirely in a
    non-interactive session — see [Skill Groups](#skill-groups).
 4. `agents`: installs the Claude Code subagents that come with an installed skill group into
    `.claude/agents/` — see [Subagents](#subagents). It depends on `skills`, so `--only agents`
@@ -67,12 +67,15 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 |---|---|---|
 | `essentials` (always on) | `web-design-guidelines`, `writing-guidelines` | Vercel Labs' general web design and writing review guidelines. Not vendored/renamed — see note below. |
 | `design` | `agemon-design` + 3 recipe variants (`agemon-design-minimal`, `agemon-design-editorial`, `agemon-design-dashboard`) | Design engineering: anti-slop rules, discovery, and outcome recipes (dashboard/landing/auth), covering both visual design and UI/UX. |
-| `security` | `agemon-security` | Exploit-driven security review — no finding without a working proof-of-concept. |
+| `security` | `agemon-security`, `agemon-security-audit` | Exploit-driven security review — no finding without a working proof-of-concept — plus a multi-agent, multi-phase codebase audit with independently verified findings. |
 | `code-quality` | `agemon-clean-code`, `agemon-house-rules` | Simplicity, DRY architecture, self-documenting naming, surgical scope control. |
 | `architecture` | `agemon-architecture` | Clean Architecture review: dependency rule, layering, boundary crossing, SOLID. |
 | `self-review` | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | Verification before claiming completion, giving/receiving code review, root-cause debugging. |
 | `performance` | `agemon-performance` | Algorithmic-complexity-first discipline: N+1 detection, hot-loop hygiene, when not to optimize. |
 | `commit` | `agemon-commit` | Staging review, commit message structure, and splitting unrelated changes into separate commits. |
+| `workflow` | `agemon-brainstorming`, `agemon-writing-plans`, `agemon-executing-plans`, `agemon-subagent-driven-development`, `agemon-test-driven-development`, `agemon-using-git-worktrees`, `agemon-dispatching-parallel-agents`, `agemon-finishing-a-development-branch` | Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Pairs with `self-review`. |
+| `output-style` | `agemon-adhd` | On request (`/agemon-adhd`), replies lead with the next action, number their steps, restate progress, and skip preamble and tangents. |
+| `founder` | `agemon-founder-board`, `agemon-founder-competitors`, `agemon-founder-consumer`, `agemon-founder-pricing`, `agemon-founder-offer`, `agemon-founder-cfo`, `agemon-founder-marketing`, `agemon-founder-brand`, `agemon-founder-ops`, `agemon-founder-launch`, `agemon-founder-plan` | Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict. The panel is simulated buyers, not customers. The scripts need Python 3.8 or newer. |
 | `teamlead` | `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync. |
 | `geo-seo` | `geo` (`/geo audit <url>` and the other `/geo` commands), `geo-audit`, `geo-citability`, `geo-crawlers`, `geo-llmstxt`, `geo-brand-mentions`, `geo-platform-optimizer`, `geo-technical`, `geo-content`, `geo-report`, `geo-schema`, `geo-report-pdf` | GEO (generative engine optimization): audits how likely AI search (ChatGPT, Perplexity, Google AI Overviews) is to find and cite a website — citability, AI crawler access, llms.txt, schema, technical SEO, brand mentions — and writes client-ready reports. Upstream names kept; see [Vendored Skills](#vendored-skills--attribution). |
 
@@ -935,7 +938,7 @@ Useful sandbox flags:
 ## Vendored Skills & Attribution
 
 The `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`,
-`teamlead` and `geo-seo` skill groups (see [Skill Groups](#skill-groups)) are vendored under
+`workflow`, `output-style`, `founder`, `teamlead` and `geo-seo` skill groups (see [Skill Groups](#skill-groups)) are vendored under
 `assets/skills/<group>/<skill>/`.
 Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
 and a copy of its upstream `LICENSE`. Sources, all MIT-licensed:
@@ -952,6 +955,10 @@ so `/geo audit` and the other commands match the upstream project's documentatio
 |---|---|---|
 | `agemon-design`, `agemon-design-minimal`, `agemon-design-editorial`, `agemon-design-dashboard` | `ui-craft` + 3 recipe variants | [educlopez/ui-craft](https://github.com/educlopez/ui-craft) |
 | `agemon-security` | `security-review` (also avoids colliding with Claude Code's own built-in skill of the same name) | [Dilaz/security-review-skill](https://github.com/Dilaz/security-review-skill) |
+| `agemon-security-audit` | `security-audit` | [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill) |
+| `agemon-brainstorming`, `agemon-writing-plans`, `agemon-executing-plans`, `agemon-subagent-driven-development`, `agemon-test-driven-development`, `agemon-using-git-worktrees`, `agemon-dispatching-parallel-agents`, `agemon-finishing-a-development-branch` | the same names without `agemon-` | [obra/superpowers](https://github.com/obra/superpowers) |
+| `agemon-adhd` | `i-have-adhd` | [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd) |
+| `agemon-founder-board` and the other `agemon-founder-*` skills | `founder-board` and the other `founder-*` skills | [Jakeschincariol/founder-skill](https://github.com/Jakeschincariol/founder-skill) |
 | `agemon-architecture` | `clean-architecture` | [nathankim0/clean-architecture-skills](https://github.com/nathankim0/clean-architecture-skills) |
 | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | `verification-before-completion`, `receiving-code-review`, `requesting-code-review`, `systematic-debugging` | [obra/superpowers](https://github.com/obra/superpowers) (cherry-picked; not a full vendor of that framework) |
 | `agemon-clean-code` | `karpathy-guidelines` | [swarmclawai/andrej-karpathy-skills](https://github.com/swarmclawai/andrej-karpathy-skills) |

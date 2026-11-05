@@ -248,8 +248,8 @@ describe("lintSkillAssets", () => {
     });
 
     expect(problemsFor(THIRD_PARTY_SKILL)).toEqual([
-      `${THIRD_PARTY_SKILL}/SKILL.md: frontmatter line "allowed-tools: Bash" is not one of the allowed keys (name, description, version, author, tags, triggers, argument-hint)`,
-      `${THIRD_PARTY_SKILL}/SKILL.md: frontmatter line "\\"hooks\\": {}" is not one of the allowed keys (name, description, version, author, tags, triggers, argument-hint)`,
+      `${THIRD_PARTY_SKILL}/SKILL.md: frontmatter line "allowed-tools: Bash" is not one of the allowed keys (name, description, version, author, tags, triggers, argument-hint, disable-model-invocation)`,
+      `${THIRD_PARTY_SKILL}/SKILL.md: frontmatter line "\\"hooks\\": {}" is not one of the allowed keys (name, description, version, author, tags, triggers, argument-hint, disable-model-invocation)`,
     ]);
   });
 

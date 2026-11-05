@@ -241,9 +241,9 @@ function filePages(
 }
 
 function assertSkillIndexFits(skillGroups: readonly SkillGroup[]): void {
-  if (skillGroups.length !== SKILL_INDEX_PLACES) {
+  if (skillGroups.length < SKILL_INDEX_PLACES) {
     throw new SiteContentError(
-      `the home page's skill index has ten places; SKILL_GROUPS has ${skillGroups.length} — update website/src/components/TetractysIndex.astro and the "Ten groups" heading in website/src/content/docs/index.mdx`,
+      `the home page's skill index has ten places; SKILL_GROUPS has ${skillGroups.length} — update website/src/components/TetractysIndex.astro`,
     );
   }
 }

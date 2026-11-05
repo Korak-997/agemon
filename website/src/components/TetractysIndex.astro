@@ -13,14 +13,18 @@ const usableSize = TETRACTYS_VIEW_BOX_SIZE - 2 * DOT_INSET;
 const position = (coordinate: number) =>
   `${(((coordinate - DOT_INSET) / usableSize) * 100).toFixed(2)}%`;
 
-const groups = siteData.skillGroups.map((group, index) => ({
-  ...group,
-  number: index + 1,
-  left: position(TETRACTYS_DOTS[index].x),
-  top: position(TETRACTYS_DOTS[index].y),
-  hollow: MARK_HOLLOW_INDEXES.includes(index),
-  apex: index === APEX_INDEX,
-}));
+const allGroups = siteData.skillGroups;
+const moreGroups = allGroups.slice(TETRACTYS_DOTS.length);
+const groups = allGroups
+  .slice(0, TETRACTYS_DOTS.length)
+  .map((group, index) => ({
+    ...group,
+    number: index + 1,
+    left: position(TETRACTYS_DOTS[index].x),
+    top: position(TETRACTYS_DOTS[index].y),
+    hollow: MARK_HOLLOW_INDEXES.includes(index),
+    apex: index === APEX_INDEX,
+  }));
 ---
 
 <div class="skill-index">
@@ -46,7 +50,7 @@ const groups = siteData.skillGroups.map((group, index) => ({
     {
       groups.map((group, index) => (
         <div class="ag-card group-card" id={`skill-group-card-${group.id}`} hidden={index !== 0}>
-          <span class="ag-label">Group {group.number} of {groups.length}</span>
+          <span class="ag-label">Group {group.number} of {allGroups.length}</span>
           <h3>{group.id}</h3>
           <p>{group.description}</p>
           <div class="facts">
@@ -58,6 +62,20 @@ const groups = siteData.skillGroups.map((group, index) => ({
       ))
     }
   </div>
+  {
+    moreGroups.length > 0 && (
+      <p class="more-groups">
+        Also in the library:{" "}
+        {moreGroups.map((group, index) => (
+          <>
+            {index > 0 && ", "}
+            <a href={group.route}>{group.label}</a>
+          </>
+        ))}
+        .
+      </p>
+    )
+  }
 </div>
 
 <script>
@@ -203,6 +221,15 @@ const groups = siteData.skillGroups.map((group, index) => ({
   .group-card a {
     align-self: flex-start;
     padding: 0.5rem 0;
+    color: var(--ag-accent);
+  }
+
+  .more-groups {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
+  .more-groups a {
     color: var(--ag-accent);
   }
 

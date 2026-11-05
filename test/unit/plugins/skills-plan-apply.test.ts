@@ -329,7 +329,7 @@ describe("skills plan: one operation per group", () => {
       ].join("\n"),
     );
     expect(operations[1].preview.text).toBe(
-      "Security:\nagemon-security — bundled with agemon",
+      "Security:\nagemon-security — bundled with agemon\nagemon-security-audit — bundled with agemon",
     );
   });
 

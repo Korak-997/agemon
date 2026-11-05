@@ -13,9 +13,24 @@ import {
 } from "../skill-provenance.js";
 
 const NON_MARKDOWN_FILES: readonly string[] = [
+  "founder/agemon-founder-cfo/example.json",
+  "founder/agemon-founder-cfo/unit_economics.py",
+  "founder/agemon-founder-consumer/customer.example.json",
+  "founder/agemon-founder-consumer/panel.py",
+  "founder/agemon-founder-plan/compile.py",
+  "founder/agemon-founder-pricing/van_westendorp.py",
   "geo-seo/geo-report-pdf/templates/geo-report-template.html",
+  "security/agemon-security-audit/report-schema.json",
+  "security/agemon-security-audit/validate-coverage-ledger.cjs",
+  "security/agemon-security-audit/validate-findings.cjs",
   "self-review/agemon-root-cause/condition-based-waiting-example.ts",
   "self-review/agemon-root-cause/find-polluter.sh",
+  "workflow/agemon-executing-plans/scripts/task-done",
+  "workflow/agemon-executing-plans/scripts/task-start",
+  "workflow/agemon-subagent-driven-development/scripts/review-package",
+  "workflow/agemon-subagent-driven-development/scripts/sdd-repo",
+  "workflow/agemon-subagent-driven-development/scripts/sdd-workspace",
+  "workflow/agemon-subagent-driven-development/scripts/task-brief",
 ];
 
 const ALLOWED_FRONTMATTER_KEYS = [
@@ -26,6 +41,7 @@ const ALLOWED_FRONTMATTER_KEYS = [
   "tags",
   "triggers",
   "argument-hint",
+  "disable-model-invocation",
 ];
 
 const CLAUDE_HOME_DIRECTORY_PATTERN =

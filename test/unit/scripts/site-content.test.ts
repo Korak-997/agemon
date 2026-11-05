@@ -717,8 +717,8 @@ describe("site data for the home page", () => {
     );
   });
 
-  it("fails when the catalog no longer has the ten groups the skill index draws", () => {
-    expect(() => generate({ skillGroups: SKILL_GROUPS.slice(1) })).toThrow(
+  it("fails when the catalog has fewer than the ten groups the skill index draws", () => {
+    expect(() => generate({ skillGroups: SKILL_GROUPS.slice(0, 9) })).toThrow(
       /skill index has ten places; SKILL_GROUPS has 9/u,
     );
   });

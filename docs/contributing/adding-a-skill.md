@@ -78,7 +78,7 @@ description: Use when … — one or two sentences that tell the agent when to l
 - `name` appears exactly once and equals the directory name.
 - `description` is not empty. It can be a plain value, a quoted value, or a `>`/`|` block.
 - Only these keys are allowed: `name`, `description`, `version`, `author`, `tags`,
-  `triggers`, `argument-hint`. In particular `allowed-tools` (which pre-approves tools) and
+  `triggers`, `argument-hint`, `disable-model-invocation`. In particular `allowed-tools` (which pre-approves tools) and
   `hooks` are not allowed: every tool use in a bundled skill goes through the user's normal
   permission prompt. If upstream has `allowed-tools`, remove it and say so in `NOTICE.md`.
 

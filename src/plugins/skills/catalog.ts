@@ -119,9 +119,12 @@ export const SKILL_GROUPS: SkillGroup[] = [
     id: "security",
     label: "Security",
     description:
-      "Exploit-driven security review — no finding without a working proof-of-concept, CVSS-aligned severity.",
+      "Exploit-driven security review — no finding without a working proof-of-concept, CVSS-aligned severity — plus a multi-agent, multi-phase codebase audit with independently verified findings.",
     defaultSelected: false,
-    skills: [vendoredSkill("security", "agemon-security")],
+    skills: [
+      vendoredSkill("security", "agemon-security"),
+      vendoredSkill("security", "agemon-security-audit"),
+    ],
   },
   {
     id: "code-quality",
@@ -242,6 +245,51 @@ export const SKILL_GROUPS: SkillGroup[] = [
         "Scores a website's schema.org structured data and finds missing GEO-relevant schema.",
         ["WebFetch", "Bash"],
       ),
+    ],
+  },
+  {
+    id: "workflow",
+    label: "Development Workflow",
+    description:
+      "Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Pairs with Self-Review.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("workflow", "agemon-brainstorming"),
+      vendoredSkill("workflow", "agemon-writing-plans"),
+      vendoredSkill("workflow", "agemon-executing-plans"),
+      vendoredSkill("workflow", "agemon-subagent-driven-development"),
+      vendoredSkill("workflow", "agemon-test-driven-development"),
+      vendoredSkill("workflow", "agemon-using-git-worktrees"),
+      vendoredSkill("workflow", "agemon-dispatching-parallel-agents"),
+      vendoredSkill("workflow", "agemon-finishing-a-development-branch"),
+    ],
+  },
+  {
+    id: "output-style",
+    label: "Output Style",
+    description:
+      "agemon-adhd: on request, replies lead with the next action, number their steps, restate progress, and skip preamble and tangents.",
+    defaultSelected: false,
+    skills: [vendoredSkill("output-style", "agemon-adhd")],
+  },
+  {
+    id: "founder",
+    label: "Founder",
+    description:
+      "Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("founder", "agemon-founder-board"),
+      vendoredSkill("founder", "agemon-founder-competitors"),
+      vendoredSkill("founder", "agemon-founder-consumer"),
+      vendoredSkill("founder", "agemon-founder-pricing"),
+      vendoredSkill("founder", "agemon-founder-offer"),
+      vendoredSkill("founder", "agemon-founder-cfo"),
+      vendoredSkill("founder", "agemon-founder-marketing"),
+      vendoredSkill("founder", "agemon-founder-brand"),
+      vendoredSkill("founder", "agemon-founder-ops"),
+      vendoredSkill("founder", "agemon-founder-launch"),
+      vendoredSkill("founder", "agemon-founder-plan"),
     ],
   },
 ];

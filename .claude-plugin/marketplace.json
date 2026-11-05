@@ -14,7 +14,7 @@
     },
     {
       "name": "agemon-security",
-      "description": "Exploit-driven security review — no finding without a working proof-of-concept, CVSS-aligned severity.",
+      "description": "Exploit-driven security review — no finding without a working proof-of-concept, CVSS-aligned severity — plus a multi-agent, multi-phase codebase audit with independently verified findings.",
       "source": "./assets/skills/security",
       "strict": false,
       "skills": ["./"]
@@ -65,6 +65,27 @@
       "name": "agemon-geo-seo",
       "description": "Audit and optimize websites for AI search citation (ChatGPT, Perplexity, Google AI Overviews): citability, AI crawlers, llms.txt, schema, technical SEO, reports.",
       "source": "./assets/skills/geo-seo",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-workflow",
+      "description": "Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Pairs with Self-Review.",
+      "source": "./assets/skills/workflow",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-output-style",
+      "description": "agemon-adhd: on request, replies lead with the next action, number their steps, restate progress, and skip preamble and tangents.",
+      "source": "./assets/skills/output-style",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-founder",
+      "description": "Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict.",
+      "source": "./assets/skills/founder",
       "strict": false,
       "skills": ["./"]
     }

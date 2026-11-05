@@ -249,11 +249,11 @@ describe("non-interactive output contract", () => {
       Installing 5 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash]. Each agent can use only the tools listed.
       daemon hardening: strict
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
-      ╭ [ok] Applied 23 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 26 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             10 operations                                   │
+      │     Skills             13 operations                                   │
       │     Subagents          5 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
@@ -271,11 +271,11 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       Installing 5 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash]. Each agent can use only the tools listed.
-      ╭ [ok] Applied 23 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 26 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             10 operations                                   │
+      │     Skills             13 operations                                   │
       │     Subagents          5 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
