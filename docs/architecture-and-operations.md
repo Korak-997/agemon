@@ -505,19 +505,37 @@ Current bundle (`src/plugins/cli-tool/catalog.ts`):
   unshowable, unreadable) are moved to the skip list before any gate. A carrying
   `use-shared` operation follows the gate too. Unapproved operations end the run in drift
   (exit 2).
-- **Adding a capability to an existing `agemon.toml`** (`src/core/capability-migration.ts`):
-  a capability on `AUTO_ADDED_TO_EXISTING_CONFIGS` (only `agents`) that the file's
-  `known_capabilities` (or, without that key, the pre-`agents` list) does not name is added
-  to the run when all its dependencies are listed; `--only` is never widened, and exclusions
-  apply afterwards. After an interactive or `--yes` run that ends `applied`,
-  `nothing-to-do`, `partial` or `declined` (never a dry run, `plan` or a rollback), the CLI
-  rewrites the file once: it rereads it and refuses if the bytes changed, keeps every value,
-  sets `capabilities` and `known_capabilities`, checks the output round-trips and validates,
-  and saves the original under `.agemon/backups/` when comments or layout would be lost. Each
-  auto-add keeps its own backup, named after the added ids and a hash of the original, and
-  never overwrites an earlier one; if that backup path already holds different content, the
-  file is left unchanged and the run says where. It skips the rewrite while `/.agemon/` is
-  not git-ignored (unless `--allow-unignored-state`).
+- **What a repository can still take** (`src/core/offers.ts`): `findOffers` merges
+  `findCapabilityOffers` (`src/core/capability-migration.ts`) with each listed plugin's
+  `listOffers`, and returns nothing without an `agemon.toml`. An offer is `new` or `declined`.
+  A capability not in `capabilities` whose dependencies are listed is `new` unless the file's
+  `known_capabilities` (or, without that key, the pre-`agents` list) names it. A skill group is
+  `new` until it has been offered and `declined` once the ledger records that. Runs print the
+  offers after the summary and `status` lists them under "Available"; neither changes the exit
+  code. `--quiet` prints nothing, and a first run (no `agemon.toml` when it started) skips the
+  reminder.
+- **Asking about a new capability:** an interactive run without `--yes`, `--dry-run`, `--only` or
+  `--plan` asks in `chooseNewCapabilities` before the plan and adds the chosen ids to that run's
+  `only`. `--only` is never widened, and exclusions apply first. After a run that ends
+  `applied`, `nothing-to-do`, `partial` or `declined`, the CLI rewrites the file once: it rereads
+  it and refuses if the bytes changed, keeps every value, sets `capabilities` and
+  `known_capabilities` (so what was not picked is `declined` from then on), checks the output
+  round-trips and validates, and saves the original under `.agemon/backups/` when comments or
+  layout would be lost. Each rewrite keeps its own backup, named after the added ids and a hash of
+  the original, and never overwrites an earlier one; if that backup path already holds different
+  content, the file is left unchanged and the run says where. It skips the rewrite while
+  `/.agemon/` is not git-ignored (unless `--allow-unignored-state`).
+- **`--yes` and new skill groups:** `selectNewlyOfferedGroups` leaves unnamed groups waiting under
+  `--yes` and without a terminal; it records nothing, so they stay `new`. Only a person answering
+  the prompt declines a group.
+- **`agemon add`** (`runAdd`, `src/cli/index.ts`) resolves each name against the offers and runs
+  `reconcile` with `only` narrowed to the named capabilities, plus `skills` and any listed
+  capability that depends on it when a group is named. Requested groups reach the skills plugin as
+  `ctx.requestedSkillGroupIds`, deliberately separate from `skillGroupsOption`: that option merges
+  the flag with the committed `skill_groups`, so honoring it would let a cloned repository undo a
+  decline. `applySkills` removes the decline only after the install succeeds, and a rollback
+  restores the ledger. The capability is written to `agemon.toml` only after `applied`,
+  `nothing-to-do` or `partial` in a run that could approve it, never after `declined`.
 - Install path, per plugin:
   - `detect`
   - not present: fresh install — `install` then `verify` (throws on failure)
