@@ -1,6 +1,6 @@
 # Principles Catalog
 
-A worked-example bank of opinionated design principles, organized by product category. Use as seed material for the principles workshop in `/brief`. Do not adopt these literally — adapt to your specific product, user, and constraints. The point is to see what opinionated, actionable, distinctive principles look like in practice. Many entries are product-specific manifestations of the heuristics in `heuristics.md` — they complement the scored methodology, they don't replace it.
+A worked-example bank of opinionated design principles, organized by product category. Use as seed material for the principles workshop in `/agemon-design brief`. Do not adopt these literally — adapt to your specific product, user, and constraints. The point is to see what opinionated, actionable, distinctive principles look like in practice. Many entries are product-specific manifestations of the heuristics in `heuristics.md` — they complement the checklist, they don't replace it.
 
 ---
 
@@ -155,7 +155,7 @@ Test against past decisions. Take three real design calls that were debated. Wou
 
 #### "Comparison is the unit of understanding"
 **Statement:** a number without context is noise; every metric shows its comparison.
-**Implication:** primary metrics always show period-over-period change (vs. prior week, vs. target). Sparklines on every metric card. Trend direction is signaled by color and icon, not just a number. Tables have inline comparison columns. No standalone counts without a denominator or a delta.
+**Implication:** primary metrics always show period-over-period change (vs. prior week, vs. target). A sparkline only where the trend is the point; otherwise the delta as text. Trend direction is signaled by color and icon, not just a number. Tables have inline comparison columns. No standalone counts without a denominator or a delta.
 **Opposite ruled out:** "show current state; let users query for comparison" — requiring users to manually request comparison on every visit is an analysis tax. Comparison belongs in the default view.
 
 #### "Drill-down is always one click"

@@ -43,8 +43,8 @@ describe("non-interactive output contract", () => {
       skills
         v  skill-group:essentials   [executes]
              Essentials:
-             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
-             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             web-design-guidelines — bundled with agemon
+             writing-guidelines — bundled with agemon
 
       cli-tool
         v  agnix                    [executes]
@@ -151,8 +151,8 @@ describe("non-interactive output contract", () => {
       skills
         v  skill-group:essentials   [executes]
              Essentials:
-             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
-             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             web-design-guidelines — bundled with agemon
+             writing-guidelines — bundled with agemon
 
       cli-tool
         v  agnix                    [executes]
@@ -305,8 +305,8 @@ describe("non-interactive output contract", () => {
       skills
         v  skill-group:essentials   [executes]
              Essentials:
-             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
-             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             web-design-guidelines — bundled with agemon
+             writing-guidelines — bundled with agemon
 
       cli-tool
         v  agnix                    [executes]

@@ -30,7 +30,6 @@ import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const shippedHistory = vi.hoisted(() => ({
   history: {} as Record<string, string[]>,
-  pinned: {} as Record<string, Record<string, string>>,
 }));
 
 vi.mock("../../../src/plugins/skills/bundle-fingerprints.js", () => ({
@@ -101,7 +100,6 @@ beforeEach(() => {
   process.env.AGEMON_FAKE_SUBPROCESS = "1";
   resetFakeSubprocessState();
   shippedHistory.history = {};
-  shippedHistory.pinned = {};
   raceHooks.afterFingerprint = [];
   raceHooks.afterResolvingClaudeSkills = [];
 });

@@ -20,7 +20,10 @@ import {
   type LedgerEntry,
   StateManifest,
 } from "../../../src/core/state-manifest.js";
-import { resolveStateRoot } from "../../../src/core/state-root.js";
+import {
+  resolveStateRoot,
+  withAgemonStateLock,
+} from "../../../src/core/state-root.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { buildCustomSkillGroups } from "../../../src/plugins/skills/catalog.js";
@@ -711,6 +714,35 @@ describe("custom skill groups: GitHub sources", () => {
         "lint-rules",
       ),
     );
+  });
+
+  it("waits for another run's pinned-source install before fetching", async () => {
+    const ctx = await createTestContext([REMOTE], "acme");
+    const gitCalls = fakeGitCheckout(ctx, "lint-rules");
+    let releaseOtherRun: () => void = () => {};
+    let signalHeld: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      signalHeld = resolve;
+    });
+    const otherRun = withAgemonStateLock(
+      "skills-src.lock",
+      () =>
+        new Promise<void>((resolve) => {
+          releaseOtherRun = resolve;
+          signalHeld();
+        }),
+      1_000,
+    );
+    await held;
+
+    const install = applySkills(ctx, await planSkills(ctx));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(gitCalls).toEqual([]);
+    releaseOtherRun();
+    await otherRun;
+    await install;
+
+    expect(gitCalls.length).toBeGreaterThan(0);
   });
 
   function withCheckoutStatus(ctx: Context, porcelainStatus: string): void {

@@ -6,6 +6,13 @@
   "description": "agemon's skill groups for Claude: pick the groups you want, in claude.ai or Claude Code.",
   "plugins": [
     {
+      "name": "agemon-essentials",
+      "description": "Web design and writing guidelines from Vercel Labs.",
+      "source": "./assets/skills/essentials",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
       "name": "agemon-design",
       "description": "agemon-design: design engineering with anti-slop rules, discovery, and outcome recipes for dashboards, landings, and auth screens.",
       "source": "./assets/skills/design",

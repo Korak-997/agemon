@@ -208,7 +208,7 @@ describe("skill library pages", () => {
       /`agemon-commit`\s*\|[^|]+\|\s*first-party \(agemon\)\s*\|\s*—\s*\|\s*MIT/u,
     );
     expect(generatedPage("skills/essentials.md")).toContain(
-      "see the upstream repository",
+      "<https://github.com/vercel-labs/web-interface-guidelines>",
     );
   });
 
@@ -869,7 +869,7 @@ describe("skill group template", () => {
     ]);
   });
 
-  it("shows each bundled skill's description, folded or not, and points Essentials upstream", () => {
+  it("shows each bundled skill's description, folded or not, and Essentials too", () => {
     generate();
     const geoPage = generatedPage("skills/geo-seo.md");
     expect(geoPage).toMatch(
@@ -877,7 +877,7 @@ describe("skill group template", () => {
     );
     expect(geoPage).toContain("or any URL for analysis. |");
     expect(generatedPage("skills/essentials.md")).toMatch(
-      /`web-design-guidelines`\s*\|\s*see upstream\s*\|/u,
+      /`web-design-guidelines`\s*\|\s*Review UI code for Web Interface Guidelines compliance\./u,
     );
   });
 

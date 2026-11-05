@@ -1,6 +1,6 @@
 # Design Brief
 
-Defines the format of `.ui-craft/brief.md` — the durable artifact that anchors every design decision in this project. Read it first when working on any UI task. If it doesn't exist, run `/brief` to generate one. Every decision you make should be traceable to a principle in the brief.
+Defines the format of `.ui-craft/brief.md` — the durable artifact that anchors every design decision in this project. Read it first when working on any UI task. If it doesn't exist, run `/agemon-design brief` to generate one. Every decision you make should be traceable to a principle in the brief.
 
 ---
 
@@ -92,9 +92,9 @@ Corrections the user has made to design output on this project — the brief tea
 
 These are project-scoped design facts, not a general memory store — they live in the brief because they *are* design decisions, just learned rather than stated up front. They rank with the principles (section 3): a learned constraint overrides a skill default but never the accessibility/correctness floor.
 
-### 7. Fold classes used (append-only, written by `/craft`)
+### 7. Fold classes used (append-only, written by `/agemon-design build`)
 
-Which composition class each landing fold in this project committed to. Append-only; `/craft` reads it to draw a class this project has not spent yet.
+Which composition class each landing fold in this project committed to. Append-only; `/agemon-design build` reads it to pick a class this project has not spent yet.
 
 ```markdown
 - **2026-07-29** — `type-only` — pricing page. Sacrificed any product demonstration above the fold.
@@ -159,9 +159,9 @@ The brief is append-mostly. The team should be able to trace why a principle cha
 
 ## Self-Correction
 
-When the user corrects design output — "not like that", "I don't like this", "always do X here", "never Z", or reverses a non-default choice in a way that reads as a standing preference — append it to section 6 (run `/remember`). Capture the **why**, not just the what; phrase it so a future build can apply it without this conversation's context; confirm in one line where it landed. Don't re-litigate a correction already recorded. If a correction would breach the accessibility/correctness floor, apply the closest compliant interpretation and say so — never store an unsafe rule.
+When the user corrects design output — "not like that", "I don't like this", "always do X here", "never Z", or reverses a non-default choice in a way that reads as a standing preference — append it to section 6. Capture the **why**, not just the what; phrase it so a future build can apply it without this conversation's context; confirm in one line where it landed. Don't re-litigate a correction already recorded. If a correction would breach the accessibility/correctness floor, apply the closest compliant interpretation and say so — never store an unsafe rule.
 
-This is project-scoped, and it lives in the brief by design — ui-craft is a UI skill, not a general memory engine.
+This is project-scoped, and it lives in the brief by design — agemon-design is a UI skill, not a general memory engine.
 
 **Optional cross-project bridge.** If the user wants a correction applied across *all* their projects (not just this one), that's general memory, outside the brief's scope. When an external memory service is available to the agent, mirror the constraint there so other projects inherit it; otherwise note that cross-project recall needs such a service. The brief remains the canonical project store either way.
 

@@ -1,28 +1,25 @@
-# Heuristics — Scored Critique Methodology
+# Heuristics — Severity-Ranked Review Methodology
 
-Any skill can list anti-patterns. A scored critique is a defensible artifact a PM can action. Every finding gets a heuristic, a score (1-5), and an impact estimate. This file is the source of truth for the `/ui-craft:heuristic` command — the rubric, the laws, the output shape.
+Any skill can list anti-patterns. A heuristic review is a defensible artifact a PM can action: every finding names a heuristic or law, the element it applies to, the viewport it was seen at, and an impact tag. This file is the source of truth for the heuristic mode of `/agemon-design review` — the checklist, the laws, the output shape. It produces findings, not numbers: a figure computed from model judgment reads as a measurement it is not.
 
 ---
 
 ## How to Use
 
-Run the full pass: Nielsen's 10 (score 1-5 each) → 6 Design Laws (PASS/FAIL each) → rank findings by impact tag. Output is a machine-parseable scorecard PMs can paste into any issue tracker.
+Run the full pass: Nielsen's 10 as a checklist → the 6 Design Laws as checks → rank findings by impact tag. Output is a findings table PMs can paste into any issue tracker.
 
-Usability is not a knob. `CRAFT_LEVEL` does not relax these scores — a 2 is a 2 at every craft level.
+Usability is not a knob. `CRAFT_LEVEL` does not relax these findings — a blocking problem is blocking at every craft level.
 
 ---
 
-## Scoring Rubric (applies to every heuristic)
+## Finding Format
 
-| Score | Meaning |
-|-------|---------|
-| **1** | Blocks users. Core task cannot complete. |
-| **2** | Severe friction. Users abandon or error repeatedly. |
-| **3** | Works but confusing. Users complete with hesitation. |
-| **4** | Works, minor polish left. No user impact. |
-| **5** | Best-in-class. Nothing to add. |
+Every finding is one row: `| Heuristic or law | Element | Viewport | Finding | Impact |`.
 
-Every finding is recorded in a row: `| Heuristic | Score | Finding | Impact |`.
+- **Element** names the specific thing: "Save button in the settings form", not "the form".
+- **Viewport** is where you saw it (desktop 1280, tablet 768, mobile 375, or "code only" if you did not render it).
+- **Finding** is concrete: quote the text, count the elements, name the broken flow. Vague findings are rejected.
+- A heuristic with nothing to report gets no row. Do not pad the table with praise.
 
 ---
 
@@ -193,7 +190,7 @@ Even though it is better if the system can be used without documentation, help m
 
 ## The 6 Design Laws
 
-Each is scored PASS / FAIL with a specific detail. These are physics + psychology, not preferences — failing them has measurable UX impact.
+Each is checked against a specific element. These are physics + psychology, not preferences — breaking them has measurable UX impact.
 
 ### Fitts's Law
 
@@ -203,9 +200,9 @@ Source: Fitts, P. M. (1954). "The information capacity of the human motor system
 
 **When load-bearing:** Every tappable / clickable surface. Critical on mobile.
 
-**How to score:**
-- **PASS** — touch targets ≥ 44px on mobile, ≥ 24px on desktop; primary CTA in the natural eye/thumb path; related actions grouped
-- **FAIL** — touch targets under 44px mobile; destructive actions adjacent to primary actions; CTA placed far from where the user just looked
+**What to look for:**
+- **Holds when** touch targets ≥ 44px on mobile, ≥ 24px on desktop; primary CTA in the natural eye/thumb path; related actions grouped
+- **Breaks when** touch targets under 44px mobile; destructive actions adjacent to primary actions; CTA placed far from where the user just looked
 
 ### Hick's Law
 
@@ -215,9 +212,9 @@ Source: Hick, W. E. (1952). "On the rate of gain of information."
 
 **When load-bearing:** Menus, navigation, plan selectors, form fields, dashboards.
 
-**How to score:**
-- **PASS** — nav ≤ 7 items at any level; no field offers 20+ unfiltered options without search
-- **FAIL** — 12+ top-nav items; a single select with 200 entries and no type-ahead; dashboard with 18 metrics at equal weight
+**What to look for:**
+- **Holds when** nav ≤ 7 items at any level; no field offers 20+ unfiltered options without search
+- **Breaks when** 12+ top-nav items; a single select with 200 entries and no type-ahead; dashboard with 18 metrics at equal weight
 
 ### Doherty Threshold
 
@@ -227,9 +224,9 @@ Source: Doherty, W. J. & Thadani, A. J. (1982). "The Economic Value of Rapid Res
 
 **When load-bearing:** Every user-initiated action. Critical on data-heavy views and transitions.
 
-**How to score:**
-- **PASS** — perceived response < 400ms; optimistic UI for saves, likes, toggles; skeletons within 200ms
-- **FAIL** — form submit shows a spinner for 2s with no optimistic state; nav click waits on full server round-trip before painting anything
+**What to look for:**
+- **Holds when** perceived response < 400ms; optimistic UI for saves, likes, toggles; skeletons within 200ms
+- **Breaks when** form submit shows a spinner for 2s with no optimistic state; nav click waits on full server round-trip before painting anything
 
 ### Cleveland-McGill Hierarchy
 
@@ -239,9 +236,9 @@ Source: Cleveland, W. S. & McGill, R. (1984). "Graphical Perception: Theory, Exp
 
 **When load-bearing:** Every chart, metric card, comparative dataviz.
 
-**How to score:**
-- **PASS** — quantitative comparisons use position or length (bar, line, dot); color reserved for category; no pie or 3D
-- **FAIL** — pie chart used for comparison; donut with ≥ 5 slices; color-gradient used to encode magnitude where length would work
+**What to look for:**
+- **Holds when** quantitative comparisons use position or length (bar, line, dot); color reserved for category; no pie or 3D
+- **Breaks when** pie chart used for comparison; donut with ≥ 5 slices; color-gradient used to encode magnitude where length would work
 
 ### Miller's Law
 
@@ -251,9 +248,9 @@ Source: Miller, G. A. (1956). "The Magical Number Seven, Plus or Minus Two."
 
 **When load-bearing:** Nav depth, form section counts, onboarding flows, step counts.
 
-**How to score:**
-- **PASS** — navigation ≤ 7 items per level; forms chunked into ≤ 5 sections; multi-step flows ≤ 5 steps or with clear progress. (Wizard ceiling is 5, not 7: each step holds multiple fields, and each field consumes working-memory slots of its own.)
-- **FAIL** — 14-item top nav; a single-page form with 23 ungrouped fields; a checkout with 9 steps and no progress indicator
+**What to look for:**
+- **Holds when** navigation ≤ 7 items per level; forms chunked into ≤ 5 sections; multi-step flows ≤ 5 steps or with clear progress. (Wizard ceiling is 5, not 7: each step holds multiple fields, and each field consumes working-memory slots of its own.)
+- **Breaks when** 14-item top nav; a single-page form with 23 ungrouped fields; a checkout with 9 steps and no progress indicator
 
 ### Tesler's Law
 
@@ -263,9 +260,9 @@ Also called the Law of Conservation of Complexity. Attributed to Larry Tesler.
 
 **When load-bearing:** Feature-rich tools. Configuration-heavy flows. Anywhere you're tempted to "expose a toggle."
 
-**How to score:**
-- **PASS** — complexity absorbed by sensible defaults, automation, or backend inference; advanced controls behind progressive disclosure
-- **FAIL** — UI exposes every backend knob; user must configure 8 things before they can accomplish the primary task; no default state, only empty forms
+**What to look for:**
+- **Holds when** complexity absorbed by sensible defaults, automation, or backend inference; advanced controls behind progressive disclosure
+- **Breaks when** UI exposes every backend knob; user must configure 8 things before they can accomplish the primary task; no default state, only empty forms
 
 ---
 
@@ -284,120 +281,39 @@ Rank findings in the final output by impact tag, not by heuristic order: `blocks
 
 ---
 
-## Scoring Output Format
+## Output Format
 
-The `/ui-craft:heuristic` command outputs **exactly** this structure. Do not invent new sections. Do not merge tables. Do not drop the ranking at the end.
+The heuristic review outputs **exactly** this structure. Do not invent new sections. Do not merge tables. Do not drop the ranking at the end. Do not add a score, grade or pass/fail verdict.
 
 ```markdown
-## Heuristic Scorecard
+## Heuristic Findings
 
-| Heuristic | Score | Finding | Impact |
-|-----------|-------|---------|--------|
-| Visibility of system status | 2 | Form submit has no loading state; users click 3-4x thinking nothing happened | adds-friction |
-| Match system and real world | 4 | Dates formatted for locale; one copy says "entity" instead of "project" | minor-polish |
-| User control and freedom | 3 | Delete has confirm but no undo after it lands | reduces-trust |
-| Consistency and standards | 4 | Primary CTA consistent; one modal has Cancel on right, rest on left | minor-polish |
-| Error prevention | 4 | Delete confirms with the resource name — good | minor-polish |
-| Recognition over recall | 3 | Cmd+K exists but not surfaced in tooltips | adds-friction |
-| Flexibility and efficiency | 2 | No bulk-select on list of 200+ items | adds-friction |
-| Aesthetic and minimalist | 3 | Hero has two competing accents | reduces-trust |
-| Error recovery | 1 | "Something went wrong" with no ID, no retry | blocks-conversion |
-| Help and documentation | 3 | Tooltips on most icons; empty state has no CTA | reduces-trust |
+| Heuristic | Element | Viewport | Finding | Impact |
+|-----------|---------|----------|---------|--------|
+| Visibility of system status | Submit button, signup form | mobile 375 | No loading state; users click 3-4x thinking nothing happened | adds-friction |
+| User control and freedom | Delete confirm dialog, project list | desktop 1280 | Confirm exists but there is no undo after it lands | reduces-trust |
+| Consistency and standards | Cancel button, billing modal | desktop 1280 | Cancel on the right here, on the left in every other modal | minor-polish |
+| Flexibility and efficiency | Invoice list, 200+ rows | desktop 1280 | No bulk select | adds-friction |
+| Error recovery | Error banner, checkout | mobile 375 | "Something went wrong" with no ID, no retry | blocks-conversion |
 
-## Design Law Audit
+## Design Law Findings
 
-| Law | Pass/Fail | Detail |
-|-----|-----------|--------|
-| Fitts's Law | FAIL | Primary CTA is 32px tall on mobile; expected ≥ 44px |
-| Hick's Law | PASS | 5 top-nav items — within 7±2 |
-| Doherty Threshold | FAIL | Save shows spinner for ~1.8s with no optimistic state |
-| Cleveland-McGill | PASS | Bar charts for comparison, color for category only |
-| Miller's Law | PASS | Form chunked into 4 logical sections |
-| Tesler's Law | FAIL | New user sees 8 required config fields before first action |
+| Law | Element | Viewport | Detail | Impact |
+|-----|---------|----------|--------|--------|
+| Fitts's Law | Primary CTA, pricing card | mobile 375 | 32px tall; expected ≥ 44px | adds-friction |
+| Doherty Threshold | Save button, settings | desktop 1280 | Spinner for ~1.8s with no optimistic state | adds-friction |
+| Tesler's Law | First-run form | desktop 1280 | 8 required config fields before the first action | reduces-trust |
 
 ## Top findings (ranked by impact)
 
-1. Error recovery (score 1, blocks-conversion) — "Something went wrong" message strands users; no ID, no retry, no support path
-2. Fitts's Law (FAIL, adds-friction) — primary CTA 32px on mobile; raise to ≥ 44px
-3. Doherty Threshold (FAIL, adds-friction) — save feels broken; add optimistic UI
-4. Flexibility (score 2, adds-friction) — bulk select missing on 200+ item list
-5. Visibility (score 2, adds-friction) — submit has no loading state
+1. Error recovery (blocks-conversion) — "Something went wrong" banner strands users in checkout on mobile; no ID, no retry, no support path
+2. Fitts's Law (adds-friction) — primary CTA on the pricing card is 32px on mobile; raise to ≥ 44px
+3. Doherty Threshold (adds-friction) — save feels broken on desktop; add optimistic UI
+4. Flexibility and efficiency (adds-friction) — bulk select missing on the 200+ row invoice list
+5. Visibility of system status (adds-friction) — signup submit has no loading state on mobile
 ```
 
 **Notes on output:**
-- The first row of each heuristic table is the short-name version (not the verbose Nielsen title). The heuristic is unambiguous from context.
+- Use the short name for each heuristic (not the verbose Nielsen title). The heuristic is unambiguous from context.
 - The `Top findings` list is a rank, not a re-listing. Include only findings at `reduces-trust` or worse. Cap at 5.
-- Scores of 4-5 don't need a finding row unless the grader wants to surface what's working. Blank findings for 4-5 rows are fine; the Score column carries the signal.
-
----
-
-## UsabilityScore (0-100) — the judged companion to UICraftScore
-
-The scorecard above is qualitative. **UsabilityScore** rolls it into one 0-100 number + letter grade so it composes with the deterministic **UICraftScore** (`evals/quality/score.mjs`) and so a PM or CI run has a single figure to track.
-
-> **Judged, not deterministic.** UsabilityScore is computed by the host agent from this rubric — it reflects judgment and *may vary run to run*. It is **not** reproducible the way UICraftScore is. Never gate CI on UsabilityScore; gate on the deterministic UICraftScore and use UsabilityScore for review depth. Always label it `(judged)` when reporting.
-
-### Formula
-
-Deterministic *given the scores* — the same scorecard always yields the same number. Only the act of scoring is judgment.
-
-```
-heuristic_base = round( ((mean(nielsen_scores) − 1) / 4) × 100 )   # 10 Nielsen scores, each 1–5
-law_penalty    = (number of FAILED design laws) × 5                # 6 laws, −5 each (max −30)
-UsabilityScore = clamp( heuristic_base − law_penalty , 0 , 100 )
-```
-
-Grade bands are **identical to UICraftScore** for cross-comparison: **A ≥ 90 · B ≥ 80 · C ≥ 70 · D ≥ 60 · F < 60**.
-
-Properties: all-5s with all laws passing → 100 (A). All-3s, all laws pass → 50 (F). The base maps the 1–5 mean linearly onto 0–100 (1→0, 3→50, 5→100); each failed law is a flat −5 because laws are physics/psychology violations with measurable cost.
-
-### Worked example (the scorecard above)
-
-Nielsen scores `2,4,3,4,4,3,2,3,1,3` → mean `2.9` → base `round(((2.9−1)/4)×100)` = **48**.
-Failed laws: Fitts, Doherty, Tesler = 3 → penalty `15`.
-`UsabilityScore = clamp(48 − 15, 0, 100)` = **33 / F**. (A genuinely broken UI scores in the F band — as it should.)
-
-### Output
-
-Append this block to the `/ui-craft:heuristic` output, after Top findings:
-
-```markdown
-## UsabilityScore
-
-**33 / F** (judged) · heuristic base 48 − law penalty 15
-
-| Component | Value |
-|-----------|-------|
-| Nielsen mean (1–5) | 2.9 |
-| Heuristic base (0–100) | 48 |
-| Failed design laws | 3 (Fitts, Doherty, Tesler) |
-| Law penalty | −15 |
-| **UsabilityScore** | **33 / F** |
-```
-
-Machine-readable form (emit when a caller asks for `--json`, or when invoked by `/sddesign` / an extended report):
-
-```json
-{
-  "usability": { "score": 33, "grade": "F", "judged": true },
-  "components": { "nielsen_mean": 2.9, "heuristic_base": 48, "failed_laws": 3, "law_penalty": 15 },
-  "version": "usability-1.0"
-}
-```
-
-### Extended quality report (optional combine)
-
-When the user wants the full quality picture, place the judged UsabilityScore beside the deterministic UICraftScore. Get the deterministic score with `node scripts/eval.mjs <path> --json` or the `score_ui` MCP tool, then render:
-
-```markdown
-## Extended quality report
-
-| Score | Value | Reproducible? |
-|-------|-------|---------------|
-| UICraftScore | 82 / B | ✅ deterministic — identical every run |
-| UsabilityScore | 33 / F | ❌ judged — LLM judgment, may vary |
-
-Gate CI on UICraftScore. Use UsabilityScore to prioritize review depth — a high deterministic score with a low UsabilityScore means the code is clean but the *experience* has friction the static rules can't see.
-```
-
-The two scores are intentionally **not** averaged into one figure: one is reproducible and one is judged, and collapsing them would hide that distinction — the exact property the deterministic score exists to protect.
+- Laws and heuristics that hold up get no row. If you want to say what is working, say it in one line after the ranking, not in the tables.

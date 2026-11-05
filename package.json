@@ -55,6 +55,8 @@
     "check-pins": "tsx scripts/check-pins.ts",
     "lint-skills": "tsx scripts/lint-skills.ts",
     "marketplace": "tsx scripts/marketplace.ts",
+    "design-eval:activation": "tsx scripts/design-eval/activation.ts",
+    "design-eval:output": "tsx scripts/design-eval/output.ts",
     "skills:fingerprints": "tsx scripts/skill-fingerprints.ts",
     "website:content": "tsx scripts/site-content.ts",
     "website:build": "sh scripts/build-website.sh"

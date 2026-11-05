@@ -1,6 +1,6 @@
 ---
 name: agemon-design-minimal
-description: "Minimal / clean / Linear / Notion / Vercel / whitespace-heavy UIs. Locked knobs: CRAFT=8, MOTION=3, DENSITY=2. Monochrome + one accent, Inter/Geist, hairline borders over shadows. Trigger on: minimal, clean, Linear-like, Notion-like, Vercel-like, whitespace-heavy."
+description: "Minimal / clean / Linear / Notion / Vercel / whitespace-heavy UIs. Locked knobs: CRAFT=8, MOTION=3, DENSITY=2. Monochrome + one accent, a neutral sans chosen for the brief, hairline borders over shadows. Trigger on: minimal, clean, Linear-like, Notion-like, Vercel-like, whitespace-heavy."
 argument-hint: "[action: build|review|polish] [target]"
 ---
 
@@ -19,7 +19,7 @@ Do not re-ask these in Discovery. Skip straight to accent + font confirmation if
 ## Style anchors
 
 - Black or near-black type on white or near-white canvas. Monochrome + ONE accent.
-- Inter / Geist for body — never a display font.
+- A neutral sans for body, taken from the project or chosen from the brief (state why) — never a display font.
 - Section padding 120-200px vertical, 40-80px gutters.
 - Hairline borders `1px solid oklch(92% 0.005 250)` in place of shadows.
 - Typography is the hierarchy. No decorative gradients, patterns, or glass.
@@ -35,7 +35,7 @@ All rules in `../agemon-design/SKILL.md` apply. This file overrides knob default
 
 **Typography**
 
-- Body: Inter or Geist, 400 weight. UI emphasis: 500. Never 600/700 in body copy.
+- Body: the project's sans, or one chosen from the brief, 400 weight. UI emphasis: 500. Never 600/700 in body copy.
 - `system-ui, -apple-system` as fallback stack.
 - Headings: `tracking-tight` / `-0.02em` above 24px, 500 or 600 max.
 - `text-wrap: balance` on headings, `text-wrap: pretty` on paragraphs.

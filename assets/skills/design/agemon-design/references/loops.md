@@ -1,6 +1,6 @@
 # Loop Engine
 
-Run→evaluate→fix one→re-evaluate→stop. A loop is not a review pass — it iterates until a binary gate passes or the budget runs out. A loop NEVER hard-depends on a renderer, NEVER auto-installs anything, and ALWAYS degrades with an explicit notice when visual evaluation is unavailable. The budget is non-negotiable: when it is exhausted the engine stops and reports, even if the gate has not passed.
+Run→evaluate→fix one→re-evaluate→stop. A loop is not a review pass — it iterates until its stop condition holds or the budget runs out. A stop condition is an objective check (items present, values found by search) or a count of severity-ranked findings; a general impression never passes it. A loop NEVER hard-depends on a renderer, NEVER auto-installs anything, and ALWAYS degrades with an explicit notice when visual evaluation is unavailable. The budget is non-negotiable: when it is exhausted the engine stops and reports, even if the stop condition has not been met.
 
 ---
 
@@ -12,7 +12,7 @@ Every preset declares all five fields. None is optional.
 |-------|---------------|-------------|
 | `target` | `new-build` \| `existing-surface` \| `user-screenshot` | The artifact being evaluated |
 | `lens` | one or more reference file paths / sections | Reference content that drives evaluation |
-| `gate` | `checklist-all-green` \| `zero-critical` \| `zero-off-system` | Binary pass condition |
+| `gate` | `checklist-all-green` \| `zero-critical` \| `zero-off-system` | Stop condition: an objective check or a severity-finding count, never an overall impression |
 | `renderer` | `required` \| `none` | Renderer dependency level — `required` degrades to code-only if unavailable; `none` means static analysis only (always available) |
 | `budget` | integer 1–5 (default 3, hard cap 5) | Maximum iterations allowed |
 
@@ -27,7 +27,7 @@ The agent executes this numbered procedure for every iteration:
 3. **Evaluate** the target through the preset's lens → produce a severity-ranked findings list.
 4. **Select ONE highest-impact fix.** Ranking: Critical before Major; tiebreaker within the same tier = earlier-numbered finish-bar pass / earlier-listed state in the state-design lattice / earlier-cited finding in the brief; for token-consistency: within the same tier, apply layer order — primitive token violations before semantic, semantic before component. MUST NOT apply more than one fix per iteration.
 5. **Apply** the selected fix.
-6. **Re-evaluate** — run the gate check on the updated state.
+6. **Re-evaluate** — re-run the stop-condition check on the updated state.
 7. **Stop** when the gate passes OR the iteration count reaches the budget, whichever comes first. On budget exhaustion: STOP, print final gate state, and list all open findings as "Unresolved within budget:". MUST NOT silently extend the budget.
 
 **Anti-thrash rule:** a fix that introduces a new violation is caught in the NEXT iteration — no inline re-validation. It counts against the budget.
@@ -82,9 +82,9 @@ Every loop report MUST state:
 
 | Preset | target | lens | gate | renderer | maps to |
 |--------|--------|------|------|----------|---------|
-| `visual-anti-slop` | new-build \| existing-surface | SKILL.md Anti-Slop Test + finish-bar.md Pass 1 + Pass 9 | zero-critical (Major: absent or explicitly user-confirmed — no self-accept, silence ≠ accepted) | required — degrades to code-only | `/finalize` |
-| `state-coverage` | new-build \| existing-surface | state-design.md lattice, knob-gated to CRAFT_LEVEL | checklist-all-green (all required states present) | none | `/unhappy` |
-| `token-consistency` | new-build \| existing-surface | tokens.md 3-layer contract + SKILL.md Anti-Slop Minor items | zero-off-system | none (static scan) | `/tokens audit` |
+| `visual-anti-slop` | new-build \| existing-surface | SKILL.md Anti-Slop Test + finish-bar.md Pass 1 + Pass 9 | zero-critical (Major: absent or explicitly user-confirmed — no self-accept, silence ≠ accepted) | required — degrades to code-only | pre-ship pass |
+| `state-coverage` | new-build \| existing-surface | state-design.md lattice, knob-gated to CRAFT_LEVEL | checklist-all-green (all required states present) | none | `/agemon-design harden` |
+| `token-consistency` | new-build \| existing-surface | tokens.md 3-layer contract + SKILL.md Anti-Slop Minor items | zero-off-system | none (static scan) | `/agemon-design tokens` audit |
 
 ---
 

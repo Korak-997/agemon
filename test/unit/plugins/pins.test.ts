@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import * as pins from "../../../src/plugins/pins.js";
 
 const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
-const FULL_COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const NPM_REGISTRY_TARBALL_PATTERN =
   /^https:\/\/registry\.npmjs\.org\/(?:@[^/]+\/)?[^/]+\/-\/[^/]+\.tgz$/u;
 
@@ -20,11 +19,6 @@ async function readToolsJson<T>(fileName: string): Promise<T> {
 describe("pins", () => {
   it("pins code-review-graph to an exact version", () => {
     expect(pins.CODE_REVIEW_GRAPH_VERSION).toMatch(EXACT_VERSION_PATTERN);
-  });
-
-  it("pins the Essentials skills to a full commit over https", () => {
-    expect(pins.ESSENTIALS_SKILLS_COMMIT).toMatch(FULL_COMMIT_PATTERN);
-    expect(pins.ESSENTIALS_SKILLS_REPOSITORY_URL).toMatch(/^https:\/\//u);
   });
 
   it("pins agnix to an exact version and every release archive by sha256", () => {

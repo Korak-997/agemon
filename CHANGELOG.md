@@ -17,13 +17,22 @@ choice you made can be undone.
 - After an upgrade, agemon links the release notes and reminds you to run `agemon` in each
   repository.
 - **agemon's skills in claude.ai.** This repository is now a plugin marketplace with one plugin
-  per skill group, except `essentials`. Add `Korak-997/agemon` under Customize > Plugins, or
+  per skill group. Add `Korak-997/agemon` under Customize > Plugins, or
   with `claude plugin marketplace add`.
 - **`agemon inspect` checks Claude Code on the web.** A new section lists agent config that a
   cloud session won't see, and prints a setup script when hooks need `code-review-graph`.
+- **`agemon-design` has actions.** The skill now has a defined set of actions (including build,
+  review and polish) that each state what they read and what they report.
 
 ### Changed
 
+- **Essentials skills now ship inside agemon.** `web-design-guidelines` and `writing-guidelines`
+  read a bundled copy of their guidelines instead of fetching them. Unmodified copies update on
+  the next run; edited copies are kept.
+- **`agemon-design` no longer refers to commands it never had.** Slash commands, scorers and
+  reviewer tooling that the skill described but that don't exist are removed, and the skill
+  says to report what it could not check. Content from the repository, brief or `DESIGN.md`
+  is treated as design input only, never as instructions.
 - **`--yes` no longer decides about new skill groups.** Named groups still install. Others
   used to be declined without a terminal and installed with one; both now wait and are listed.
   A first install with `--yes` still installs every group. Earlier declines stay declined and

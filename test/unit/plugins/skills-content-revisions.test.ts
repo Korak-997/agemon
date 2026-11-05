@@ -15,7 +15,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApplyRollbackError, applyPlan } from "../../../src/core/apply.js";
 import { readJournals, writeJournal } from "../../../src/core/apply-journal.js";
 import type { Context } from "../../../src/core/context.js";
-import { fakePinnedSkillManifest } from "../../../src/core/fake-pinned-skills.js";
 import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { fingerprintJson } from "../../../src/core/fingerprint.js";
 import { resolveVendoredSkillPath } from "../../../src/core/package-assets.js";
@@ -40,7 +39,6 @@ import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const shippedHistory = vi.hoisted(() => ({
   history: {} as Record<string, string[]>,
-  pinned: {} as Record<string, Record<string, string>>,
 }));
 
 vi.mock("../../../src/plugins/skills/bundle-fingerprints.js", () => ({
@@ -58,7 +56,6 @@ beforeEach(() => {
   process.env.AGEMON_FAKE_SUBPROCESS = "1";
   resetFakeSubprocessState();
   shippedHistory.history = {};
-  shippedHistory.pinned = {};
 });
 
 afterEach(async () => {
@@ -373,7 +370,7 @@ describe("bundled skill revisions in status and verify", () => {
     expect((await skillsPlugin.verify(second)).attention).toBeUndefined();
   });
 
-  it("4.7.2 Essentials content that differs from the pin is kept; the pinned stand-in is current", async () => {
+  it("4.7.2 Essentials content that differs from every shipped version is kept; the vendored copy is current", async () => {
     const ctx = await createTestContext();
     await recordInstalled(ctx, "web-design-guidelines");
     await recordInstalled(ctx, "writing-guidelines");
@@ -382,10 +379,10 @@ describe("bundled skill revisions in status and verify", () => {
       ".claude/skills/web-design-guidelines",
       "---\nname: web-design-guidelines\n---\n\nupstream in 2025\n",
     );
-    await writeCopy(
-      ctx,
-      ".claude/skills/writing-guidelines",
-      fakePinnedSkillManifest("writing-guidelines"),
+    await cp(
+      resolveVendoredSkillPath("essentials", "writing-guidelines"),
+      join(ctx.cwd, ".claude/skills/writing-guidelines"),
+      { recursive: true },
     );
 
     const rows = (await skillsPlugin.describeState?.(ctx)) ?? [];
@@ -606,6 +603,139 @@ describe("bundled skill updates in plan and apply", () => {
       `${COMMIT_SKILL} — bundled with agemon — update (bundled content changed)`,
     );
   });
+
+  describe.each(["web-design-guidelines", "writing-guidelines"])(
+    "%s, once vendored after being pinned",
+    (skillName) => {
+      const OLD_PINNED_MANIFEST = `---\nname: ${skillName}\n---\n\nfetches guidelines at runtime\n`;
+
+      const siblingName =
+        skillName === "writing-guidelines"
+          ? "web-design-guidelines"
+          : "writing-guidelines";
+
+      async function installOldPinnedCopy(ctx: Context): Promise<string> {
+        await recordInstalled(ctx, skillName);
+        await recordInstalled(ctx, siblingName);
+        await cp(
+          resolveVendoredSkillPath("essentials", siblingName),
+          join(ctx.cwd, `.claude/skills/${siblingName}`),
+          { recursive: true },
+        );
+        const copy = await writeCopy(
+          ctx,
+          `.claude/skills/${skillName}`,
+          OLD_PINNED_MANIFEST,
+        );
+        shippedHistory.history[skillName] = [
+          await fingerprintInstalledSkill(copy),
+        ];
+        return fingerprintInstalledSkill(copy);
+      }
+
+      function essentialsOperation(
+        operations: ProposedOperation[],
+      ): ProposedOperation | undefined {
+        return operations.find(
+          (operation) => operation.resourceId === "skill-group:essentials",
+        );
+      }
+
+      it("the real file shipped from the old pinned commit is recognised from the real history and offered as an update", async () => {
+        const { BUNDLE_FINGERPRINTS: realHistory } = await vi.importActual<
+          typeof import("../../../src/plugins/skills/bundle-fingerprints.js")
+        >("../../../src/plugins/skills/bundle-fingerprints.js");
+        const fixture = join(
+          import.meta.dirname,
+          "../../fixtures/essentials-pinned-063bee94",
+          skillName,
+        );
+        const fixtureFingerprint = await fingerprintSkillSource(fixture);
+        expect(realHistory.history[skillName]).toContain(fixtureFingerprint);
+
+        const ctx = await createTestContext();
+        await recordInstalled(ctx, skillName);
+        await recordInstalled(ctx, siblingName);
+        await cp(
+          resolveVendoredSkillPath("essentials", siblingName),
+          join(ctx.cwd, `.claude/skills/${siblingName}`),
+          { recursive: true },
+        );
+        await cp(fixture, join(ctx.cwd, `.claude/skills/${skillName}`), {
+          recursive: true,
+        });
+        shippedHistory.history[skillName] = [...realHistory.history[skillName]];
+
+        const operation = essentialsOperation(await planSkills(ctx));
+
+        expect(operation?.updates).toEqual([
+          expect.objectContaining({
+            name: skillName,
+            installedFingerprint: fixtureFingerprint,
+          }),
+        ]);
+        expect(operation?.preview.text).toContain(
+          `${skillName} — bundled with agemon — update (bundled content changed)`,
+        );
+      });
+
+      it("an unmodified old pinned copy is offered as an update", async () => {
+        const ctx = await createTestContext();
+        const installedFingerprint = await installOldPinnedCopy(ctx);
+
+        const operation = essentialsOperation(await planSkills(ctx));
+
+        expect(operation?.updates).toEqual([
+          expect.objectContaining({ name: skillName, installedFingerprint }),
+        ]);
+        expect(operation?.preview.text).toContain(
+          `${skillName} — bundled with agemon — update (bundled content changed)`,
+        );
+      });
+
+      it("an edited copy is never replaced", async () => {
+        const ctx = await createTestContext();
+        await installOldPinnedCopy(ctx);
+        await writeCopy(
+          ctx,
+          `.claude/skills/${skillName}`,
+          `${OLD_PINNED_MANIFEST}my edit\n`,
+        );
+
+        const operation = essentialsOperation(await planSkills(ctx));
+
+        expect(operation?.updates ?? []).toEqual([]);
+        expect(await keptNotes(ctx)).toEqual([
+          keptNote(skillName, "differs from every version agemon shipped"),
+        ]);
+      });
+
+      it("the installed SKILL.md carries no remote URL", async () => {
+        const ctx = await createTestContext();
+        await installOldPinnedCopy(ctx);
+        const operation = essentialsOperation(await planSkills(ctx));
+
+        await skillsPlugin.apply?.(
+          ctx,
+          operation === undefined ? [] : [operation],
+        );
+
+        const installed = await readFile(
+          join(ctx.cwd, `.claude/skills/${skillName}/SKILL.md`),
+          "utf8",
+        );
+        expect(installed).not.toContain("raw.githubusercontent.com");
+        expect(
+          existsSync(
+            join(
+              ctx.cwd,
+              `.claude/skills/${skillName}/references/guidelines.md`,
+            ),
+          ),
+        ).toBe(true);
+      });
+    },
+  );
 
   it("plans no update for a current, edited or preexisting skill", async () => {
     const current = await createTestContext();

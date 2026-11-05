@@ -30,10 +30,6 @@ import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
-import {
-  ESSENTIALS_SKILLS_COMMIT,
-  ESSENTIALS_SKILLS_REPOSITORY_URL,
-} from "../../../src/plugins/pins.js";
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
@@ -304,7 +300,7 @@ describe("skills plan and apply for a group the user asked to add", () => {
 });
 
 describe("skills plan: one operation per group", () => {
-  it("lists each group with its skills and pinned sources", async () => {
+  it("lists each group with its skills", async () => {
     const ctx = await createTestContext({ skillGroupsOption: "security" });
 
     const operations = await planSkills(ctx);
@@ -324,8 +320,8 @@ describe("skills plan: one operation per group", () => {
     expect(operations[0].preview.text).toBe(
       [
         "Essentials:",
-        `web-design-guidelines — ${ESSENTIALS_SKILLS_REPOSITORY_URL} at ${ESSENTIALS_SKILLS_COMMIT}`,
-        `writing-guidelines — ${ESSENTIALS_SKILLS_REPOSITORY_URL} at ${ESSENTIALS_SKILLS_COMMIT}`,
+        "web-design-guidelines — bundled with agemon",
+        "writing-guidelines — bundled with agemon",
       ].join("\n"),
     );
     expect(operations[1].preview.text).toBe(

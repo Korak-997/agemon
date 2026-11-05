@@ -10,8 +10,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { fakePinnedSkillFingerprint } from "../../../src/core/fake-pinned-skills.js";
-import { ESSENTIALS_SKILLS_COMMIT } from "../../../src/plugins/pins.js";
 import { BUNDLE_FINGERPRINTS } from "../../../src/plugins/skills/bundle-fingerprints.js";
 import {
   findSkillGroup,
@@ -107,13 +105,17 @@ describe("bundle fingerprint guards", () => {
     }
   });
 
-  it("the current Essentials pin has fingerprints, and they are in history", () => {
+  it("Essentials is vendored, and the copies of its earlier pinned versions stay in history", () => {
+    const pinnedBeforeVendoring: Record<string, string> = {
+      "web-design-guidelines":
+        "704b816d2449e11d04327b17b4bdebce8a8787e59b4a7a05e6ee8ba48fec2237",
+      "writing-guidelines":
+        "8c753b9c3106e707440525798a6185d2807ced7ff35bdd0b9a544a120871cb9d",
+    };
     for (const entry of findSkillGroup("essentials")?.skills ?? []) {
-      const fingerprint =
-        BUNDLE_FINGERPRINTS.pinned[ESSENTIALS_SKILLS_COMMIT]?.[entry.skillName];
-      expect(fingerprint).toMatch(/^[0-9a-f]{64}$/u);
+      expect(entry.pinnedRepository).toBeUndefined();
       expect(BUNDLE_FINGERPRINTS.history[entry.skillName]).toContain(
-        fingerprint,
+        pinnedBeforeVendoring[entry.skillName],
       );
     }
   });
@@ -131,20 +133,6 @@ describe("bundle fingerprint guards", () => {
         expect(name).not.toBe(".DS_Store");
       }
       expect((await lstat(source)).isSymbolicLink()).toBe(false);
-    }
-  });
-
-  it("the fake backend's pinned stand-ins never appear among shipped fingerprints", () => {
-    const shipped = new Set([
-      ...Object.values(BUNDLE_FINGERPRINTS.history).flat(),
-      ...Object.values(BUNDLE_FINGERPRINTS.pinned).flatMap((byName) =>
-        Object.values(byName),
-      ),
-    ]);
-    for (const entry of findSkillGroup("essentials")?.skills ?? []) {
-      expect(shipped.has(fakePinnedSkillFingerprint(entry.skillName))).toBe(
-        false,
-      );
     }
   });
 });

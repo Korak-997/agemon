@@ -15,20 +15,12 @@ describe("buildMarketplaceManifest", () => {
 
   it("offers every vendored group as a plugin", () => {
     expect(manifest.plugins.map((plugin) => plugin.name)).toEqual(
-      SKILL_GROUPS.filter((group) => group.id !== "essentials").map(
-        (group) => `agemon-${group.id}`,
-      ),
+      SKILL_GROUPS.map((group) => `agemon-${group.id}`),
     );
   });
 
-  it("leaves out essentials, whose upstream has no license to redistribute under", () => {
-    const names = manifest.plugins.map((plugin) => plugin.name);
-
-    expect(names).not.toContain("agemon-essentials");
-  });
-
   it("points each plugin at a directory holding that group's skills", () => {
-    for (const group of SKILL_GROUPS.filter((g) => g.id !== "essentials")) {
+    for (const group of SKILL_GROUPS) {
       const plugin = manifest.plugins.find(
         (candidate) => candidate.name === `agemon-${group.id}`,
       );

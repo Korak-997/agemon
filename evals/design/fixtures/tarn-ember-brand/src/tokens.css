@@ -1,0 +1,15 @@
+:root {
+  --paper: #f3ead9;
+  --ink: #2b1d14;
+  --ember: #d9531e;
+  --rule: #cdbfa6;
+  --radius: 10px;
+  --font-display: "Fraunces", serif;
+  --font-body: "Source Sans 3", sans-serif;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+}

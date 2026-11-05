@@ -65,7 +65,7 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 
 | Group | Skills | What it covers |
 |---|---|---|
-| `essentials` (always on) | `web-design-guidelines`, `writing-guidelines` | Vercel Labs' general web design and writing review guidelines. Not vendored/renamed — see note below. |
+| `essentials` (always on) | `web-design-guidelines`, `writing-guidelines` | Vercel Labs' web design and writing review guidelines, vendored as copies taken at one pinned upstream commit each. They keep their upstream names — see [Vendored Skills](#vendored-skills--attribution). |
 | `design` | `agemon-design` + 3 recipe variants (`agemon-design-minimal`, `agemon-design-editorial`, `agemon-design-dashboard`) | Design engineering: anti-slop rules, discovery, and outcome recipes (dashboard/landing/auth), covering both visual design and UI/UX. |
 | `security` | `agemon-security`, `agemon-security-audit` | Exploit-driven security review — no finding without a working proof-of-concept — plus a multi-agent, multi-phase codebase audit with independently verified findings. |
 | `code-quality` | `agemon-clean-code`, `agemon-house-rules` | Simplicity, DRY architecture, self-documenting naming, surgical scope control. |
@@ -92,7 +92,7 @@ Selection order:
 The group question comes first, while agemon builds the plan, so every group you picked is a
 separate row (`skill-group:<id>`, or `custom-skill-group:<id>` for a project-defined group) in
 the plan, the consent screen and `agemon status`, with each skill and its
-pinned source. Groups you were shown and did not pick are recorded as declined once you approve
+source. Groups you were shown and did not pick are recorded as declined once you approve
 the install gate. Ctrl-C at the question leaves the repository untouched.
 
 Re-running `agemon` in a repo only re-verifies the groups that repo already selected — it never
@@ -181,18 +181,13 @@ instructions for your agent from whoever wrote the repository's `agemon.toml`: r
 code. A commit sha pins content, not origin — GitHub serves a commit from any fork under the
 original repository's URL, so check the commit itself, not just the repository name.
 
-Every non-essential skill is vendored into agemon's own repo under `assets/skills/`, rather than
-fetched and installed under its original upstream name at bootstrap time — so installs don't
-depend on GitHub being reachable and won't drift if an upstream repo changes. Vendored skills
+Every bundled skill is vendored into agemon's own repo under `assets/skills/`, rather than fetched at
+bootstrap time (custom GitHub groups you add yourself are still fetched) — so installs don't depend on GitHub being reachable and won't drift if an
+upstream repo changes. Vendored skills
 sourced from a third-party project are renamed under an `agemon-*` identity so they read as
 agemon's own; the `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` are original to
-this project and keep their `skill-*` names, and `geo-seo` keeps its upstream `geo-*` names. See [Vendored Skills](#vendored-skills--attribution)
-for sources and licenses.
-
-`essentials` is the one exception: `vercel-labs/agent-skills` carries no detected license, so
-agemon can't vendor (redistribute) a renamed copy of it. agemon fetches the skills under their
-original names from one pinned commit of that repo, checks that the checkout really is that
-commit, and installs from it.
+this project and keep their `skill-*` names, while `geo-seo` and `essentials` keep their upstream
+names. See [Vendored Skills](#vendored-skills--attribution) for sources and licenses.
 
 ### Daemon naming
 
@@ -259,7 +254,7 @@ There are two products to set up, and each gets agemon's work in a different way
 | agemon installs | Claude Code on the web | claude.ai chat |
 |---|---|---|
 | Rules (`AGENTS.md`, `CLAUDE.md`) | Yes, once committed | No |
-| Skills | Yes, once committed | Yes, as plugins, except `essentials` |
+| Skills | Yes, once committed | Yes, as plugins |
 | Subagents | Yes, once committed | No |
 | Hooks and `.mcp.json` | Yes, once committed; the tools they run need installing | No |
 | `code-review-graph` | Through a setup script | No |
@@ -307,8 +302,6 @@ Plugins differ from an `agemon` install in these ways:
 - **Latest skills, not pinned.** The marketplace follows this repository's default branch
   rather than a release. Claude Code doesn't auto-update third-party marketplaces by default;
   run `claude plugin marketplace update agemon`, or turn on auto-update under `/plugin`.
-- **No `essentials`.** Its upstream repository has no license, so agemon can't redistribute
-  it. Install those skills from [their source](https://github.com/vercel-labs/agent-skills).
 - **Prefixed names.** A skill is named `<plugin>:<skill>`, such as
   `agemon-security:agemon-security`. In a repository that also has an `agemon` install, you
   would see both copies, so use one or the other there.
@@ -867,8 +860,9 @@ By default, agemon may manage these paths:
 - `agemon.toml` (written on the first run; rewritten once when a capability is added)
 
 It also invokes external installers (`pipx`, `npm -g`, the pinned `skills` CLI) when required.
-Every third-party tool and source is pinned to an exact version or commit
-(`src/plugins/pins.ts`, `assets/tools/package-lock.json`). agnix is installed with
+Every third-party tool is pinned to an exact version
+(`src/plugins/pins.ts`, `assets/tools/package-lock.json`), and every vendored skill records the
+upstream commit it was copied from in its `NOTICE.md`. agnix is installed with
 `npm install --global --ignore-scripts agnix@<pin>`, so its own download script never runs;
 agemon then downloads the binary from the matching GitHub release itself and installs it only
 if the archive matches a sha256 pinned in `src/plugins/pins.ts`.
@@ -878,7 +872,7 @@ Machine-level caches outside the repo, under `${XDG_STATE_HOME:-~/.local/state}/
 kept by `nuke` because every repo on the machine shares them:
 
 - `tools/<hash>/`: the `skills` CLI, installed from `assets/tools/package-lock.json`
-- `skills-src/<commit>/`: the pinned Essentials checkout that `skills add` installs from
+- `skills-src/<commit>/`: the pinned checkout of a custom skill group's GitHub source that `skills add` installs from
 - `machine.json`: which repositories use code-review-graph, agnix and user linger, and who
   installed or enabled them
 
@@ -937,19 +931,20 @@ Useful sandbox flags:
 
 ## Vendored Skills & Attribution
 
-The `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`,
+The `essentials`, `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`,
 `workflow`, `output-style`, `founder`, `teamlead` and `geo-seo` skill groups (see [Skill Groups](#skill-groups)) are vendored under
 `assets/skills/<group>/<skill>/`.
 Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
-and a copy of its upstream `LICENSE`. Sources, all MIT-licensed:
+and a copy of its upstream `LICENSE`. Sources, MIT-licensed except where noted. One file is Apache-2.0: `agemon-design`'s `references/tells-2026-11.md` is adapted from Anthropic's `frontend-design` skill (https://github.com/anthropics/skills) under Apache-2.0, with its licence text in `references/third-party-licenses.md`:
 
 Every skill vendored from a third-party project is renamed to an `agemon-*` identity (frontmatter
 `name` and directory) — it should never be obvious from installing it that the content originated
 elsewhere. Original upstream names are preserved only in each skill's `NOTICE.md`, for attribution.
 The project-authored `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` have no
 upstream to rename from and keep their original `skill-*` names — see the table below.
-The `geo-seo` group is the one deliberate exception: its skills keep their upstream `geo-*` names
-so `/geo audit` and the other commands match the upstream project's documentation.
+The `geo-seo` group keeps its upstream `geo-*` names so `/geo audit` and the other commands match
+the upstream project's documentation. The `essentials` group keeps its upstream names too, so repositories
+that already have those skills recognise them and can update them.
 
 | Renamed to | Originally | Source |
 |---|---|---|
@@ -957,6 +952,8 @@ so `/geo audit` and the other commands match the upstream project's documentatio
 | `agemon-security` | `security-review` (also avoids colliding with Claude Code's own built-in skill of the same name) | [Dilaz/security-review-skill](https://github.com/Dilaz/security-review-skill) |
 | `agemon-security-audit` | `security-audit` | [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill) |
 | `agemon-brainstorming`, `agemon-writing-plans`, `agemon-executing-plans`, `agemon-subagent-driven-development`, `agemon-test-driven-development`, `agemon-using-git-worktrees`, `agemon-dispatching-parallel-agents`, `agemon-finishing-a-development-branch` | the same names without `agemon-` | [obra/superpowers](https://github.com/obra/superpowers) |
+| `web-design-guidelines` | `command.md` of `web-interface-guidelines`, with a wrapper that reads it instead of fetching it | [vercel-labs/web-interface-guidelines](https://github.com/vercel-labs/web-interface-guidelines) |
+| `writing-guidelines` | `command.md` of `writing-guidelines`, with a wrapper that reads it instead of fetching it | [vercel-labs/writing-guidelines](https://github.com/vercel-labs/writing-guidelines) |
 | `agemon-adhd` | `i-have-adhd` | [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd) |
 | `agemon-founder-board` and the other `agemon-founder-*` skills | `founder-board` and the other `founder-*` skills | [Jakeschincariol/founder-skill](https://github.com/Jakeschincariol/founder-skill) |
 | `agemon-architecture` | `clean-architecture` | [nathankim0/clean-architecture-skills](https://github.com/nathankim0/clean-architecture-skills) |
@@ -964,12 +961,11 @@ so `/geo audit` and the other commands match the upstream project's documentatio
 | `agemon-clean-code` | `karpathy-guidelines` | [swarmclawai/andrej-karpathy-skills](https://github.com/swarmclawai/andrej-karpathy-skills) |
 | `agemon-house-rules`, `agemon-performance`, `agemon-commit`, `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | — | Original — authored for this project, `agemon-house-rules` distilled from this repo's own `AGENTS.md`. The `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` keep their original `skill-*` names rather than the `agemon-*` convention. |
 
-`ui-craft`'s own reference files (33 files under `agemon-design/references/`) still mention
-"ui-craft" by name in prose in a few places — they document that project's own separate CLI/MCP
-tooling (`ui-craft-detect`, the `ui-craft` MCP server's `route_task`), which genuinely still goes
-by that name and isn't part of what agemon ships. Rewriting 33 files of someone else's authored
-guidance to scrub every mention was judged higher-risk than leaving a few internal citations
-intact; the skill's own identity (what gets installed, listed, and invoked) is fully renamed.
+`agemon-design`'s reference files still say "ui-craft" in two places: the `.ui-craft/` directory
+that holds a project's design brief (renamed in a later phase), and a few "clashes with ui-craft
+rules" headings in `references/stack.md`. Commands, tools and agents that agemon does not ship are
+gone, and `npm run lint-skills` fails if one comes back in `agemon-design` (the `-minimal`, `-editorial` and `-dashboard` variants are not linted for this) or a link in the skill points at a missing
+file; the skill's own identity (what gets installed, listed, and invoked) is fully renamed.
 
 `geo-seo` is vendored from [zubair-trabzada/geo-seo-claude](https://github.com/zubair-trabzada/geo-seo-claude)
 (MIT, commit `989cae0`). It ships 12 of upstream's skills; the self-updater, the Python scripts,

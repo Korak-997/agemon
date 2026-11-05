@@ -3,10 +3,6 @@ import type { CustomSkillGroupConfig } from "../../core/config.js";
 import { resolveVendoredSkillPath } from "../../core/package-assets.js";
 import { printable } from "../../core/untrusted-text.js";
 import {
-  ESSENTIALS_SKILLS_COMMIT,
-  ESSENTIALS_SKILLS_REPOSITORY_URL,
-} from "../pins.js";
-import {
   type PinnedSkillsRepository,
   resolvePinnedSkillPath,
 } from "./pinned-source.js";
@@ -19,11 +15,6 @@ export interface SkillBundleEntry {
   pinnedRepository?: PinnedSkillsRepository;
   localSourcePath?: string;
 }
-
-const ESSENTIALS_REPOSITORY: PinnedSkillsRepository = {
-  url: ESSENTIALS_SKILLS_REPOSITORY_URL,
-  commit: ESSENTIALS_SKILLS_COMMIT,
-};
 
 export interface AgentDefinition {
   name: string;
@@ -98,8 +89,8 @@ export const SKILL_GROUPS: SkillGroup[] = [
     description: "Web design and writing guidelines from Vercel Labs.",
     defaultSelected: true,
     skills: [
-      pinnedSkill(ESSENTIALS_REPOSITORY, "web-design-guidelines"),
-      pinnedSkill(ESSENTIALS_REPOSITORY, "writing-guidelines"),
+      vendoredSkill("essentials", "web-design-guidelines"),
+      vendoredSkill("essentials", "writing-guidelines"),
     ],
   },
   {

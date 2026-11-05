@@ -22,3 +22,8 @@ researches/
 /website/src/generated/
 /website/public/install.sh
 /docs/road-to-v6.md
+
+# design-eval run output stays local; evals/design/README.md records the headline numbers
+evals/design/results/
+/reports/
+/research_notes/

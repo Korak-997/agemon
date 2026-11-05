@@ -2,7 +2,6 @@
 
 export interface BundleFingerprints {
   history: Readonly<Record<string, readonly string[]>>;
-  pinned: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
 export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
@@ -27,9 +26,11 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     "agemon-design": [
       "3581e052b7effcfe82b98c788dbed81023a6d59b5806e69d74270049458a1d5b",
       "5e565bfdd50ec5bf4dc1480fea3f5f6cea0b9ff0f3e98ccad5fcdaefdc09ab99",
+      "a7e453034da8bccf513c72f59aedca951642f4ff7046ad4c9a4a0c25fbcb5009",
     ],
     "agemon-design-dashboard": [
       "2aa150cda2ef3c89f49f94c6968c0c40e5a1e8fa4c484ea22946c88ece88dee7",
+      "78bde4711bdd801c8fd2333ad7cac7db0a0f0e03138253dadceee00a2d81afc9",
       "7bcad52ed8be11ff4a997fe116ddc887d82f6362ed90a8bc5f3491d5b4bc8a94",
     ],
     "agemon-design-editorial": [
@@ -38,6 +39,7 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     ],
     "agemon-design-minimal": [
       "8beab51f4b504308a3ce6b892698633f4f193ee62909ff5be8abf35c489519ce",
+      "bc60b436c20820353daf9f2fa190bd0d8d2f614854d2bdb64c2ab7282234ac31",
       "bdca09c04f653546d9fb786f7cf7a662e6ebb68454e61f85962dddfdb5b6ae4f",
     ],
     "agemon-dispatching-parallel-agents": [
@@ -192,18 +194,12 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
       "383c8c3314f8f284f23675fb8aaf874d0808f1dcce2b87b0bfc4637af0a55ee1",
     ],
     "web-design-guidelines": [
+      "6ac5c1f7088b56c892dc63e37b7fe19c3c1a0f74ebccddd40395207fbd6cc1da",
       "704b816d2449e11d04327b17b4bdebce8a8787e59b4a7a05e6ee8ba48fec2237",
     ],
     "writing-guidelines": [
+      "2167548753d56d1c34d6615212c14b816553a90f541dd9135b21944f86b7bdd4",
       "8c753b9c3106e707440525798a6185d2807ced7ff35bdd0b9a544a120871cb9d",
     ],
-  },
-  pinned: {
-    "063bee94c3f4df8453406c830b0a7df0f2860278": {
-      "web-design-guidelines":
-        "704b816d2449e11d04327b17b4bdebce8a8787e59b4a7a05e6ee8ba48fec2237",
-      "writing-guidelines":
-        "8c753b9c3106e707440525798a6185d2807ced7ff35bdd0b9a544a120871cb9d",
-    },
   },
 };

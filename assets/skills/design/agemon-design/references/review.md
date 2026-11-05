@@ -51,9 +51,9 @@ Evaluate in order: Value → Ease of Use → Delight. Aesthetic feedback that ar
 
 ## How to Use
 
-- **`/ui-craft:critique <file>`** — UX critique, flag issues, no code changes
-- **`/ui-craft:audit <file>`** — Technical audit (a11y, perf, responsive), severity-ranked
-- **`/ui-craft:polish <file>`** — Apply the Polish Pass compound details directly
+- **`/agemon-design review <file>`** — UX critique, flag issues, no code changes
+- **`/agemon-design audit <file>`** — Technical audit (a11y, perf, responsive), severity-ranked
+- **`/agemon-design polish <file>`** — Apply the Polish Pass compound details directly
 
 ---
 
@@ -163,7 +163,7 @@ Sections may be omitted when empty, except **Checked** and **Verdict** — those
 - **Passed** — what was inspected and found sound, with a word on the evidence behind it (e.g. "focus states present on all interactive elements in nav + forms," not "looks fine"). This is the payload when little or nothing changed — treat it with the same rigor as a finding, not as filler.
 - **Changed** — each change, one line, with a file reference and the rule or decision it serves. Every entry here already cleared the Evidence Gate above — no changes ship without a citation and a fix.
 - **Left alone** — deliberate non-changes: things that look unusual but are intentional or brand, things technically correct so untouched, things out of scope or that need a user decision. One line each with the why — this is what separates "didn't notice" from "noticed, chose not to touch."
-- **Verdict** — one sentence: overall state, plus the single highest-leverage next step if one exists (or "ship it" if none does).
+- **Verdict** — one sentence: overall state, plus the single highest-leverage next step if one exists (or "no open findings in what was checked" if none does). Never a ship or no-ship ruling.
 
 Keep it honest and short. The report reflects what this run actually inspected — no padding, no invented coverage, no claiming a dimension was checked because it usually is.
 
@@ -242,8 +242,8 @@ Full checklist lives in `accessibility.md` (**Quick Checklist** + **Forms**). Fa
 ## Context
 [1-2 sentences]
 
-## Anti-Slop Verdict
-[Pass/fail with specific tells]
+## Anti-Slop Tells
+[Each tell present, with the element and viewport; "none found" if clean]
 
 ## First Impressions
 [1 paragraph, direct]

@@ -1,0 +1,62 @@
+[
+  {
+    "prompt": "Build a pricing page for my SaaS with three tiers and a monthly/yearly toggle.",
+    "expected": "trigger",
+    "kind": "clear"
+  },
+  {
+    "prompt": "Design a dashboard for our support team showing ticket volume, response times and open escalations.",
+    "expected": "trigger",
+    "kind": "clear"
+  },
+  {
+    "prompt": "Create a login and sign-up screen for a React app. Make it feel polished, not generic.",
+    "expected": "trigger",
+    "kind": "clear"
+  },
+  {
+    "prompt": "Make a landing page for a small ceramics studio. Hero, three product highlights and a newsletter form.",
+    "expected": "trigger",
+    "kind": "clear"
+  },
+  {
+    "prompt": "In the settings page, make the Save button full width on mobile.",
+    "expected": "trigger",
+    "kind": "small-edit"
+  },
+  {
+    "prompt": "The card grid on the homepage has uneven gaps. Tighten the spacing and align the headings.",
+    "expected": "trigger",
+    "kind": "small-edit"
+  },
+  {
+    "prompt": "Fix this SQL query, it returns duplicate orders when a customer has two addresses.",
+    "expected": "no-trigger",
+    "kind": "near-miss"
+  },
+  {
+    "prompt": "Add a --verbose flag to the CLI that prints each file as it is processed.",
+    "expected": "no-trigger",
+    "kind": "near-miss"
+  },
+  {
+    "prompt": "Write a unit test for the function that parses ISO dates in src/dates.ts.",
+    "expected": "no-trigger",
+    "kind": "near-miss"
+  },
+  {
+    "prompt": "Add rate limiting to the /api/invoices endpoint, 60 requests per minute per API key.",
+    "expected": "no-trigger",
+    "kind": "near-miss"
+  },
+  {
+    "prompt": "Review my UI and tell me what looks generic or off about it.",
+    "expected": "trigger",
+    "kind": "guidelines-boundary"
+  },
+  {
+    "prompt": "Check this component against accessibility and web interface best practices and list every violation.",
+    "expected": "no-trigger",
+    "kind": "guidelines-boundary"
+  }
+]

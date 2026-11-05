@@ -13,9 +13,6 @@ group. To use your own skills in one repository, you don't need to change agemon
 - **First-party skill**: a bundled skill written for agemon. These are listed in
   `FIRST_PARTY_SKILLS` in `scripts/skill-provenance.ts`.
 
-The `essentials` group is different: its skills are not bundled. agemon installs them from
-a pinned commit of their upstream repository (`src/plugins/pins.ts`).
-
 ## 1. Check the skill can be bundled
 
 - **License.** agemon can bundle a third-party skill only under one of these licenses:
@@ -62,7 +59,8 @@ installed skill reads as agemon's own and does not collide with upstream's copy.
 that is `agemon-<upstream-name>`; pick a clearer name when upstream's is vague or would
 collide with a built-in Claude Code skill (`security-review` became `agemon-security`). Record the
 original name in `NOTICE.md`. The `geo-seo` group is the exception: it keeps upstream's
-`geo-*` names so `/geo audit` matches upstream's documentation.
+`geo-*` names so `/geo audit` matches upstream's documentation. The `essentials` group also keeps
+upstream's names, so installs made before it was vendored are recognised and can be updated.
 
 ## 3. Write `SKILL.md` frontmatter
 
@@ -197,8 +195,8 @@ in CI. Its own tests are in `test/unit/scripts/lint-skills.test.ts`.
 A few tests pin the exact skills of a group and fail until you update them with your new
 skill:
 
-- `test/unit/plugins/skills-plan-apply.test.ts` ("lists each group with its skills and
-  pinned sources") pins the plan preview of the `essentials` and `security` groups;
+- `test/unit/plugins/skills-plan-apply.test.ts` ("lists each group with its skills")
+  pins the plan preview of the `essentials` and `security` groups;
 - `test/unit/plugins/geo-seo-skill-group.test.ts` pins the `geo-seo` skill list.
 
 A new group whose skills need specific behavior checked (as `geo-seo` does) gets its own

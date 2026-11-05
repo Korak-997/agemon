@@ -7,13 +7,8 @@ import type { Context } from "../../../src/core/context.js";
 import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
-import { withAgemonStateLock } from "../../../src/core/state-root.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
-import {
-  ESSENTIALS_SKILLS_COMMIT,
-  ESSENTIALS_SKILLS_REPOSITORY_URL,
-} from "../../../src/plugins/pins.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
 import { applyAllPlanned } from "../apply-all-planned.js";
@@ -148,43 +143,6 @@ describe("skills plugin", () => {
       .getActions()
       .filter((action) => action.plugin === "skills");
     expect(actionsAfterUninstall).toEqual([]);
-  });
-
-  it("waits for another run's Essentials install before fetching the pinned source", async () => {
-    const context = await createTestContext();
-    const gitCalls: string[][] = [];
-    const run = context.run;
-    context.run = async (command, args, options) => {
-      if (command === "git") {
-        gitCalls.push(args);
-      }
-      return run(command, args, options);
-    };
-    let releaseOtherRun: () => void = () => {};
-    let signalHeld: () => void = () => {};
-    const held = new Promise<void>((resolve) => {
-      signalHeld = resolve;
-    });
-    const otherRun = withAgemonStateLock(
-      "skills-src.lock",
-      () =>
-        new Promise<void>((resolve) => {
-          releaseOtherRun = resolve;
-          signalHeld();
-        }),
-      1_000,
-    );
-    await held;
-
-    const install = applyAllPlanned(skillsPlugin, context);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(gitCalls).toEqual([]);
-    releaseOtherRun();
-    await otherRun;
-    await install;
-
-    expect(gitCalls.length).toBeGreaterThan(0);
-    await uninstallPlugins({ ...context, yes: true }, [skillsPlugin], {});
   });
 
   it("git-ignores a skills-lock.json generated during install", async () => {
@@ -357,7 +315,7 @@ describe("skills plugin", () => {
     expect(installedSkillNames.has("agemon-performance")).toBe(true);
   });
 
-  it("adds every skill through the pinned CLI, Essentials from the verified commit", async () => {
+  it("adds every skill through the pinned CLI, Essentials from the bundled copies and without git", async () => {
     const context = await createTestContext();
     resetFakeSubprocessState();
     const calls: Array<[string, string[]]> = [];
@@ -373,6 +331,7 @@ describe("skills plugin", () => {
       ([command]) => command === process.execPath,
     );
     expect(calls.some(([command]) => command === "npx")).toBe(false);
+    expect(calls.some(([command]) => command === "git")).toBe(false);
     expect(skillsCliCalls.length).toBeGreaterThan(0);
     for (const [, args] of skillsCliCalls) {
       expect(args[0]).toMatch(
@@ -382,32 +341,9 @@ describe("skills plugin", () => {
     const addedSources = skillsCliCalls
       .filter(([, args]) => args[1] === "add")
       .map(([, args]) => args[2]);
-    const pinnedSourceDirectory = join(
-      process.env.XDG_STATE_HOME ?? "",
-      "agemon",
-      "skills-src",
-      ESSENTIALS_SKILLS_COMMIT,
+    expect(addedSources).toEqual(
+      (findSkillGroup("essentials")?.skills ?? []).map((skill) => skill.source),
     );
-    expect(addedSources).toEqual([
-      join(pinnedSourceDirectory, "skills", "web-design-guidelines"),
-      join(pinnedSourceDirectory, "skills", "writing-guidelines"),
-    ]);
-    expect(calls).toContainEqual([
-      "git",
-      [
-        "-c",
-        "core.hooksPath=/dev/null",
-        "-c",
-        "core.fsmonitor=false",
-        "-c",
-        "credential.helper=",
-        "fetch",
-        "--depth",
-        "1",
-        ESSENTIALS_SKILLS_REPOSITORY_URL,
-        ESSENTIALS_SKILLS_COMMIT,
-      ],
-    ]);
   });
 
   it("adds every geo-seo skill through the pinned CLI with --skill-groups geo-seo, and nuke removes them without it", async () => {

@@ -1,6 +1,6 @@
 ---
 name: agemon-design-dashboard
-description: "Dense dashboard / admin / Bloomberg / Retool / data-heavy internal tools. Locked knobs: CRAFT=7, MOTION=3, DENSITY=9. IBM Plex + mono numbers, semantic palette, 4/8px grid, sparklines, tabular-nums. Trigger on: dashboard, admin panel, data-dense, analytics, Bloomberg-like, Retool-like."
+description: "Dense dashboard / admin / Bloomberg / Retool / data-heavy internal tools. Locked knobs: CRAFT=7, MOTION=3, DENSITY=9. a UI face chosen for dense data + mono numbers, semantic palette, 4/8px grid, sparklines, tabular-nums. Trigger on: dashboard, admin panel, data-dense, analytics, Bloomberg-like, Retool-like."
 argument-hint: "[action: build|review|polish] [target]"
 ---
 
@@ -35,7 +35,7 @@ All rules in `../agemon-design/SKILL.md` apply. This file overrides knob default
 
 **Typography**
 
-- UI: IBM Plex Sans or Inter, 400 / 500.
+- UI: the project's UI font. With none, choose a face built for dense data from the brief and say why; 400 / 500.
 - Mono: IBM Plex Mono or Geist Mono for IDs, hashes, timestamps, code, version numbers, kbd.
 - Body size: 13-14px default; 12px in dense tables is fine.
 - `tabular-nums` on every numeric column, metric card, timestamp, duration.
