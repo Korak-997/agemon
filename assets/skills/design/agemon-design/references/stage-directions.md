@@ -1,6 +1,6 @@
 # Stage 3: Directions
 
-New-surface track only. Diverges cheaply at the spec stage instead of at build, and moves the final pick outside the model, because a model's own pick falls back on the typical option.
+Runs only when a person asks for directions, on the new-surface track. Diverges cheaply at the spec stage instead of at build, and moves the final pick outside the model, because a model's own pick falls back on the typical option.
 
 ## Needs
 

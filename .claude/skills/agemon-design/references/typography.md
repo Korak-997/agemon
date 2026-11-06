@@ -16,17 +16,22 @@ Apply these in all standard Latin-script web UI unless a specific context overri
 
 **Font recommendations** — pick one family for body, optionally a second for display. In a single product surface, don't mix more than two typefaces; editorial layouts intentionally mix three or more for hierarchy.
 
-| Category | Safe choices |
-|----------|-------------|
-| Sans-serif | Inter, Geist, DM Sans, Plus Jakarta Sans |
-| Monospace | Geist Mono, JetBrains Mono, IBM Plex Mono |
-| System stack | `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` |
+Choose by genre and subject. These are examples to show the range, not defaults; use the project's fonts first, and say why when you pick one.
 
-**Safe choices are product-shell defaults, not marketing display picks.** On landings, portfolios, and brand surfaces the display face carries voice — reaching for the same safe sans every build produces monoculture. Selection procedure for marketing display type:
+| Genre / subject | Examples |
+|----------|-------------|
+| Dense data and tooling | IBM Plex Sans, Source Sans 3, Atkinson Hyperlegible |
+| Editorial and long-form | Newsreader, Source Serif 4, Literata, Alegreya |
+| Technical or workshop feel | Space Grotesk, Barlow, Archivo |
+| Warm, human, consumer | Nunito Sans, Figtree, Lexend |
+| Monospace for code and IDs | JetBrains Mono, IBM Plex Mono, Commit Mono |
+| No web font wanted | `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` |
+
+**A font you would reach for on any project is a default, not a choice.** On landings, portfolios, and brand surfaces the display face carries voice — reaching for the same sans every build produces monoculture. Selection procedure for marketing display type:
 
 1. Write three concrete brand-voice words from the brief ("warm, mechanical, opinionated" — not "modern, clean").
 2. Note the font you'd reach for by reflex; if it's the same face your last marketing build used, reject it and rotate.
-3. Pick for the voice words, then cross-check: "creative brief = serif" is itself a reflex — a distinctive sans display (Cabinet Grotesk, Satoshi, GT Walsheim class) is the right default for most creative/premium briefs. Serif display only when the brief is genuinely editorial, luxury, or publication-shaped, and rotate which serif.
+3. Pick for the voice words, then cross-check: "creative brief = serif" is itself a reflex — a distinctive sans display (Cabinet Grotesk, Satoshi, GT Walsheim class) can fit a creative/premium brief; choose by the voice words, not by habit. Serif display only when the brief is genuinely editorial, luxury, or publication-shaped, and rotate which serif.
 4. Emphasize within a headline using italic or bold of the **same family** — never inject a one-word serif into a sans headline for "visual interest".
 
 **Italic descender clearance:** italic display words containing `y g j p q` clip under `line-height: 1`. Use ≥1.1 and reserve bottom padding on the wrapper.
@@ -65,17 +70,14 @@ Three rules fall out of that table, and all three are checkable:
 1. **Four to six steps, not nine.** One label size, one body size, one intermediate, one
    section head, one display. Collapse everything else onto the nearest step. Half-pixel
    neighbours (13px and 13.5px) are never a distinction — they are indecision.
-   Enforced by `type/crowded-ladder`.
 2. **The display step sits 2.5x to 4x above the step below it, with nothing in between.**
    Display type is made by the **gap**, not by the size: 56px directly above 44px reads as
    slightly bigger text, while 76px above 30px reads as a headline. If the jump is small,
    either raise the display size or delete the step under it.
-   Enforced by `type/display-not-separated`.
 3. **Display type is not bold.** None of the four sets its largest type above 510. Big and
    bold reads cheap — a poster made in a hurry; big and medium reads like the size was
    already enough. Reserve 600-700 for 13-16px labels and buttons, where weight is the only
    emphasis available.
-   Enforced by `type/bold-display`.
 
 Corollary on small type: seven sizes under 14px is how a landing page ends up reading as a
 dashboard. Two is plenty, and one of those should be the mono label size.

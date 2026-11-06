@@ -74,7 +74,7 @@ Next: `/agemon-design build` — build on the spine.
 
 ## build
 
-Build a complete surface from an outcome recipe, ending in working code that passes the recipe's acceptance bar. Use when the user asks for a whole surface ("build me a dashboard", "I need a landing page") and expects something shippable, not component-level help.
+Build a complete surface from an outcome recipe, ending in working code that passes the recipe's acceptance bar. Use when the user asks for a whole surface ("build me a dashboard", "I need a landing page") and expects something shippable, not component-level help. With `--directions`, or when asked for directions in plain words, run [stage-directions.md](stage-directions.md) after step 1 and build the direction it logs.
 
 Recipes: dashboard → [recipe-dashboard.md](recipe-dashboard.md) · landing → [recipe-landing.md](recipe-landing.md) · auth → [recipe-auth.md](recipe-auth.md). If the surface has no recipe (settings, docs, e-commerce), say so and fall back to the standard build with the closest references; do not improvise a fake recipe.
 

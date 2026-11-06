@@ -172,16 +172,16 @@ Ten items a reviewer will flag immediately. Fix before shipping.
 
 ---
 
-## When `ui-craft-detect` Flags `dataviz/*` Rules
+## Triaging a Chart That Looks Wrong
 
-The detector rules map directly onto this file:
-- `dataviz/no-pie-gt-5` → § Cleveland-McGill + § Chart Selection Matrix
-- `dataviz/no-3d` → § Anti-Slop Checklist
-- `dataviz/sequential-not-rainbow` → § Color for Data → Sequential
-- `dataviz/direct-label-over-legend` → § Direct Labeling
-- `dataviz/bar-starts-at-zero` → § Tufte Principles
+Where to look in this file:
+- More than five pie slices: § Cleveland-McGill + § Chart Selection Matrix
+- 3D effects: § Anti-Slop Checklist
+- A rainbow scale for ordered data: § Color for Data → Sequential
+- A legend where direct labels would fit: § Direct Labeling
+- A bar axis that does not start at zero: § Tufte Principles
 
-Cross-reference when triaging a flagged chart.
+Cross-reference when a chart looks wrong.
 
 ---
 

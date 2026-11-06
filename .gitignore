@@ -25,5 +25,3 @@ researches/
 
 # design-eval run output stays local; evals/design/README.md records the headline numbers
 evals/design/results/
-/reports/
-/research_notes/

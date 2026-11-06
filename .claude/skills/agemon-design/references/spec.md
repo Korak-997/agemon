@@ -1,6 +1,6 @@
 # Composition Spec
 
-Defines `.ui-craft/spec.md` — the durable "what" between brief (why) and build (how). Created by `/shape` Step 6, consumed by `/sddesign` and `/craft`. Sits beside `brief.md` in `.ui-craft/` and is committed to the repo.
+Defines `.design/spec.md` — the durable "what" between brief (why) and build (how). Consumed by `/agemon-design build`. Sits beside `brief.md` in `.design/` and is committed to the repo. An older `.ui-craft/spec.md` is read, not rewritten.
 
 ---
 
@@ -78,11 +78,11 @@ Drawn from the recipe's acceptance criteria. All items must be green before buil
 
 ## How the Spec Gets Used
 
-**Discovery phase** — read `.ui-craft/spec.md` after `brief.md`. If the surface already has a spec section, it is the composition ground truth; do not re-derive from scratch.
+**Intake** — read `.design/spec.md` after `brief.md`. If the surface already has a spec section, it is the composition ground truth; do not re-derive from scratch.
 
-**Build phase** — `/craft <surface>` builds against the acceptance bar in the surface's spec section. Every item in the acceptance bar must be green before the build reports done.
+**Build phase** — `/agemon-design build <surface>` builds against the acceptance bar in the surface's spec section. Every item in the acceptance bar must be green before the build reports done.
 
-**Finalize phase** — `/finalize` verifies against the acceptance bar and the brief's learned constraints (§6). The acceptance bar is the surface-level definition of done; the brief's §6 constraints are the project-level floor.
+**Finalize phase** — the finishing pass verifies against the acceptance bar and the brief's learned constraints (§6). The acceptance bar is the surface-level definition of done; the brief's §6 constraints are the project-level floor.
 
 ---
 
@@ -107,12 +107,12 @@ Never delete past composition records — the spec is a log, not a config file.
 
 ## File Location and Git
 
-Commit `.ui-craft/spec.md` to the repo. It belongs in version control alongside the code it governs — losing it between sessions means losing the composition rationale.
+Commit `.design/spec.md` to the repo. It belongs in version control alongside the code it governs — losing it between sessions means losing the composition rationale.
 
-The `.ui-craft/` directory is the project's design decision store:
+The `.design/` directory is the project's design decision store:
 
 ```
-.ui-craft/
+.design/
 ├── brief.md      # why — principles, user, success metric
 ├── spec.md       # what — chosen composition, layout, inventory, acceptance bar
 └── (tokens live in the project's own token files)
@@ -120,4 +120,4 @@ The `.ui-craft/` directory is the project's design decision store:
 
 `brief.md` and `spec.md` are companions: the brief anchors principles; the spec records how those principles translated into a specific surface composition. When they conflict, the brief wins — a spec choice that violates a brief §6 constraint must be updated to comply.
 
-See `../SKILL.md` for routing and when to run `/sddesign` vs `/craft`.
+See `../SKILL.md` for routing.

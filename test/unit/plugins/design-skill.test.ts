@@ -68,7 +68,7 @@ describe("agemon-design skill content", () => {
   it.each([
     ["Small edit", "Read the contract"],
     ["In-brand feature", "only free axes vary"],
-    ["New surface", "All six"],
+    ["New surface", "Intake, assets, build, verify, critique"],
     ["Review only", "changes nothing"],
   ])("routes the %s track", (track, stages) => {
     const row = designFile("SKILL.md")
@@ -76,6 +76,17 @@ describe("agemon-design skill content", () => {
       .find((line) => line.startsWith(`| ${track} |`));
 
     expect(row).toContain(stages);
+  });
+
+  it("runs directions only when asked", () => {
+    expect(designFile("SKILL.md")).toContain(
+      "Directions run only when a person asks",
+    );
+    expect(designFile("SKILL.md")).toContain("--directions");
+    expect(designFile("references/actions.md")).toContain("--directions");
+    expect(designFile("references/stage-directions.md")).toContain(
+      "Runs only when a person asks",
+    );
   });
 
   it("builds several directions only on explicit request and skips non-visual work", () => {

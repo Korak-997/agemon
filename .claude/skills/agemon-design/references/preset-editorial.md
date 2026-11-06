@@ -1,10 +1,6 @@
----
-name: agemon-design-editorial
-description: "Editorial / magazine / long-form / Medium / Substack / content-heavy UIs. Locked knobs: CRAFT=9, MOTION=4, DENSITY=3. Serif display + humanist body, wide reading column, drop caps, OpenType. Trigger on: editorial, magazine, long-form, blog, Medium-like, Substack-like."
-argument-hint: "[action: build|review|polish] [target]"
----
+# Preset: Editorial
 
-# UI Craft — Editorial
+Use this preset only when the user names this look. It is a starting vocabulary for that request, never a default, and the project's brand still wins.
 
 Pre-committed editorial style: magazine, long-form, content-first. Typography carries the hierarchy; layout serves the reading experience.
 
@@ -14,7 +10,7 @@ Pre-committed editorial style: magazine, long-form, content-first. Typography ca
 - **MOTION_INTENSITY = 4** — reading-aware: fade on reveal, link hovers, no entrance stagger.
 - **VISUAL_DENSITY = 3** — wide reading column, generous vertical rhythm, 1 item per row for features.
 
-Do not re-ask these in Discovery. Confirm accent + serif/sans pairing only.
+Do not re-ask these during intake. Confirm accent + serif/sans pairing only.
 
 ## Style anchors
 
@@ -29,7 +25,7 @@ Do not re-ask these in Discovery. Confirm accent + serif/sans pairing only.
 
 ## Base rules (inherited)
 
-All rules in `../agemon-design/SKILL.md` apply. This file overrides knob defaults and adds style-specific guidance below. The anti-slop and craft tests still apply in full.
+The hard rules in `SKILL.md` and [core-rules.md](core-rules.md) apply. This file overrides knob defaults and adds style-specific guidance below. The anti-slop and craft tests still apply in full.
 
 ## Style-specific overrides
 
@@ -75,7 +71,7 @@ All rules in `../agemon-design/SKILL.md` apply. This file overrides knob default
 
 ## Reference files to read first
 
-Load these from `../agemon-design/references/`:
+Load these from this folder:
 
 - `typography.md` — the primary reference for this style
 - `layout.md` — reading column, rhythm, hierarchy

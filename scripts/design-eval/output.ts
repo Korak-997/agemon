@@ -42,6 +42,7 @@ import {
 } from "./claude.js";
 
 const BUILD_MAX_TURNS = 40;
+const DIRECTIONS_REQUEST = "\n\nShow me directions first.";
 const DEFAULT_MAX_BUDGET_USD = 5;
 const BRIEFS_DIRECTORY = join(EVAL_ROOT, "briefs");
 const FIXTURES_DIRECTORY = join(EVAL_ROOT, "fixtures");
@@ -119,7 +120,9 @@ export async function runOutputBuild(options: OutputOptions) {
   installArm(projectDirectory, options.arm, options.skillRef);
   const run = await options.runner({
     cwd: projectDirectory,
-    prompt: readFileSync(join(BRIEFS_DIRECTORY, `${options.brief}.md`), "utf8"),
+    prompt:
+      readFileSync(join(BRIEFS_DIRECTORY, `${options.brief}.md`), "utf8") +
+      (options.arm === "C" ? DIRECTIONS_REQUEST : ""),
     maxTurns: BUILD_MAX_TURNS,
     permissionMode: "acceptEdits",
     ...(options.arm === "C"

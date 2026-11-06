@@ -1,6 +1,6 @@
 # Finish Bar
 
-Ten finishing passes, each with measurable criteria. Run before shipping. Gated to `CRAFT_LEVEL ≥ 8` or `/finalize`. The point is not more rules — each pass surfaces a class of failure the others can't catch. Passes share no blind spots by design.
+Ten finishing passes, each with measurable criteria. Run before shipping. Gated to `CRAFT_LEVEL ≥ 8`, or when the user asks for a full pre-ship pass. The point is not more rules — each pass surfaces a class of failure the others can't catch. Passes share no blind spots by design.
 
 ---
 

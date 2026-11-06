@@ -1,7 +1,7 @@
 ---
 name: agemon-design
 description: "Use when creating, redesigning, restyling or reviewing any user interface: pages, screens, components, dashboards, landing pages, themes, brand application or design systems, including small visual changes to existing UI."
-argument-hint: "[action: brief|tokens|build|review|polish|harden|audit|animate] [target]"
+argument-hint: "[action: brief|tokens|build|review|polish|harden|audit|animate] [target] [--directions]"
 ---
 
 # agemon-design
@@ -47,10 +47,12 @@ Pick the track before anything else, because small edits should not pay for a fu
 |---|---|---|
 | Small edit | A visual change inside an existing screen | Read the contract, change it, checks |
 | In-brand feature | A new feature in an existing system | Intake, assets, build, verify; only free axes vary |
-| New surface | A new page, product or redesign | All six |
+| New surface | A new page, product or redesign | Intake, assets, build, verify, critique; directions if asked |
 | Review only | "Review", "audit", "critique" | Verify and critique; **changes nothing** outside `.design/` |
 
 On a small edit, "the contract" means `DESIGN.md` if present, otherwise the tokens and neighbouring code the change touches. Multiple full builds happen only on explicit request, with a cost notice first. If two tracks fit, take the smaller and say so.
+
+Directions run only when a person asks: `/agemon-design build --directions`, or plain words such as "show me directions first". Otherwise skip stage 3 and build from the brief's subject.
 
 ## Stages
 
@@ -58,7 +60,7 @@ Run only the stages your track names, in order. Each file says what it needs, do
 
 1. [stage-intake.md](references/stage-intake.md): `.design/brief.md`
 2. [stage-assets.md](references/stage-assets.md): `.design/assets.md`
-3. [stage-directions.md](references/stage-directions.md): `.design/directions.json`, `.design/log.jsonl`
+3. [stage-directions.md](references/stage-directions.md), only when asked: `.design/directions.json`, `.design/log.jsonl`
 4. [stage-build.md](references/stage-build.md): tokens in the repo's own system
 5. [stage-verify.md](references/stage-verify.md): findings with `not-verified` entries
 6. [stage-critique.md](references/stage-critique.md): `.design/critique-<n>.md`
@@ -116,7 +118,7 @@ Use what the session offers. Every lost capability appears in the final report, 
 
 End every run with:
 
-- **Track**, and the **direction** with who picked it (user, deal or fallback)
+- **Track**, and, if directions ran, the **direction** with who picked it (user, deal or fallback)
 - **Checks:** passed, failed and `not-verified`, by name, and which contrast check ran
 - **Waivers** and who gave them
 - **Critic:** whether it ran, or "Not independently reviewed"

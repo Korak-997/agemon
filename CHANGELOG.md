@@ -23,8 +23,23 @@ choice you made can be undone.
   cloud session won't see, and prints a setup script when hooks need `code-review-graph`.
 - **`agemon-design` has actions.** The skill now has a defined set of actions (including build,
   review and polish) that each state what they read and what they report.
+- **Skills can reach agents that read `.agents/skills`.** When agemon finds Codex, Gemini CLI,
+  Antigravity or Devin, it offers to copy skills there. It records each copy by hash, and never
+  overwrites or deletes a copy it did not write. The
+  [agent matrix](evals/design/agent-matrix.md) shows what has and has not been run.
 
 ### Changed
+
+- **`agemon-design` is now a staged workflow.** It picks a track first, so small edits skip the
+  full pipeline. It reads real tokens, including Tailwind v4, keeps its state in `.design/` and an
+  approved `DESIGN.md`, and can choose among three directions with a seeded script and a project log
+  (opt-in: `/agemon-design build --directions`). It then runs objective checks and one bounded critique, and reports what it could not
+  verify. The output eval hasn't run, so none of this is shown to produce better design.
+  Auto-triggering cannot be guaranteed, gates are voluntary without hooks, and a passing run does
+  not mean a good design.
+- **`agemon-design-minimal`, `-editorial` and `-dashboard` are retired.** Their looks are now
+  presets of `agemon-design`, used when you name one. Running `agemon` offers to remove an
+  unmodified copy; an edited copy is never touched.
 
 - **Essentials skills now ship inside agemon.** `web-design-guidelines` and `writing-guidelines`
   read a bundled copy of their guidelines instead of fetching them. Unmodified copies update on

@@ -958,8 +958,15 @@ describe("arm C", () => {
 
   it("installs the design group, and gives only arm C the shell", async () => {
     const seen: { tools: string; allowedTools?: string[] }[] = [];
-    const runner: ClaudeRunner = async ({ tools, allowedTools, cwd }) => {
+    const prompts: string[] = [];
+    const runner: ClaudeRunner = async ({
+      tools,
+      allowedTools,
+      cwd,
+      prompt,
+    }) => {
       seen.push({ tools, allowedTools });
+      prompts.push(prompt);
       expect(
         existsSync(join(cwd, ".claude", "skills", DESIGN_SKILL, "SKILL.md")),
       ).toBe(true);
@@ -984,6 +991,8 @@ describe("arm C", () => {
     expect(seen[0]?.tools).toBe(DIRECTION_BUILD_TOOLS);
     expect(seen[0]?.allowedTools?.length).toBeGreaterThan(0);
     expect(seen[1]).toEqual({ tools: BUILD_TOOLS, allowedTools: undefined });
+    expect(prompts[0]).toContain("directions");
+    expect(prompts[1]).not.toContain("Show me directions");
   });
 
   it("must name its commit, while arm B defaults to the old skill", () => {

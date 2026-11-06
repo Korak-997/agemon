@@ -1,6 +1,6 @@
 # Personas — Walkthrough Checklists
 
-Five personas, five journeys. A heuristic score says what's wrong in the abstract. A persona walkthrough says *who* it breaks for. Use these as overlays on top of `heuristics.md`: same UI, five different lenses.
+Five personas, five journeys. A heuristic finding says what's wrong in the abstract. A persona walkthrough says *who* it breaks for. Use these as overlays on top of `heuristics.md`: same UI, five different lenses.
 
 Each persona has a checklist. Every un-ticked box is a finding. Rank findings using the same impact tags from `heuristics.md` (`blocks-conversion`, `adds-friction`, `reduces-trust`, `minor-polish`).
 
@@ -190,7 +190,7 @@ Each persona has a checklist. Every un-ticked box is a finding. Rank findings us
 
 ## How to Use
 
-Invoked by `/ui-craft:heuristic <target> --persona=<name>`:
+Invoked by a heuristic review (`/agemon-design review`) that names a persona:
 
 | Arg | Persona | Loads |
 |-----|---------|-------|
@@ -201,6 +201,6 @@ Invoked by `/ui-craft:heuristic <target> --persona=<name>`:
 | `--persona=margo` | One-thumb Margo | Section 5 |
 | `--persona=all` | All five | All sections |
 
-Output format: same scorecard shape as `heuristics.md` (rows of `| Checklist item | Pass/Fail | Finding | Impact |`). End with top 3-5 findings ranked by impact tag.
+Output format: same findings shape as `heuristics.md` (rows of `| Checklist item | Element | Viewport | Finding | Impact |`), one row per problem found. End with top 3-5 findings ranked by impact tag.
 
-Persona walkthroughs do not replace the Nielsen + Design Laws pass — they supplement it. A UI can score well on Nielsen and still fail Kwame.
+Persona walkthroughs do not replace the Nielsen + Design Laws pass — they supplement it. A UI can hold up on Nielsen and still break for Kwame.

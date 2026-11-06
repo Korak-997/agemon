@@ -2,6 +2,7 @@
 
 Measures whether `agemon-design` loads when it should (activation) and what it produces
 (output). Nothing here is read while tuning the skill: `briefs/` and `fixtures/` are held out.
+[docs/design-skill-evidence.md](../../docs/design-skill-evidence.md) has the research behind it.
 
 ## Arms
 
@@ -16,6 +17,7 @@ Measures whether `agemon-design` loads when it should (activation) and what it p
   with a shell, limited by `--allowedTools` to `inventory.mjs`, `deal.mjs` and `check-source.mjs` in
   the installed skill, because the selector cannot run without one. Each build records
   `directionPickedBy` from `.design/log.jsonl`; anything but `deal` means the selector did not pick.
+  Directions are opt-in in the skill, so arm C's prompt adds a request for them to the brief.
 
 All arms install a realistic subset, not the whole catalogue (58 descriptions total about
 16,561 characters, which distorts the listing budget): the `architecture`, `code-quality`,

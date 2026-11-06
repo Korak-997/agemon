@@ -61,7 +61,7 @@ Positioning statement centered above a bento grid of product surfaces. Each card
 - Typography: headline centered above the grid
 
 ### Archetype E — Editorial figure
-Value propositions presented as numbered editorial figures ("FIG 0.2", "FIG 0.3"). Gives a technical publication feel. Strong for developer-focused products where "serious" positioning outweighs "approachable."
+Value propositions presented as numbered editorial figures, labelled in the subject's own vocabulary (its real parts, stages or sections), not a generic figure label. Gives a technical publication feel. Strong for developer-focused products where "serious" positioning outweighs "approachable."
 
 - Section labels: uppercase monospace or small-caps
 - Layout: each figure gets a distinct visual treatment
@@ -143,10 +143,10 @@ Concrete patterns observed in production. Each stands as a reusable technique.
 - **Bento card sizing ratio**: ~2:1 dominant card to minor cards; never all cards equal size
 
 ### Typography signatures
-- **Display italics**: italicized hero headline as a typographic accent — distinctive without added color
+- **Display italics**: a common generated look (see [tells-2026-11.md](tells-2026-11.md)); use only when the content calls for emphasis, never as a habit
 - **Negative letter-spacing on all headings** (see Section 7 for exact values)
 - **Font weight distribution skewed to medium**: `font-weight: 500` as the dominant weight across UI, `600` for emphasis only, `700` reserved for hero scale
-- **Editorial section labels**: uppercase, tracked-out, small — "FIG 0.2" or "01 / OVERVIEW" style
+- **Section labels**: small, tracked-out uppercase labels are a common generated look ([tells-2026-11.md](tells-2026-11.md)); use one only when it names a real section the way the subject would, otherwise sentence case
 
 ### Color signatures
 - **One accent, used sparingly**: accent color appears in CTAs and key interactive elements only — not in decorative elements
@@ -281,7 +281,7 @@ Property targeting:   box-shadow, transform, opacity — never transition: all
 
 **Font pairing pattern** (display + system + mono):
 ```
-Display headings: Satoshi or equivalent geometric sans
-Body:             Inter or equivalent neutral sans
-Code/technical:   Geist Mono or equivalent monospace
+Display headings: a face chosen for the brief's subject
+Body:             a readable sans or serif chosen for the same brief
+Code/technical:   a monospace, only if the content has code
 ```

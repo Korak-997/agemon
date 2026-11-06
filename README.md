@@ -66,7 +66,7 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 | Group | Skills | What it covers |
 |---|---|---|
 | `essentials` (always on) | `web-design-guidelines`, `writing-guidelines` | Vercel Labs' web design and writing review guidelines, vendored as copies taken at one pinned upstream commit each. They keep their upstream names — see [Vendored Skills](#vendored-skills--attribution). |
-| `design` | `agemon-design` | A staged UI workflow: it picks a track, reads your real brand and tokens, builds from the product's subject, checks objective facts, and reports what it could not verify. Dashboard, editorial and minimal looks are presets it uses when you name them. Limits: auto-triggering cannot be guaranteed, its gates are voluntary without hooks, and a passing run does not mean a good design. |
+| `design` | `agemon-design` | A staged UI workflow: it picks a track, reads your real brand and tokens, builds from the product's subject, checks objective facts, and reports what it could not verify. Choosing among three directions is opt-in (`/agemon-design build --directions`) until an eval supports it as a default. Dashboard, editorial and minimal looks are presets it uses when you name them. Limits: auto-triggering cannot be guaranteed, its gates are voluntary without hooks, and a passing run does not mean a good design. |
 | `security` | `agemon-security`, `agemon-security-audit` | Exploit-driven security review — no finding without a working proof-of-concept — plus a multi-agent, multi-phase codebase audit with independently verified findings. |
 | `code-quality` | `agemon-clean-code`, `agemon-house-rules` | Simplicity, DRY architecture, self-documenting naming, surgical scope control. |
 | `architecture` | `agemon-architecture` | Clean Architecture review: dependency rule, layering, boundary crossing, SOLID. |
@@ -998,9 +998,9 @@ that already have those skills recognise them and can update them.
 | `agemon-clean-code` | `karpathy-guidelines` | [swarmclawai/andrej-karpathy-skills](https://github.com/swarmclawai/andrej-karpathy-skills) |
 | `agemon-house-rules`, `agemon-performance`, `agemon-commit`, `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | — | Original — authored for this project, `agemon-house-rules` distilled from this repo's own `AGENTS.md`. The `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` keep their original `skill-*` names rather than the `agemon-*` convention. |
 
-`agemon-design`'s reference files still say "ui-craft" in two places: the `.ui-craft/` directory
-that holds a project's design brief (renamed in a later phase), and a few "clashes with ui-craft
-rules" headings in `references/stack.md`. Commands, tools and agents that agemon does not ship are
+`agemon-design`'s reference files still say "ui-craft" in two places: an older project's
+`.ui-craft/` directory, which the skill reads but never rewrites (new files go in `.design/`), and
+a few "clashes with ui-craft rules" headings in `references/stack.md`. Commands, tools and agents that agemon does not ship are
 gone, and `npm run lint-skills` fails if one comes back in `agemon-design` or a link in the skill points at a missing
 file; the skill's own identity (what gets installed, listed, and invoked) is fully renamed.
 
