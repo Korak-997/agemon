@@ -22,7 +22,7 @@ Every preset declares all five fields. None is optional.
 
 The agent executes this numbered procedure for every iteration:
 
-1. **Read** the target AND `.ui-craft/brief.md` §6 (learned constraints = override registry). Brief §6 overrides preset gates; the a11y/correctness floor is never overridden.
+1. **Read** the target AND the brief's §6 (learned constraints = override registry). Brief §6 overrides preset gates; the a11y/correctness floor is never overridden.
 2. **Detect renderer** (see Renderer Detection Ladder below) and emit the pre-flight cost notice — preset name, budget, "will run up to N iterations; each iteration runs one full evaluate → fix → re-evaluate cycle." MUST emit before any iteration begins.
 3. **Evaluate** the target through the preset's lens → produce a severity-ranked findings list.
 4. **Select ONE highest-impact fix.** Ranking: Critical before Major; tiebreaker within the same tier = earlier-numbered finish-bar pass / earlier-listed state in the state-design lattice / earlier-cited finding in the brief; for token-consistency: within the same tier, apply layer order — primitive token violations before semantic, semantic before component. MUST NOT apply more than one fix per iteration.

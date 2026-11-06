@@ -11,5 +11,6 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["src", "scripts", "test"]
+  "include": ["src", "scripts", "test"],
+  "exclude": ["test/unit/skills/design/fixtures"]
 }

@@ -12,6 +12,7 @@
       "!**/.sandbox",
       "!assets/skills",
       "!evals/design/results",
+      "!test/unit/skills/design/fixtures",
       "!.claude/skills",
       "!website/src/assets/brand",
       "!website/public"

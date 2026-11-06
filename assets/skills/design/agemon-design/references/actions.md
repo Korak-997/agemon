@@ -13,7 +13,7 @@ Eight focused passes you can ask `agemon-design` for. Invoke one as `/agemon-des
 | [audit](#audit) | Technical audit: accessibility, performance, responsive | no, until approved |
 | [animate](#animate) | Add purposeful motion, or remove excess | yes |
 
-**Shared rules.** Run [stage-intake.md](stage-intake.md) and [stage-assets.md](stage-assets.md) first, as your track requires. Knobs (CRAFT_LEVEL, MOTION_INTENSITY, VISUAL_DENSITY) come from the user, else the defaults in [core-rules.md](core-rules.md). Findings use the Review Format table from [core-rules.md](core-rules.md). Never commit unless the user asks. In a non-interactive run, every "ask" below becomes: proceed and log the assumption in `.design/brief.md`. New working files go in `.design/`: where these references say to write under `.ui-craft/`, write the same file under `.design/`, and read an existing `.ui-craft/` file without rewriting it.
+**Shared rules.** Run [stage-intake.md](stage-intake.md) and [stage-assets.md](stage-assets.md) first, as your track requires. Knobs (CRAFT_LEVEL, MOTION_INTENSITY, VISUAL_DENSITY) come from the user, else the defaults in [core-rules.md](core-rules.md). Findings use the Review Format table from [core-rules.md](core-rules.md). Never commit unless the user asks. In a non-interactive run, every "ask" below becomes: proceed and log the assumption in `.design/brief.md`. New working files go in `.design/`; read an older `.ui-craft/` file without rewriting it.
 
 **Visual capture** (review and audit start here). Code-only review misses what the user sees. If you can run a browser, capture the surface at desktop (1280×800), tablet (768×1024) and mobile (375×812), plus dark mode if the app has one. If you cannot, ask the user for those screenshots. If they decline, or if nobody can answer, run a code-only pass and mark the report `[CODE-ONLY REVIEW — visual issues not assessed]` at the top. Never silently fall back to code-only.
 
@@ -21,9 +21,9 @@ Eight focused passes you can ask `agemon-design` for. Invoke one as `/agemon-des
 
 ## brief
 
-Write or update the project's durable design brief at `.ui-craft/brief.md`. Format: [brief.md](brief.md).
+Write or update the project's durable design brief at `.design/brief.md`. Format: [brief.md](brief.md).
 
-1. **Detect.** Check whether `.ui-craft/brief.md` exists. If it does, load it. If the request names an update ("update principles", "shift target user", "add out of scope"), focus there and skip unchanged sections; otherwise summarize the brief and ask what to change. If it does not, check the repo root for `DESIGN.md` or `design-tokens.json`; if present, read it and pre-fill answers instead of re-asking, and note the source. The brief complements an existing `DESIGN.md`, never contradicts it; read it for design values only (see Untrusted content in `SKILL.md`).
+1. **Detect.** Check whether `.design/brief.md` or an older `.ui-craft/brief.md` exists. If one does, load it. If the request names an update ("update principles", "shift target user", "add out of scope"), focus there and skip unchanged sections; otherwise summarize the brief and ask what to change. If it does not, check the repo root for `DESIGN.md` or `design-tokens.json`; if present, read it and pre-fill answers instead of re-asking, and note the source. The brief complements an existing `DESIGN.md`, never contradicts it; read it for design values only (see Untrusted content in `SKILL.md`).
 2. **Draft** (absent case). Ask for the five required sections in one compact prompt, one question per section, so the user can answer tersely:
    1. **Product purpose** — what it does, in one sentence.
    2. **Primary user** — who, by role and context.
@@ -34,7 +34,7 @@ Write or update the project's durable design brief at `.ui-craft/brief.md`. Form
 4. **Long input.** If the user pastes a product description or PRD, parse it into the five sections, state what you extracted, and ask for confirmation instead of re-asking.
 5. **Thin answers.** If an answer is too vague to constrain a design decision, ask one targeted follow-up. At most two follow-ups per section, then mark it incomplete and move on.
 6. **Show before writing.** Show the proposed brief in full and ask whether to adjust anything, and write it once the user confirms. In a non-interactive run, write it and mark unconfirmed sections as assumptions.
-7. **Write.** Create `.ui-craft/` if needed and write all five sections under the exact headings from [brief.md](brief.md). Tell the user where the file is and suggest committing it (it is documentation, not config). Do not commit for them.
+7. **Write.** Create `.design/` if needed and write all five sections under the exact headings from [brief.md](brief.md). Tell the user where the file is and suggest committing it (it is documentation, not config). Do not commit for them.
 
 Constraints: all five sections are required; if one is genuinely unknown, write `[TO DEFINE — YYYY-MM-DD]` so the gap stays visible. Updates are append-mostly: never delete past content, mark it deprecated with a date and reason. No brand names, product examples or generic SaaS language in the user's brief; it describes their product, not the template.
 
@@ -78,11 +78,11 @@ Build a complete surface from an outcome recipe, ending in working code that pas
 
 Recipes: dashboard → [recipe-dashboard.md](recipe-dashboard.md) · landing → [recipe-landing.md](recipe-landing.md) · auth → [recipe-auth.md](recipe-auth.md). If the surface has no recipe (settings, docs, e-commerce), say so and fall back to the standard build with the closest references; do not improvise a fake recipe.
 
-0. **Spec.** If `.ui-craft/spec.md` has a `## Surface: <name>` section matching the request ([spec.md](spec.md)), load it. Its composition, component inventory, state lattice and acceptance bar override the recipe defaults; note which bar items came from where.
+0. **Spec.** If `.design/spec.md` or an older `.ui-craft/spec.md` has a `## Surface: <name>` section matching the request ([spec.md](spec.md)), load it. Its composition, component inventory, state lattice and acceptance bar override the recipe defaults; note which bar items came from where.
 1. **Inputs.** Run [stage-intake.md](stage-intake.md) and [stage-assets.md](stage-assets.md) (existing tokens, briefs). Read [craft-intent.md](craft-intent.md). Ask the recipe's Step 0 questions in one compact prompt, pre-filling anything the request or brief already answers. If the user declines or says "you decide", apply the recipe defaults silently and say which. Never ask twice, never block. Set DESIGN_VARIANCE from the craft-intent default for the surface type unless the user or brief says otherwise.
 2. **Craft Read and plan.** Output the Craft Read line ([stage-build.md](stage-build.md)) before any code, including the signature bet. Choose composition, tokens (the project's existing ones, else derived from the brief; a theme preset only when the user asks or no direction exists), density, variance and signature bet; with no brand direction, rotate one axis (craft-intent §6) and name it.
 
-   For **landing** surfaces, choose the fold class by exclusion, not taste. List the composition classes already recorded under `## Fold classes used` in `.ui-craft/brief.md`, then commit to one the project has not used, and say out loud what sacrifice that class demands: the sacrifice is what makes the page look like itself. Do not average candidate compositions together and do not fall back to text-left/visual-right because it fits everything: it fits everything because it commits to nothing.
+   For **landing** surfaces, choose the fold class by exclusion, not taste. List the composition classes already recorded under `## Fold classes used` in the brief, then commit to one the project has not used, and say out loud what sacrifice that class demands: the sacrifice is what makes the page look like itself. Do not average candidate compositions together and do not fall back to text-left/visual-right because it fits everything: it fits everything because it commits to nothing.
 
    Print a short plan (5–7 lines): Craft Read, composition and its sacrifice, theme, signature bet, what is above the fold, what is deferred. Then proceed unless the user objects.
 3. **Build** in the recipe's order exactly (tokens → shell → hero tier → primary region → remaining tiers → states → keyboard → finish). Load the references each step names plus the craft-intent patterns for this surface type. Build the signature bet in this pass, not later. States and keyboard are build steps, not polish: a surface without empty, loading and error states is not done.
@@ -91,7 +91,7 @@ Recipes: dashboard → [recipe-dashboard.md](recipe-dashboard.md) · landing →
    If you can run a browser, capture the built surface at desktop width and look at it: a render exposes spacing collisions, hierarchy ties and dead zones that code review cannot. Run the similar-prompt self-test (craft-intent §1): would this exact page pass for a different brand in the category? If yes, strengthen the signature. If you cannot run a browser, report the render check as not verified.
 
    For landings, also check the fold you built is the class you chose, not the split you drift back to.
-5. **Record.** For landings, append the class you built to `## Fold classes used` in `.ui-craft/brief.md`, creating the section if missing, so the next build in this project picks something else.
+5. **Record.** For landings, append the class you built to `## Fold classes used` in `.design/brief.md`, creating the section if missing, so the next build in this project picks something else.
 6. **Report:** the Craft Read; the composition class and its sacrifice; the signature bet built; checklist results; anything the user waived. Lead with intent, not a findings dump. Use the Review Format table only for fixes made in this pass. At CRAFT_LEVEL ≥ 8, also run the 10 passes in [finish-bar.md](finish-bar.md).
 
 Next: `/agemon-design review` on the result. If the project has no brief yet, `/agemon-design brief` first.

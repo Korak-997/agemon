@@ -88,7 +88,7 @@ Same references as before, same weight when their trigger fires. Only the claim 
 
 | Reference | Trigger |
 |-----------|---------|
-| [brief.md](brief.md) | `.ui-craft/brief.md` exists — then read it first, it anchors every decision and its learned constraints override skill defaults. Absent: run `/agemon-design brief` or proceed from [stage-intake.md](stage-intake.md). |
+| [brief.md](brief.md) | `.design/brief.md` or an older `.ui-craft/brief.md` exists — then read it first, it anchors every decision and its learned constraints override skill defaults. Absent: run `/agemon-design brief` or proceed from [stage-intake.md](stage-intake.md). |
 | [tokens.md](tokens.md) | The project has a token system to respect or extend, or you are establishing one. With neither, derive tokens from the brief; [themes.md](themes.md) offers presets only when the user asks for one or no direction exists. |
 | [accessibility.md](accessibility.md) | Any form, any custom interactive control, any focus or keyboard work. The a11y floor in [core-rules.md](core-rules.md) is the minimum; this is the detail. |
 | [color.md](color.md) | Choosing or changing a palette, building dark mode, or auditing accent budget. Not needed to apply a preset the user asked for. |
@@ -106,7 +106,7 @@ Same references as before, same weight when their trigger fires. Only the claim 
 
 | Reference | When to Read |
 |-----------|--------------|
-| [spec.md](spec.md) | Durable composition spec at `.ui-craft/spec.md` — the "what". Read after `brief.md` when a spec exists for the surface being built. |
+| [spec.md](spec.md) | Durable composition spec at `.design/spec.md` — the "what". Read after `brief.md` when a spec exists for the surface being built. |
 | **Outcome recipes** | Promoted to Tier 1 — see *Always load*. Listed there and not here so the recipe has one home; two descriptions of the same requirement is how one of them goes stale. |
 | [themes.md](themes.md) | 4 named production token presets (Graphite, Porcelain, Carbon, Signal). Load only when the user asks for a preset or no design direction exists. |
 | [dashboard.md](dashboard.md) | Dashboards, metric cards, charts, tables, sidebar, filters. |

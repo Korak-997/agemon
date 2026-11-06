@@ -1,0 +1,4 @@
+{
+  "name": "tarn-roasters-site",
+  "dependencies": { "react": "^19.0.0", "tailwindcss": "^4.1.0" }
+}

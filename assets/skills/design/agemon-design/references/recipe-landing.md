@@ -36,7 +36,7 @@ No strategy is a default. A brief with a live product picks product-forward; a b
 
 ### 1b — What it looks like
 
-Pick a class the project's brief has not used yet (see `## Fold classes used` in `.ui-craft/brief.md`), and put `split` last. Do not pick by taste: asking a model for a composition returns its default every time, which is how eight builds in a row produced the same hero.
+Pick a class the project's brief has not used yet (see `## Fold classes used` in the brief), and put `split` last. Do not pick by taste: asking a model for a composition returns its default every time, which is how eight builds in a row produced the same hero.
 
 The six classes are geometric and orthogonal to 1a — `type-only`, `full-bleed-overlay`, `split`, `stacked`, `product-dominant`, `band`. Most strategies can be built as most classes. The exclusions are the ones where the geometry cannot carry the argument:
 

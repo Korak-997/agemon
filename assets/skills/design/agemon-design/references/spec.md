@@ -1,6 +1,6 @@
 # Composition Spec
 
-Defines `.ui-craft/spec.md` — the durable "what" between brief (why) and build (how). Consumed by `/agemon-design build`. Sits beside `brief.md` in `.ui-craft/` and is committed to the repo.
+Defines `.design/spec.md` — the durable "what" between brief (why) and build (how). Consumed by `/agemon-design build`. Sits beside `brief.md` in `.design/` and is committed to the repo. An older `.ui-craft/spec.md` is read, not rewritten.
 
 ---
 
@@ -78,7 +78,7 @@ Drawn from the recipe's acceptance criteria. All items must be green before buil
 
 ## How the Spec Gets Used
 
-**Intake** — read `.ui-craft/spec.md` after `brief.md`. If the surface already has a spec section, it is the composition ground truth; do not re-derive from scratch.
+**Intake** — read `.design/spec.md` after `brief.md`. If the surface already has a spec section, it is the composition ground truth; do not re-derive from scratch.
 
 **Build phase** — `/agemon-design build <surface>` builds against the acceptance bar in the surface's spec section. Every item in the acceptance bar must be green before the build reports done.
 
@@ -107,12 +107,12 @@ Never delete past composition records — the spec is a log, not a config file.
 
 ## File Location and Git
 
-Commit `.ui-craft/spec.md` to the repo. It belongs in version control alongside the code it governs — losing it between sessions means losing the composition rationale.
+Commit `.design/spec.md` to the repo. It belongs in version control alongside the code it governs — losing it between sessions means losing the composition rationale.
 
-The `.ui-craft/` directory is the project's design decision store:
+The `.design/` directory is the project's design decision store:
 
 ```
-.ui-craft/
+.design/
 ├── brief.md      # why — principles, user, success metric
 ├── spec.md       # what — chosen composition, layout, inventory, acceptance bar
 └── (tokens live in the project's own token files)

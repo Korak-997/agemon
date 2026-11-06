@@ -275,7 +275,7 @@ These are platitudes that masquerade as principles. They look opinionated but ru
 - **"Modern design"** — modern compared to what, when? This is an aesthetic preference with no design resolution power.
 - **"We care about our users"** — a mission statement, not a principle. Put it in the README, not the brief.
 
-A principle that produces no design implication and rules out no alternative is a slogan. Slogans go in marketing copy, not in `.ui-craft/brief.md`.
+A principle that produces no design implication and rules out no alternative is a slogan. Slogans go in marketing copy, not in the brief.
 
 ---
 
