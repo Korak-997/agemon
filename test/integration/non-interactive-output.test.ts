@@ -30,6 +30,7 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
+      subagent-default: agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in 2.1.251); no default written
       Plan <PLAN_ID>   ·   agemon <VERSION>
 
       crg
@@ -147,6 +148,7 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
+      subagent-default: agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in 2.1.251); no default written
       Plan <PLAN_ID>   ·   agemon <VERSION>
 
       crg
@@ -264,6 +266,7 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
+      subagent-default: agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in 2.1.251); no default written
       Installing 7 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash]. Each agent can use only the tools listed.
       daemon hardening: strict
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
@@ -518,6 +521,13 @@ describe("non-interactive output contract", () => {
             "label": "skill groups",
             "state": "absent",
             "detail": null
+          },
+          {
+            "capabilityId": "subagent-default",
+            "resourceId": "settings-key:env.CLAUDE_CODE_SUBAGENT_MODEL",
+            "label": "env.CLAUDE_CODE_SUBAGENT_MODEL",
+            "state": "absent",
+            "detail": "agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in 2.1.251); no default written"
           }
         ],
         "structuredConfig": [

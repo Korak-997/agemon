@@ -99,4 +99,5 @@ was not investigated.
 The forced-delegation probe, one run in arm RD, shows the mechanism works when a subagent is
 started: a `general-purpose` call with no model ran on Sonnet, and `agemon-scout` ran on Haiku.
 
-Under the rule above, R's failure goes to the owner and the settings default is not built.
+Under the rule above, R's failure goes to the owner and the settings default is not built. The owner
+later had it built anyway (the `subagent-default` capability), so this eval does not justify it.

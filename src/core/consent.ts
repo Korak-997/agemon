@@ -144,6 +144,7 @@ export function buildConsentGates(
             operations,
             forcesDiff:
               gateId === "install-custom-skills" ||
+              gateId === "write-config" ||
               operations.some(
                 (operation) => operation.riskClass === "credential-adjacent",
               ),
@@ -152,13 +153,20 @@ export function buildConsentGates(
                 ? `Installing ${describeSubagents(operations)}.`
                 : gateId === "copy-skills-to-agents-directory"
                   ? AGENTS_DIRECTORY_COPY_EXPLANATION
-                  : null,
+                  : gateId === "write-config"
+                    ? describeConfigMerge(operations)
+                    : null,
             satisfiableWithYes: gateId !== "resolve-conflict",
           },
     );
   }
 
   return gates;
+}
+
+function describeConfigMerge(operations: ProposedOperation[]): string {
+  const diffs = operations.map(({ preview }) => printable(preview.text));
+  return `Merging config keys into ${describeTargets(operations)}:\n${diffs.join("\n")}`;
 }
 
 function untrustedPairsOf(operations: ProposedOperation[]): string[] {

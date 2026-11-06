@@ -87,8 +87,9 @@ Registered core plugin order (`src/plugins/index.ts`):
 2. `daemon` (depends on `crg`)
 3. `skills`
 4. `agents` (depends on `skills`)
-5. `cli-tool`
-6. `master-prompt`
+5. `subagent-default`
+6. `cli-tool`
+7. `master-prompt`
 
 `buildPlan` passes each plugin's `plan` the operations planned before it, so `agents` sees
 the skill groups this run installs.
@@ -452,6 +453,36 @@ Current bundle (`src/plugins/skills/catalog.ts`):
   case folding, skips files it can't read, never follows symlinks, and shows unsafe
   characters in file names as `\uXXXX`. YAML forms it does not parse (block scalars,
   flow mappings, anchors) are not detected. A user-changed agent is not attention.
+
+### `subagent-default`
+
+- Owns one key, `env.CLAUDE_CODE_SUBAGENT_MODEL` in `.claude/settings.json`, as the resource
+  `settings-key:env.CLAUDE_CODE_SUBAGENT_MODEL`. One `merge-key` operation and a `json` staged
+  file. Gate `write-config` always shows the diff, and `--yes` prints it.
+- `src/patchers/json-settings-key.ts` edits the file's text rather than re-serializing it, so a
+  write adds only the key, in the layout around it, and removal undoes that exactly. The exception
+  is an `env` or a whole file that was an empty object: filling it adds lines removal can't
+  distinguish, so a pre-existing `"env": {}` is deleted with the key.
+- States: key absent on a supported CLI → `merge-key`; any value present → nothing. There is no
+  `conflict` operation, because resolving one could offer `replace`, and agemon must never
+  overwrite a user's value or a file it can't parse.
+- Version gate: `probeAgentInstallation` must report at least 2.1.251. Before that release the
+  variable outranked per-call and frontmatter models. An older or unreadable version plans nothing
+  and prints why (except under `agemon plan`). The gate runs only on the machine running agemon, though the file is shared.
+- Plans nothing and prints why (except under `agemon plan`, which runs silent) when the file is
+  invalid JSON, isn't clean UTF-8 (reads decode bad bytes to U+FFFD, so a write would replace them), has a non-object top level or `env`,
+  is a symlink or special file, is over the read cap, or sits under a symlinked directory.
+- Ledger: `managed-settings-key`, `ownershipMode: "recorded-key"`, the value in `desiredRevision`,
+  and `preExisting` meaning the file existed. A repeat write replaces the entry. `.claude` goes in
+  the workspace footprint when agemon created it.
+- Revert and nuke act only on confirmed entries, and remove the key only if its value is still the
+  recorded one, otherwise printing that it was kept. The file is deleted only when agemon created
+  it and it ends up empty. Invalid JSON or a refused file prints `manual cleanup needed`.
+- `status` rows: `present-managed`; `present-adopted` (agemon's value, not written by agemon on this
+  machine; nuke leaves it); `present-modified` (another value, the user's); `absent`, with the
+  version reason if there is one; `unknown` (file unusable).
+- Verify reports as `attention` a recorded key that is missing, or a file that became unusable. A
+  changed value is not attention.
 
 ### `cli-tool`
 

@@ -1,7 +1,7 @@
 # Writing a capability plugin
 
 agemon's work is split into **capabilities** (`crg`, `daemon`, `skills`, `agents`,
-`cli-tool`, `master-prompt`). Each one is a plugin object that implements `AgemonPlugin`
+`subagent-default`, `cli-tool`, `master-prompt`). Each one is a plugin object that implements `AgemonPlugin`
 from `src/plugins/types.ts`.
 
 Plugins are built in. agemon does not load plugins from other packages; a new capability is
@@ -82,7 +82,7 @@ Build operations with `describeOperation` from `src/plugins/proposed-operation.t
 An operation that reaches the action-based gates with `riskClass: "inert"` and
 `requiresConsent: false` is refused: every change needs consent. `riskClass` does not choose
 the gate; a `credential-adjacent` operation makes its gate always show the full diff, as the
-"install custom skills" gate always does. `preview` is what
+"install custom skills" and "write config" gates always do. `preview` is what
 the user sees in the gate: a diff for file changes, a one-line note otherwise.
 
 ## Rules every plugin follows

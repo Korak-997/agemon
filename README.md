@@ -42,8 +42,10 @@ agemon is plugin-driven and runs its plugins in this order:
 4. `agents`: installs the Claude Code subagents that come with an installed skill group into
    `.claude/agents/` — see [Subagents](#subagents). It depends on `skills`, so `--only agents`
    also runs `skills`.
-5. `cli-tool`: installs bundled global CLI tools.
-6. `master-prompt`: consolidates agent rule files and pointer files.
+5. `subagent-default`: behind consent, sets a default model in `.claude/settings.json` for
+   Claude Code subagents that name none — see [Default subagent model](#default-subagent-model).
+6. `cli-tool`: installs bundled global CLI tools.
+7. `master-prompt`: consolidates agent rule files and pointer files.
 
 Every mutating plugin action is recorded in `.agemon/state.json` and used by `nuke` for
 targeted reversal.
@@ -136,6 +138,38 @@ How they are set up:
   or when another file in `.claude/agents/` declares the same `name:` as one of agemon's
   agents — Claude Code identifies agents by that name and may load the other file instead.
 - Claude Code picks up a new `.claude/agents/` directory in sessions started after it exists.
+
+#### Default subagent model
+
+The `subagent-default` capability sets one key in `.claude/settings.json`. It shows you the diff and
+asks first; with `--yes` it prints the diff and goes ahead:
+
+```json
+{ "env": { "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet" } }
+```
+
+- **What it does.** A Claude Code subagent runs on the first of these that is set: the model named
+  in the call, the agent file's `model`, this variable, the session's model. So this only changes
+  subagents that would otherwise inherit the session's model. Pinned agents such as `agemon-scout`
+  keep their model. The built-in `Explore` and `Plan` agents aren't affected. It applies to Claude
+  Code only.
+- **It can raise your cost.** In a Haiku session it moves those subagents up to Sonnet. In one test,
+  a one-word subagent reply in a Haiku session cost $0.116 at list prices, $0.107 of it on Sonnet.
+- **There is no measured saving yet.** agemon's routing eval started no subagents, so it didn't
+  test this setting (see `evals/routing/README.md`). Use `agemon usage` to judge it from your own
+  sessions.
+- **It is shared with your team,** because the file is usually committed. agemon checks the Claude
+  Code version only on the machine that runs it, and it writes nothing if that version is older
+  than 2.1.251 or can't be read. On older versions this variable overrides pinned models, so an
+  Opus review would silently run on Sonnet. Anyone on your team using an older version gets that
+  behaviour from the committed file, so have them update first.
+- **To change the tier,** edit the value in `.claude/settings.json`. agemon treats any other value
+  as yours: it never overwrites it, `agemon status` shows it as changed, and `nuke` leaves it.
+- **`nuke` removes the key** only if it still has the value agemon wrote, and deletes `env` if that
+  leaves it empty. Everything else in the file stays byte for byte, except that an `"env": {}` you
+  already had goes too, and an empty top-level object loses any whitespace inside it. agemon deletes the file only if agemon created it and nothing else is left.
+- If the file isn't valid JSON or clean UTF-8, or is a symlink, agemon says so and leaves it alone. An existing
+  repository is offered this capability once, like any new one; `--yes` alone doesn't add it there.
 
 **Bundled skill updates.** agemon compares each bundled skill in `.claude/skills/` with
 every version it has shipped. A skill still identical to an older version is updated to
@@ -744,8 +778,8 @@ unknown capability id, or an empty `capabilities` list is an error, never a sile
 fallback:
 
 ```toml
-capabilities = ["crg", "daemon", "skills", "agents", "cli-tool", "master-prompt"]
-known_capabilities = ["crg", "daemon", "skills", "agents", "cli-tool", "master-prompt"]
+capabilities = ["crg", "daemon", "skills", "agents", "subagent-default", "cli-tool", "master-prompt"]
+known_capabilities = ["crg", "daemon", "skills", "agents", "subagent-default", "cli-tool", "master-prompt"]
 skill_groups = "essentials,security"   # optional
 
 [custom_skill_groups.house-style]      # optional — see Project-defined skill groups
@@ -935,6 +969,8 @@ By default, agemon may manage these paths:
 - `.cursorrules`
 - `.windsurfrules`
 - `.claude/agents/<name>.md` (the subagents of installed skill groups)
+- `env.CLAUDE_CODE_SUBAGENT_MODEL` in `.claude/settings.json` (only this key; see
+  [Default subagent model](#default-subagent-model))
 - `agemon.toml` (written on the first run; rewritten once when a capability is added)
 
 It also invokes external installers (`pipx`, `npm -g`, the pinned `skills` CLI) when required.
