@@ -1,0 +1,599 @@
+{
+  "label": "full",
+  "confidence": "Indicative: 12 runs per arm can catch only large effects, and a null result means no large effect.",
+  "sessionModel": "claude-opus-5-5",
+  "effort": "default",
+  "cliVersion": "2.1.318 (Claude Code)",
+  "agemonCommit": "df6726b0b14ea7717eec8275f812fc9e1e04e6b0",
+  "maxBudgetUsd": 5,
+  "isolationNote": "Runs use only project and local settings, with no MCP servers or web tools. Account-synced skills stay listed, but the Skill tool is off.",
+  "summary": {
+    "N": {
+      "runs": 12,
+      "passed": 12,
+      "costUsd": 3.2849292000000005,
+      "turns": 264,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0017944,
+        "claude-opus-5-5": 3.2831348000000005
+      },
+      "agentCalls": 0,
+      "shareNamingModel": null,
+      "shareToRoleAgents": null,
+      "costChangeAgainstN": null,
+      "passes": null
+    },
+    "R": {
+      "runs": 12,
+      "passed": 12,
+      "costUsd": 2.9180740999999997,
+      "turns": 254,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0018329,
+        "claude-opus-5-5": 2.9162412
+      },
+      "agentCalls": 0,
+      "shareNamingModel": null,
+      "shareToRoleAgents": null,
+      "costChangeAgainstN": -0.11167823647462505,
+      "passes": false
+    },
+    "RD": {
+      "runs": 12,
+      "passed": 12,
+      "costUsd": 2.9270148000000007,
+      "turns": 258,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0020434,
+        "claude-opus-5-5": 2.9249713999999996
+      },
+      "agentCalls": 0,
+      "shareNamingModel": null,
+      "shareToRoleAgents": null,
+      "costChangeAgainstN": -0.1089565035374278,
+      "passes": false
+    }
+  },
+  "runs": [
+    {
+      "task": "bug-invoice-total",
+      "arm": "R",
+      "repeat": 1,
+      "passed": true,
+      "turns": 24,
+      "costUsd": 0.23006339999999997,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001304,
+        "claude-opus-5-5": 0.229933
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "bug-invoice-total",
+      "arm": "RD",
+      "repeat": 1,
+      "passed": true,
+      "turns": 25,
+      "costUsd": 0.2503302,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001304,
+        "claude-opus-5-5": 0.2501998
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "bug-invoice-total",
+      "arm": "N",
+      "repeat": 1,
+      "passed": true,
+      "turns": 26,
+      "costUsd": 0.2618648,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001304,
+        "claude-opus-5-5": 0.26173440000000003
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-rename-account",
+      "arm": "RD",
+      "repeat": 1,
+      "passed": true,
+      "turns": 28,
+      "costUsd": 0.27153190000000005,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.271381
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-rename-account",
+      "arm": "N",
+      "repeat": 1,
+      "passed": true,
+      "turns": 28,
+      "costUsd": 0.39718669999999995,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.3970358
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-rename-account",
+      "arm": "R",
+      "repeat": 1,
+      "passed": true,
+      "turns": 29,
+      "costUsd": 0.2911419,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.290991
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-reports",
+      "arm": "N",
+      "repeat": 1,
+      "passed": true,
+      "turns": 27,
+      "costUsd": 0.35841760000000006,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001316,
+        "claude-opus-5-5": 0.35828600000000005
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-reports",
+      "arm": "R",
+      "repeat": 1,
+      "passed": true,
+      "turns": 25,
+      "costUsd": 0.2934664,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001306,
+        "claude-opus-5-5": 0.29333580000000004
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-reports",
+      "arm": "RD",
+      "repeat": 1,
+      "passed": true,
+      "turns": 27,
+      "costUsd": 0.3285078,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001306,
+        "claude-opus-5-5": 0.3283772
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-oversize-fee",
+      "arm": "R",
+      "repeat": 1,
+      "passed": true,
+      "turns": 9,
+      "costUsd": 0.1237493,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0002031,
+        "claude-opus-5-5": 0.1235462
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-oversize-fee",
+      "arm": "RD",
+      "repeat": 1,
+      "passed": true,
+      "turns": 11,
+      "costUsd": 0.1378286,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0002406,
+        "claude-opus-5-5": 0.13758800000000002
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-oversize-fee",
+      "arm": "N",
+      "repeat": 1,
+      "passed": true,
+      "turns": 10,
+      "costUsd": 0.1319417,
+      "costByModel": {
+        "claude-haiku-5-5": 0.00013710000000000003,
+        "claude-opus-5-5": 0.1318046
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-refund-share",
+      "arm": "RD",
+      "repeat": 1,
+      "passed": true,
+      "turns": 15,
+      "costUsd": 0.14249269999999997,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0002265,
+        "claude-opus-5-5": 0.1422662
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-refund-share",
+      "arm": "N",
+      "repeat": 1,
+      "passed": true,
+      "turns": 15,
+      "costUsd": 0.14620370000000002,
+      "costByModel": {
+        "claude-haiku-5-5": 0.00019950000000000002,
+        "claude-opus-5-5": 0.1460042
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-refund-share",
+      "arm": "R",
+      "repeat": 1,
+      "passed": true,
+      "turns": 14,
+      "costUsd": 0.1408199,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001865,
+        "claude-opus-5-5": 0.1406334
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "review-split-dispatch",
+      "arm": "N",
+      "repeat": 1,
+      "passed": true,
+      "turns": 23,
+      "costUsd": 0.3480059000000001,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001397,
+        "claude-opus-5-5": 0.3478662
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "review-split-dispatch",
+      "arm": "R",
+      "repeat": 1,
+      "passed": true,
+      "turns": 24,
+      "costUsd": 0.35095279999999995,
+      "costByModel": {
+        "claude-haiku-5-5": 0.00013920000000000002,
+        "claude-opus-5-5": 0.35081359999999995
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "review-split-dispatch",
+      "arm": "RD",
+      "repeat": 1,
+      "passed": true,
+      "turns": 23,
+      "costUsd": 0.32961070000000003,
+      "costByModel": {
+        "claude-haiku-5-5": 0.00013670000000000002,
+        "claude-opus-5-5": 0.32947400000000004
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "bug-invoice-total",
+      "arm": "RD",
+      "repeat": 2,
+      "passed": true,
+      "turns": 25,
+      "costUsd": 0.2542976,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001304,
+        "claude-opus-5-5": 0.2541672
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "bug-invoice-total",
+      "arm": "N",
+      "repeat": 2,
+      "passed": true,
+      "turns": 31,
+      "costUsd": 0.2885639,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001329,
+        "claude-opus-5-5": 0.288431
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "bug-invoice-total",
+      "arm": "R",
+      "repeat": 2,
+      "passed": true,
+      "turns": 24,
+      "costUsd": 0.2423756,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001304,
+        "claude-opus-5-5": 0.24224519999999997
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-rename-account",
+      "arm": "N",
+      "repeat": 2,
+      "passed": true,
+      "turns": 29,
+      "costUsd": 0.3891543,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.3890034
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-rename-account",
+      "arm": "R",
+      "repeat": 2,
+      "passed": true,
+      "turns": 30,
+      "costUsd": 0.2824315,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.2822806
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-rename-account",
+      "arm": "RD",
+      "repeat": 2,
+      "passed": true,
+      "turns": 28,
+      "costUsd": 0.2522351,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.2520842
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-reports",
+      "arm": "R",
+      "repeat": 2,
+      "passed": true,
+      "turns": 29,
+      "costUsd": 0.3497032,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001316,
+        "claude-opus-5-5": 0.3495716
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-reports",
+      "arm": "RD",
+      "repeat": 2,
+      "passed": true,
+      "turns": 29,
+      "costUsd": 0.33768680000000006,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001306,
+        "claude-opus-5-5": 0.3375562
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-reports",
+      "arm": "N",
+      "repeat": 2,
+      "passed": true,
+      "turns": 29,
+      "costUsd": 0.36402180000000006,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001316,
+        "claude-opus-5-5": 0.36389020000000005
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-oversize-fee",
+      "arm": "RD",
+      "repeat": 2,
+      "passed": true,
+      "turns": 10,
+      "costUsd": 0.1251825,
+      "costByModel": {
+        "claude-haiku-5-5": 0.00026710000000000004,
+        "claude-opus-5-5": 0.12491540000000001
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-oversize-fee",
+      "arm": "N",
+      "repeat": 2,
+      "passed": true,
+      "turns": 9,
+      "costUsd": 0.1187535,
+      "costByModel": {
+        "claude-haiku-5-5": 0.00013710000000000003,
+        "claude-opus-5-5": 0.1186164
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-oversize-fee",
+      "arm": "R",
+      "repeat": 2,
+      "passed": true,
+      "turns": 10,
+      "costUsd": 0.12926549999999998,
+      "costByModel": {
+        "claude-haiku-5-5": 0.00013710000000000003,
+        "claude-opus-5-5": 0.12912839999999998
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-refund-share",
+      "arm": "N",
+      "repeat": 2,
+      "passed": true,
+      "turns": 14,
+      "costUsd": 0.1363024,
+      "costByModel": {
+        "claude-haiku-5-5": 0.00021300000000000003,
+        "claude-opus-5-5": 0.1360894
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-refund-share",
+      "arm": "R",
+      "repeat": 2,
+      "passed": true,
+      "turns": 14,
+      "costUsd": 0.1339353,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0002035,
+        "claude-opus-5-5": 0.13373179999999998
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "read-refund-share",
+      "arm": "RD",
+      "repeat": 2,
+      "passed": true,
+      "turns": 13,
+      "costUsd": 0.1344976,
+      "costByModel": {
+        "claude-haiku-5-5": 0.000209,
+        "claude-opus-5-5": 0.13428859999999998
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "review-split-dispatch",
+      "arm": "R",
+      "repeat": 2,
+      "passed": true,
+      "turns": 22,
+      "costUsd": 0.3501693,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001387,
+        "claude-opus-5-5": 0.35003059999999997
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "review-split-dispatch",
+      "arm": "RD",
+      "repeat": 2,
+      "passed": true,
+      "turns": 24,
+      "costUsd": 0.3628133,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001397,
+        "claude-opus-5-5": 0.36267360000000004
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "review-split-dispatch",
+      "arm": "N",
+      "repeat": 2,
+      "passed": true,
+      "turns": 23,
+      "costUsd": 0.3445129,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001397,
+        "claude-opus-5-5": 0.3443732
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    }
+  ]
+}

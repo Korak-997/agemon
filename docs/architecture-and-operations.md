@@ -972,6 +972,9 @@ agemon
 
 # uninstall/reverse
 agemon nuke
+
+# estimate what subagent model choices saved (reads saved Claude Code sessions)
+agemon usage --since 30d
 ```
 
 Local development:

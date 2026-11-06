@@ -312,7 +312,7 @@ async function classifyRuleFiles(ctx: Context): Promise<ClassifiedRuleFile[]> {
   return classified;
 }
 
-function renderRuleFileContents(
+export function renderRuleFileContents(
   target: string,
   contentsBefore: string | null,
 ): string {

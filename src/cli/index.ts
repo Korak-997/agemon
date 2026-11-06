@@ -51,6 +51,11 @@ import { startUpdateCheck } from "../core/update-check.js";
 import { runInspect } from "../inspect/index.js";
 import { runStatus } from "../inspect/status.js";
 import {
+  loadUsageReport,
+  parseSinceDays,
+  renderUsageReport,
+} from "../inspect/usage.js";
+import {
   assertPlatformSupportsChanges,
   detectPlatformCapabilities,
   type PlatformCapabilities,
@@ -91,6 +96,7 @@ interface CliOptions {
   skipDaemon?: boolean;
   skillGroups?: string;
   json?: boolean;
+  since?: string;
   allowUnignoredState?: boolean;
   trustRepoGitConfig?: boolean;
   plan?: string;
@@ -466,6 +472,20 @@ async function runInspectCommand(options: CliOptions): Promise<number> {
     checkAgentsUsable: Boolean(options.checkAgentsUsable),
     configError,
   });
+  return 0;
+}
+
+async function runUsageCommand(options: CliOptions): Promise<number> {
+  const repoRoot = await resolveRepositoryRootFor(options);
+  const { summary, historyFile } = await loadUsageReport(repoRoot, {
+    sinceDays: parseSinceDays(options.since),
+  });
+  if (options.json) {
+    console.log(JSON.stringify({ ...summary, historyFile }, null, 2));
+  } else {
+    console.log(renderUsageReport(summary));
+    console.log(`\nSaved to ${printable(historyFile)}`);
+  }
   return 0;
 }
 
@@ -1035,6 +1055,23 @@ export function createProgram(recordExitCode: (code: number) => void): Command {
     )
     .action((_options: CliOptions, command: Command) =>
       record(runStatusCommand)({
+        ...command.parent?.opts(),
+        ...command.opts(),
+      }),
+    );
+
+  program
+    .command("usage")
+    .description(
+      "Estimate what subagent model choices saved, from saved Claude Code sessions",
+    )
+    .option(
+      "--since <days>",
+      "only sessions active in this window, such as 30d",
+    )
+    .option("--json", "emit the summary as JSON")
+    .action((_options: CliOptions, command: Command) =>
+      record(runUsageCommand)({
         ...command.parent?.opts(),
         ...command.opts(),
       }),

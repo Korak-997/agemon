@@ -7,6 +7,9 @@ choice you made can be undone.
 
 ### Added
 
+- **`agemon usage`** estimates what running subagents on cheaper models saved, from the sessions
+  Claude Code already saves. There is nothing to turn on, and it stores only numbers. It's an
+  estimate at API list prices, not a bill.
 - **Runs list what's new.** `agemon`, `agemon apply`, `agemon plan`, `--dry-run` and
   `agemon status` list new and declined skill groups and capabilities, with how to get each.
   Exit codes don't change.

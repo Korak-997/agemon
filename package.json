@@ -60,6 +60,7 @@
     "design-eval:capture": "tsx scripts/design-eval/capture.ts",
     "design-eval:score": "tsx scripts/design-eval/score.ts",
     "design-eval:pairs": "tsx scripts/design-eval/blind-pairs.ts",
+    "routing-eval": "tsx scripts/routing-eval/run.ts",
     "skills:fingerprints": "tsx scripts/skill-fingerprints.ts",
     "website:content": "tsx scripts/site-content.ts",
     "website:build": "sh scripts/build-website.sh"

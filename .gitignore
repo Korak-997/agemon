@@ -25,3 +25,6 @@ researches/
 
 # design-eval run output stays local; evals/design/README.md records the headline numbers
 evals/design/results/
+
+# routing-eval transcripts stay local; each results file records the numbers
+evals/routing/results/*/

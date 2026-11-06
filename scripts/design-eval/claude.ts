@@ -256,7 +256,9 @@ export function spawnClaude(request: ClaudeRequest): Promise<ClaudeRun> {
   });
 }
 
-function transcriptEvents(transcript: string): Record<string, unknown>[] {
+export function transcriptEvents(
+  transcript: string,
+): Record<string, unknown>[] {
   const events: Record<string, unknown>[] = [];
   for (const line of transcript.split("\n")) {
     try {

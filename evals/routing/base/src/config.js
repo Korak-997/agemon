@@ -1,0 +1,11 @@
+export const TAX_RATE_PERCENT = 19;
+export const OVERSIZE_FEE_CENTS = 1500;
+export const REMOTE_FEE_CENTS = 900;
+export const INSURANCE_THRESHOLD_CENTS = 50000;
+export const INSURANCE_RATE_PERCENT = 2;
+export const GIRTH_LIMIT_CM = 300;
+export const HARD_WEIGHT_LIMIT_KG = 70;
+export const HARD_LENGTH_LIMIT_CM = 270;
+export const VAN_CAPACITY_KG = 800;
+export const VAN_LONGEST_SIDE_LIMIT_CM = 180;
+export const RETURN_WINDOW_DAYS = 30;

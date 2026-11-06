@@ -652,6 +652,38 @@ Restore the files an interrupted apply changed (see
 agemon recover [--yes] [--dry-run]
 ```
 
+### Checking what subagent models saved (`agemon usage`)
+
+```bash
+agemon usage [--since 30d] [--json]
+```
+
+`agemon usage` estimates what running subagents on cheaper models saved in this repository. There
+is nothing to turn on: it reads the sessions Claude Code already saves under
+`~/.claude/projects/` (or `CLAUDE_CONFIG_DIR`). It only reports on Claude Code, and it does not
+call any model.
+
+For each session it adds up what every response cost, then prices the subagents' same tokens at
+the session's own model. The difference is the estimated saving. It also shows how many sessions
+used subagents, and how many of those calls ran cheaper than the session's model.
+
+- **It is an estimate, not a bill.** It uses API list prices, so on a subscription a saving means
+  less of your usage limit spent, not less money paid. It assumes standard speed and global routing.
+  On this project's own sessions, its totals came within 2% of the CLI's figures.
+- **It doesn't compare against doing the work inline.** That would use different tokens: no subagent
+  startup cost, but a longer main conversation. It also can't tell whether the cheaper work was good
+  enough, so note when you have to redo a subagent's work.
+- **`--since` counts whole sessions.** A session active inside the window counts in full.
+- **Models without a known price** are left out and counted in the report. Prices are built in, so
+  check them after a price change.
+- **Run it at least monthly.** Each run saves its numbers, so they outlive Claude Code deleting old
+  transcripts. Only sessions still on disk at a run are captured. Sessions from another worktree are
+  a separate project: run it there too.
+
+The history is `usage/<repo key>.json` in agemon's state directory, readable only by you. It holds
+numbers, models and agent type names, never prompts, code or task descriptions. `nuke` keeps it, and
+`agemon self-uninstall` removes it with the rest of the machine state.
+
 ### Global Options
 
 - `--dry-run`: narrate actions without making changes.
@@ -919,6 +951,7 @@ kept by `nuke` because every repo on the machine shares them:
 
 - `tools/<hash>/`: the `skills` CLI, installed from `assets/tools/package-lock.json`
 - `skills-src/<commit>/`: the pinned checkout of a custom skill group's GitHub source that `skills add` installs from
+- `usage/<repo key>.json`: the numbers `agemon usage` has saved for a repository
 - `machine.json`: which repositories use code-review-graph, agnix and user linger, and who
   installed or enabled them
 
