@@ -119,6 +119,7 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
       "1541e0bca39acc7276819027d6c73e78e36659269b33b678053b57123ed87bed",
     ],
     "agemon-subagent-driven-development": [
+      "1bf57d8ec11957be1a596f94bd04a963523421a43f137ea8dac5dbd9f77b6122",
       "e6ef12508b751a014e002515f040d1646d28954a980c49bb5108373a8e335416",
     ],
     "agemon-test-driven-development": [

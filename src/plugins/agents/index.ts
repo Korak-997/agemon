@@ -118,6 +118,7 @@ export async function renderAgentFile(agent: AgentDefinition): Promise<string> {
     `name: ${agent.name}`,
     `description: ${JSON.stringify(agent.description)}`,
     `tools: ${agent.tools.join(", ")}`,
+    ...(agent.model === undefined ? [] : [`model: ${agent.model}`]),
   ].join("\n");
   const brief = await readFile(agent.briefPath, "utf8");
   return `---\n${frontmatter}\n---\n\n${brief}`;

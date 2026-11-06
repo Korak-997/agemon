@@ -85,6 +85,15 @@ describe("non-interactive output contract", () => {
              +- Security and performance by default within scope: validate input, least privilege,
              +  no needless recomputation.
              +
+             +## Subagent Models
+             +
+             +- A few tool calls: do them yourself. Every subagent pays for its own startup context.
+             +- Choose a subagent's model whenever you can. An omitted model usually inherits the session's.
+             +- Cheapest tier: read-only search, log digests, or code the plan already spells out.
+             +- Mid tier: other implementation and routine reviews.
+             +- Top tier: cross-module debugging, security or concurrency review, architecture, final branch review.
+             +- Failed twice on one task: go one tier up.
+             +
              +## Output Conventions
              +
              +- Reference real, existing file paths.
@@ -193,6 +202,15 @@ describe("non-interactive output contract", () => {
              +- Security and performance by default within scope: validate input, least privilege,
              +  no needless recomputation.
              +
+             +## Subagent Models
+             +
+             +- A few tool calls: do them yourself. Every subagent pays for its own startup context.
+             +- Choose a subagent's model whenever you can. An omitted model usually inherits the session's.
+             +- Cheapest tier: read-only search, log digests, or code the plan already spells out.
+             +- Mid tier: other implementation and routine reviews.
+             +- Top tier: cross-module debugging, security or concurrency review, architecture, final branch review.
+             +- Failed twice on one task: go one tier up.
+             +
              +## Output Conventions
              +
              +- Reference real, existing file paths.
@@ -246,15 +264,15 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
-      Installing 5 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash]. Each agent can use only the tools listed.
+      Installing 7 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash]. Each agent can use only the tools listed.
       daemon hardening: strict
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
-      ╭ [ok] Applied 26 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 28 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
       │     Skills             13 operations                                   │
-      │     Subagents          5 operations                                    │
+      │     Subagents          7 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
       │                                                                        │
@@ -270,13 +288,13 @@ describe("non-interactive output contract", () => {
       await captureNonInteractiveRun("clean-repo", ["--yes", "--quiet"]),
     ).toMatchInlineSnapshot(`
       "exit 0
-      Installing 5 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash]. Each agent can use only the tools listed.
-      ╭ [ok] Applied 26 operations · environment verified ─────────────────────╮
+      Installing 7 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash]. Each agent can use only the tools listed.
+      ╭ [ok] Applied 28 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
       │     Skills             13 operations                                   │
-      │     Subagents          5 operations                                    │
+      │     Subagents          7 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
       │                                                                        │
@@ -346,6 +364,15 @@ describe("non-interactive output contract", () => {
              +- Prefer safe, reversible changes; call out irreversible or outward-facing steps first.
              +- Security and performance by default within scope: validate input, least privilege,
              +  no needless recomputation.
+             +
+             +## Subagent Models
+             +
+             +- A few tool calls: do them yourself. Every subagent pays for its own startup context.
+             +- Choose a subagent's model whenever you can. An omitted model usually inherits the session's.
+             +- Cheapest tier: read-only search, log digests, or code the plan already spells out.
+             +- Mid tier: other implementation and routine reviews.
+             +- Top tier: cross-module debugging, security or concurrency review, architecture, final branch review.
+             +- Failed twice on one task: go one tier up.
              +
              +## Output Conventions
              +

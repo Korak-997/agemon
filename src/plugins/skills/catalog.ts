@@ -16,10 +16,13 @@ export interface SkillBundleEntry {
   localSourcePath?: string;
 }
 
+export type AgentModel = "haiku" | "sonnet" | "opus";
+
 export interface AgentDefinition {
   name: string;
   description: string;
   tools: readonly string[];
+  model?: AgentModel;
   readonly briefPath: string;
 }
 
@@ -35,6 +38,7 @@ export interface SkillGroup {
 
 const GEO_AUDIT_AGENT_DESCRIPTION_SUFFIX =
   "Used by the geo-audit skill; do not use it for other tasks.";
+const GEO_AUDIT_AGENT_MODEL: AgentModel = "sonnet";
 
 function vendoredSkill(groupId: string, skillId: string): SkillBundleEntry {
   return {
@@ -72,9 +76,35 @@ function geoAuditAgent(
     name,
     description: `${purpose} ${GEO_AUDIT_AGENT_DESCRIPTION_SUFFIX}`,
     tools,
+    model: GEO_AUDIT_AGENT_MODEL,
     get briefPath() {
       return join(
         resolveVendoredSkillPath("geo-seo", "geo-audit"),
+        "references",
+        briefFileName,
+      );
+    },
+  };
+}
+
+function workflowRoleAgent(
+  name: string,
+  briefFileName: string,
+  description: string,
+  tools: readonly string[],
+  model: AgentModel,
+): AgentDefinition {
+  return {
+    name,
+    description,
+    tools,
+    model,
+    get briefPath() {
+      return join(
+        resolveVendoredSkillPath(
+          "workflow",
+          "agemon-subagent-driven-development",
+        ),
         "references",
         briefFileName,
       );
@@ -248,6 +278,22 @@ export const SKILL_GROUPS: SkillGroup[] = [
       vendoredSkill("workflow", "agemon-using-git-worktrees"),
       vendoredSkill("workflow", "agemon-dispatching-parallel-agents"),
       vendoredSkill("workflow", "agemon-finishing-a-development-branch"),
+    ],
+    agents: [
+      workflowRoleAgent(
+        "agemon-scout",
+        "role-scout.md",
+        "Cheap read-only search: finds code, traces usages and digests logs, then reports paths and lines. Changes nothing.",
+        ["Read", "Grep", "Glob"],
+        "haiku",
+      ),
+      workflowRoleAgent(
+        "agemon-worker",
+        "role-worker.md",
+        "Mid-tier implementer for one well-defined task: routine code changes and routine reviews. Hands back anything needing a design decision.",
+        ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+        "sonnet",
+      ),
     ],
   },
   {

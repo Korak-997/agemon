@@ -77,6 +77,12 @@ Today that is `agemon-adhd`, which changes every later response and must run onl
 | OpenCode | none; unknown fields are ignored | **docs** |
 | Gemini CLI, Antigravity, Copilot | unknown; the pages read do not mention the flag | unknown |
 
+## Subagent files
+
+agemon writes subagents to `.claude/agents/` with a `model` alias such as `haiku`. They target
+Claude Code. On CLI 2.1.318, in one **run**, `agemon-scout` ran on claude-haiku-5-5 from a Sonnet
+session. Other agents were not run, and their support is left for later.
+
 ## Sources
 
 Read on 2026-11-06:

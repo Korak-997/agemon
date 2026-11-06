@@ -12,3 +12,4 @@
 - Moved working files from `.superpowers/` to `.agemon-workflow/` and documents from `docs/superpowers/` to `docs/`.
 - One of several skills cherry-picked from the superpowers framework; its `using-superpowers` bootstrap and session hook are not vendored, so nothing forces these skills to load.
 - Added upstream's `skills/requesting-code-review/code-reviewer.md` as `code-reviewer.md`, so this group works without the `self-review` group.
+- Added `references/role-scout.md` and `references/role-worker.md`, written by agemon, as the briefs of the `agemon-scout` and `agemon-worker` subagents.

@@ -420,7 +420,7 @@ Current bundle (`src/plugins/skills/catalog.ts`):
   operation each. Desired agents = groups in this plan's skills `install-package`
   operations ∪ groups recorded in the skills ledger (`skills/ledger-view.ts`, declined and
   custom groups excluded).
-- An agent file is rendered from its catalog entry (`name`, `description`, `tools`) and the
+- An agent file is rendered from its catalog entry (`name`, `description`, `tools`, `model`) and the
   brief it names in agemon's own `assets/skills/` (never the repository's installed copy).
 - States: absent → `create`; equal → nothing (or `adopt` when unrecorded); untouched since
   recorded → `replace`; changed or unrecorded and different → `conflict`; symlink, special

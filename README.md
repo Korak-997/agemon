@@ -73,7 +73,7 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 | `self-review` | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | Verification before claiming completion, giving/receiving code review, root-cause debugging. |
 | `performance` | `agemon-performance` | Algorithmic-complexity-first discipline: N+1 detection, hot-loop hygiene, when not to optimize. |
 | `commit` | `agemon-commit` | Staging review, commit message structure, and splitting unrelated changes into separate commits. |
-| `workflow` | `agemon-brainstorming`, `agemon-writing-plans`, `agemon-executing-plans`, `agemon-subagent-driven-development`, `agemon-test-driven-development`, `agemon-using-git-worktrees`, `agemon-dispatching-parallel-agents`, `agemon-finishing-a-development-branch` | Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Pairs with `self-review`. |
+| `workflow` | `agemon-brainstorming`, `agemon-writing-plans`, `agemon-executing-plans`, `agemon-subagent-driven-development`, `agemon-test-driven-development`, `agemon-using-git-worktrees`, `agemon-dispatching-parallel-agents`, `agemon-finishing-a-development-branch` | Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Comes with the `agemon-scout` and `agemon-worker` [subagents](#subagents). Pairs with `self-review`. |
 | `output-style` | `agemon-adhd` | On request (`/agemon-adhd`), replies lead with the next action, number their steps, restate progress, and skip preamble and tangents. |
 | `founder` | `agemon-founder-board`, `agemon-founder-competitors`, `agemon-founder-consumer`, `agemon-founder-pricing`, `agemon-founder-offer`, `agemon-founder-cfo`, `agemon-founder-marketing`, `agemon-founder-brand`, `agemon-founder-ops`, `agemon-founder-launch`, `agemon-founder-plan` | Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict. The panel is simulated buyers, not customers. The scripts need Python 3.8 or newer. |
 | `teamlead` | `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync. |
@@ -105,14 +105,23 @@ it. See [What a new version brings to a repository](#what-a-new-version-brings-t
 #### Subagents
 
 Some groups come with Claude Code subagents, which the `agents` capability installs into
-the project's `.claude/agents/` together with the group. Today only `geo-seo` has any: the
-five audit agents `geo-audit-ai-visibility`, `geo-audit-platform`, `geo-audit-technical`,
-`geo-audit-content` and `geo-audit-schema`, which `/geo audit` launches in parallel.
+the project's `.claude/agents/` together with the group. Two groups have some:
 
-- Each agent file has only `name`, `description` and `tools`. `tools` is an allowlist:
-  `WebFetch` for every agent, plus `Bash` (for one fixed, read-only `curl` you approve per
-  run) for the technical and schema agents. Nothing is pre-approved, and no agent sets a
-  permission mode, hooks or MCP servers.
+- `geo-seo`: the five audit agents `geo-audit-ai-visibility`, `geo-audit-platform`,
+  `geo-audit-technical`, `geo-audit-content` and `geo-audit-schema`, which `/geo audit`
+  launches in parallel.
+- `workflow`: two role agents. `agemon-scout` runs on Haiku for read-only search, and
+  `agemon-worker` runs on Sonnet for routine implementation and review.
+
+How they are set up:
+
+- Each agent file has only `name`, `description`, `tools` and `model`. `tools` is an
+  allowlist. The GEO agents get `WebFetch`, plus `Bash` (for one fixed, read-only `curl` you
+  approve per run) for the technical and schema agents. `agemon-scout` gets `Read`, `Grep` and
+  `Glob`. `agemon-worker` also gets `Edit`, `Write` and `Bash`. Nothing is pre-approved, and no
+  agent sets a permission mode, hooks or MCP servers.
+- `model` is an alias, so agents follow new model releases. These agent files are written for
+  Claude Code, and only Claude Code has been tested with them.
 - The agents have their own consent step, which names every agent with its tools. With
   `--yes`, agemon prints that list instead of asking.
 - Agent files are handled like rule files: an agent you edited is a conflict and is never
