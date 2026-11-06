@@ -291,14 +291,17 @@ describe("bundled skill revisions in status and verify", () => {
     });
   });
 
-  it("a skill listed by the CLI but missing from .claude/skills is kept with its reason", async () => {
+  it("a skill found only in .agents/skills is missing, because Claude Code cannot read it there", async () => {
     const ctx = await createTestContext();
     await recordInstalled(ctx, COMMIT_SKILL);
     await seedInstalledSkills(ctx.cwd, [COMMIT_SKILL], "agents");
 
-    expect(await keptNotes(ctx)).toEqual([
-      keptNote(COMMIT_SKILL, `not at ${COMMIT_COPY}`),
-    ]);
+    expect(await skillsPlugin.verify(ctx)).toEqual(
+      expect.objectContaining({
+        ok: false,
+        detail: expect.stringContaining(COMMIT_SKILL),
+      }),
+    );
   });
 
   it("a skill whose latest confirmed record is preexisting-skill is never reported, even when historical", async () => {

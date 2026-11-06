@@ -753,7 +753,7 @@ describe("skills CLI target checks", () => {
   });
 });
 
-describe("nuke never deletes .agents/skills", () => {
+describe("nuke never deletes an .agents/skills copy it has no record of", () => {
   it("keeps .agents/skills/<name> with user content and prints nothing about it", async () => {
     const ctx = await createTestContext();
     await installCurrent(ctx, "commit", COMMIT);

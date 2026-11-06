@@ -294,6 +294,28 @@ describe("buildConsentGates", () => {
     );
   });
 
+  it("gives copies into .agents/skills their own gate that states the ownership promise", () => {
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([
+        operation({
+          action: "copy-skills",
+          targetPath: ".agents/skills",
+          resourceId: "agents-skills:copies",
+        }),
+      ]),
+    });
+
+    expect(gates.map((gate) => gate.id)).toEqual([
+      "copy-skills-to-agents-directory",
+    ]);
+    expect(gates[0]?.summary).toContain(
+      "a copy agemon did not write is never touched",
+    );
+    expect(gates[0]?.announcementWithYes).toContain(".agents/skills");
+    expect(gates[0]?.satisfiableWithYes).toBe(true);
+  });
+
   it("puts a retired skill removal in its own gate, apart from installs and updates", () => {
     const gates = buildConsentGates({
       isolationStatus: "ignored",

@@ -7,6 +7,9 @@ export const SKILL_GROUP_RESOURCE_PREFIX = "skill-group:";
 export const ACTION_TYPE_INSTALLED_SKILL = "installed-skill";
 export const ACTION_TYPE_PREEXISTING_SKILL = "preexisting-skill";
 export const ACTION_TYPE_DECLINED_SKILL_GROUP = "declined-skill-group";
+export const ACTION_TYPE_AGENTS_SKILL_COPY = "installed-agents-skill-copy";
+export const ACTION_TYPE_DECLINED_AGENTS_COPIES =
+  "declined-agents-skill-copies";
 
 const SKILL_RECORD_TYPES: ReadonlySet<string> = new Set([
   ACTION_TYPE_INSTALLED_SKILL,

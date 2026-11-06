@@ -27,6 +27,8 @@ const RECORDABLE_DIRECTORIES: readonly string[] = [
   ".claude",
   ".claude/skills",
   ".claude/agents",
+  ".agents",
+  ".agents/skills",
 ];
 const LINE_TERMINATOR = /\r?\n$/u;
 const AFTER_EACH_LINE_TERMINATOR = /(?<=\n)/u;

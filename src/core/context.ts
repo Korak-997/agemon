@@ -1,5 +1,6 @@
 import {
   detectRequiredBinaries,
+  findBinaryPath,
   type PlatformCapabilities,
   REQUIRED_BINARIES,
 } from "../platform/detect.js";
@@ -74,6 +75,7 @@ export interface Context {
   customSkillGroups?: CustomSkillGroupConfig[];
   removeSharedTools?: ReadonlySet<string>;
   gitConfigGuard: GitConfigGuard;
+  isExecutableOnPath?: (name: string) => Promise<boolean>;
 }
 
 export interface CreateContextInput {
@@ -140,6 +142,15 @@ export async function createContext(
     customSkillGroups: input.customSkillGroups,
     removeSharedTools: input.removeSharedTools,
     gitConfigGuard: createGitConfigGuard(input.repoRoot),
+    ...(process.env.AGEMON_FAKE_SUBPROCESS === "1"
+      ? {}
+      : {
+          isExecutableOnPath: async (name: string) =>
+            (await findBinaryPath(
+              name,
+              agemonSubprocessEnvironment().PATH ?? "",
+            )) !== undefined,
+        }),
     log: console,
     ui: input.ui,
     progress: input.progress,

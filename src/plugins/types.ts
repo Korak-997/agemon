@@ -30,6 +30,7 @@ export const PROPOSED_OPERATION_ACTIONS = [
   "replace",
   "install-package",
   "remove-skill",
+  "copy-skills",
   "register-service",
   "use-shared",
   "conflict",

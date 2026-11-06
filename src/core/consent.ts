@@ -19,6 +19,7 @@ export type ConsentGateId =
   | "trust-repository-git-config"
   | "install-custom-skills"
   | "install-tooling"
+  | "copy-skills-to-agents-directory"
   | "remove-retired-skills"
   | "install-subagents"
   | "register-service"
@@ -68,6 +69,8 @@ export const CUSTOM_SKILL_GROUP_RESOURCE_PREFIX = "custom-skill-group:";
 export const AGENT_FILE_RESOURCE_PREFIX = "agent-file:";
 export const RETIRED_SKILL_RESOURCE_PREFIX = "retired-skill:";
 
+const AGENTS_DIRECTORY_COPY_EXPLANATION =
+  "Copy skills into .agents/skills for agents that do not read .claude/skills. agemon records each copy by hash; nuke removes only unchanged copies, and a copy agemon did not write is never touched.";
 const TRUST_GATE_EXPLANATION =
   "code-review-graph and its daemon will run git here with these repository settings, which agemon does not trust by default:";
 const DIFF_HEADER_LINE_COUNT = 2;
@@ -79,6 +82,7 @@ const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
   "trust-repository-git-config",
   "install-custom-skills",
   "install-tooling",
+  "copy-skills-to-agents-directory",
   "remove-retired-skills",
   "install-subagents",
   "register-service",
@@ -146,7 +150,9 @@ export function buildConsentGates(
             announcementWithYes:
               gateId === "install-subagents"
                 ? `Installing ${describeSubagents(operations)}.`
-                : null,
+                : gateId === "copy-skills-to-agents-directory"
+                  ? AGENTS_DIRECTORY_COPY_EXPLANATION
+                  : null,
             satisfiableWithYes: gateId !== "resolve-conflict",
           },
     );
@@ -234,6 +240,9 @@ function gateForOperation(
   }
   if (operation.action === "install-package") {
     return "install-tooling";
+  }
+  if (operation.action === "copy-skills") {
+    return "copy-skills-to-agents-directory";
   }
   if (operation.action === "remove-skill") {
     return "remove-retired-skills";
@@ -345,6 +354,8 @@ function operationGateSummary(
       return `Install skills from ${operations.length} skill group(s) defined in this repository's agemon.toml (${targets}). They come from the repository's own sources, not from agemon — review every source shown. Proceed?`;
     case "install-tooling":
       return installToolingSummary(operations);
+    case "copy-skills-to-agents-directory":
+      return `${AGENTS_DIRECTORY_COPY_EXPLANATION} Proceed?`;
     case "remove-retired-skills":
       return `Remove ${operations.length} skill(s) agemon no longer ships (${operations.map(({ resourceId }) => resourceId.slice(RETIRED_SKILL_RESOURCE_PREFIX.length)).join(", ")}). Each matches a version agemon installed. Proceed?`;
     case "install-subagents":

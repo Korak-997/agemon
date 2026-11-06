@@ -250,6 +250,38 @@ only agemon's own checks at each run apply.
 Daemon units registered before 6.0.0 get the start-time checks, the restart limit and the
 current hardening only after `agemon nuke --only daemon` and a fresh `agemon` run.
 
+## Other coding agents
+
+Skills install into `.claude/skills/`, which Claude Code, Cursor, Copilot and OpenCode read. Codex,
+Gemini CLI, Antigravity and Devin read `.agents/skills/` instead. When agemon finds one of those
+four (the executable on `PATH`, or a `.codex`, `.gemini` or `.devin` folder in the repository), it
+offers to copy skills there too:
+
+- **You decide once.** `agemon` asks, and remembers a no; `agemon --skill-groups <group>` asks
+  again. `--yes` means yes unless you already said no. A run with neither a prompt nor `--yes`
+  adds nothing, and `agemon status` says copies are available.
+- **agemon owns only what it wrote.** It records each copy's path and hash. `agemon` updates and
+  `agemon nuke` touch a copy only if its hash still matches that record.
+- **Your copies stay yours.** A team's `.agents/skills/<name>`, or one you changed, is reported in
+  `agemon status` and is never overwritten or deleted.
+- **The copy differs slightly.** Keys outside the [Agent Skills standard](https://agentskills.io/specification)
+  move into `metadata`, because other agents reject them or read them differently.
+- **`agemon-adhd` is not copied.** It must run only when named, and not every agent honours the
+  flag that says so.
+
+| Agent | Run a skill by name |
+|---|---|
+| Claude Code, Cursor, Antigravity, Devin | `/agemon-design` |
+| Codex | `$agemon-design` |
+| Gemini CLI, Copilot, OpenCode | Ask in plain words, for example "use the agemon-design skill" |
+
+**What is promised:** agemon puts skills in a folder that agent's docs say it reads, and the table
+above gives by-name use where that agent's docs show it; for Gemini CLI, Copilot and OpenCode the
+syntax is not confirmed, so plain words are the suggestion, not a tested path. **What is not:** that every agent loads a skill
+on its own. Only Claude Code has been measured, and only Claude Code has been run. Cursor, Copilot
+and OpenCode read both folders, so they may list a skill twice once copies exist. See the
+[agent matrix](evals/design/agent-matrix.md), which leaves its gaps visible.
+
 ## Claude on the web
 
 The `agemon` CLI runs on your machine, so it can't install into Claude on the web directly.
@@ -589,10 +621,11 @@ uninstalling a global npm package or disabling user linger. It then asks once. N
   without network access, and only when its content is a version agemon installed; an
   edited copy is kept and named. A custom group's skill counts as installed by agemon
   only if it matched its source at install time, which agemon recorded then; a copy with
-  no such record is kept and named. It never deletes `.agents/skills/<name>`, which other
-  tools may use, and removes only agemon's skills from `skills-lock.json`.
-- `.gitignore` and directories: every `nuke` removes the `.claude`, `.claude/skills` and
-  `.claude/agents` directories agemon created once they are empty (never their contents).
+  no such record is kept and named. In `.agents/skills/<name>`, it removes only a copy agemon
+  recorded writing whose hash is unchanged; a changed copy is kept and named, and a copy agemon
+  did not write is never touched. It removes only agemon's skills from `skills-lock.json`.
+- `.gitignore` and directories: every `nuke` removes the `.claude`, `.claude/skills`,
+  `.claude/agents`, `.agents` and `.agents/skills` directories agemon created once they are empty (never their contents).
   When the last capability goes, it also removes the `/.agemon/` and `/skills-lock.json`
   lines agemon added (only the exact lines it appended and recorded; your own equivalent
   lines stay), even in a committed `.gitignore`, and deletes a `.gitignore` agemon created

@@ -33,6 +33,15 @@ import type {
   SkillUpdate,
 } from "../types.js";
 import {
+  type CopyCandidate,
+  confirmedCopyRecords,
+  describeCopyPlan,
+  detectAgentsNeedingCopies,
+  removeRecordedCopy,
+  reviewCopies,
+  writeCopies,
+} from "./agents-copies.js";
+import {
   buildCustomSkillGroups,
   RETIRED_SKILL_NAMES,
   SKILL_GROUPS,
@@ -45,6 +54,8 @@ import {
   selectNewlyOfferedGroups,
 } from "./group-selection.js";
 import {
+  ACTION_TYPE_AGENTS_SKILL_COPY,
+  ACTION_TYPE_DECLINED_AGENTS_COPIES,
   ACTION_TYPE_DECLINED_SKILL_GROUP,
   ACTION_TYPE_INSTALLED_SKILL,
   ACTION_TYPE_PREEXISTING_SKILL,
@@ -98,6 +109,7 @@ const BUILT_IN_SOURCE_DESCRIPTION = "bundled with agemon";
 const DECLINED_GROUP_PREVIEW = "declined — agemon will not offer it again";
 const SKILL_MANIFEST_PATH = "SKILL.md";
 const ORPHANED_SKILLS_RESOURCE_ID = "skill-groups:orphaned";
+const AGENTS_COPIES_RESOURCE_ID = "agents-skills:copies";
 const UPDATE_PREVIEW_NOTE = " — update (bundled content changed)";
 
 const SKILLS_LIST_TIMEOUT_MS = 30_000;
@@ -242,6 +254,13 @@ async function listInstalledSkillNames(ctx: Context): Promise<Set<string>> {
     const typedItem = item as SkillsListEntry;
     if (typeof typedItem.name === "string" && typedItem.name.length > 0) {
       installedSkillNames.add(typedItem.name);
+    }
+  }
+
+  // `skills list` also reads .agents/skills, whose copies do not give Claude Code the skill.
+  for (const name of installedSkillNames) {
+    if (!existsSync(join(ctx.cwd, CLAUDE_SKILLS_DIRECTORY, name))) {
+      installedSkillNames.delete(name);
     }
   }
 
@@ -578,6 +597,7 @@ async function removeRetiredSkills(
       continue;
     }
     removedNames.push(skillName);
+    await removeRecordedCopy(ctx, skillName);
     const shipped = new Set(shippedFingerprints(skillName));
     await reportLeftCanonicalCopy(ctx, skillName, (fingerprint) =>
       shipped.has(fingerprint),
@@ -626,7 +646,177 @@ async function describeSkillsState(
   return [
     ...(await describeSkillGroups(ctx)),
     ...(await describeRetiredSkills(ctx)),
+    ...(await describeAgentsCopies(ctx)),
   ];
+}
+
+async function isAgemonClaudeCopy(
+  ctx: Context,
+  entry: SkillBundleEntry,
+): Promise<boolean> {
+  if (!isManagedInstall(ctx, entry)) {
+    return false;
+  }
+  const installed = await installedSkillFingerprint(ctx, entry.skillName);
+  if (installed === null) {
+    return false;
+  }
+  const agemonFingerprints = await fingerprintsAgemonInstalled(
+    entry.skillName,
+    entry,
+    recordedInstallFingerprints(
+      confirmedInstallEntries(ctx, entry.skillName),
+      entry.skillName,
+    ),
+  );
+  return agemonFingerprints.has(installed);
+}
+
+function vendoredSourceDirectory(entry: SkillBundleEntry): string | null {
+  return entry.localSourcePath === undefined &&
+    entry.pinnedRepository === undefined
+    ? entry.source
+    : null;
+}
+
+async function listCopyCandidates(
+  ctx: Context,
+  groups: SkillGroup[],
+  namesBeingUpdated: ReadonlySet<string> = new Set(),
+): Promise<CopyCandidate[]> {
+  const candidates: CopyCandidate[] = [];
+  for (const entry of flattenSkills(groups)) {
+    const { skillName } = entry;
+    const claudeCopy = join(ctx.cwd, CLAUDE_SKILLS_DIRECTORY, skillName);
+    if (!existsSync(claudeCopy) || namesBeingUpdated.has(skillName)) {
+      candidates.push({
+        skillName,
+        sourceDirectory: vendoredSourceDirectory(entry),
+      });
+    } else if (await isAgemonClaudeCopy(ctx, entry)) {
+      candidates.push({ skillName, sourceDirectory: claudeCopy });
+    }
+  }
+  return candidates;
+}
+
+function agentsCopiesWereDeclined(ctx: Context): boolean {
+  return skillsLedgerEntries(ctx).some(
+    (action) => action.type === ACTION_TYPE_DECLINED_AGENTS_COPIES,
+  );
+}
+
+async function agentsCopiesAreWanted(ctx: Context): Promise<string[] | null> {
+  const agents = await detectAgentsNeedingCopies(ctx);
+  return agents.length > 0 || confirmedCopyRecords(ctx).length > 0
+    ? agents
+    : null;
+}
+
+async function describeAgentsCopies(
+  ctx: Context,
+): Promise<CapabilityStateRow[]> {
+  const agents = await agentsCopiesAreWanted(ctx);
+  if (agents === null) {
+    return [];
+  }
+  const review = await reviewCopies(
+    ctx,
+    await listCopyCandidates(ctx, getRecordedGroups(ctx)),
+  );
+  const copied = confirmedCopyRecords(ctx).length;
+  const notYetDecided = copied === 0 && review.toAdd.length > 0;
+  if (
+    copied === 0 &&
+    !notYetDecided &&
+    review.kept.length === 0 &&
+    review.notCopied.length === 0
+  ) {
+    return [];
+  }
+  const details = [
+    `${copied} copied`,
+    ...review.kept.map(
+      ({ skillName, reason }) => `agemon keeps ${skillName} (${reason})`,
+    ),
+    ...review.notCopied.map(
+      ({ skillName, reason }) => `${skillName} ${reason}`,
+    ),
+  ];
+  const row = (state: CapabilityState, detail: string[]) => [
+    {
+      capabilityId: PLUGIN_ID,
+      resourceId: AGENTS_COPIES_RESOURCE_ID,
+      label: `${CANONICAL_SKILLS_DIRECTORY} copies`,
+      state,
+      detail: detail.join("; "),
+    },
+  ];
+  if (review.kept.length > 0) {
+    return row("present-modified", details);
+  }
+  if (notYetDecided && agentsCopiesWereDeclined(ctx)) {
+    return row("declined", [
+      "you declined these copies; run agemon --skill-groups <group> to be asked again",
+    ]);
+  }
+  return notYetDecided
+    ? row("absent", [
+        `copies available for ${agents.join(", ")}; run agemon --yes to add them`,
+      ])
+    : row("present-managed", details);
+}
+
+async function planAgentsCopies(
+  ctx: Context,
+  groups: SkillGroup[],
+  namesBeingUpdated: ReadonlySet<string>,
+): Promise<ProposedOperation[]> {
+  const agents = await agentsCopiesAreWanted(ctx);
+  if (agents === null) {
+    return [];
+  }
+  const review = await reviewCopies(
+    ctx,
+    await listCopyCandidates(ctx, groups, namesBeingUpdated),
+  );
+  if (review.toAdd.length === 0 && review.toUpdate.length === 0) {
+    return [];
+  }
+  const describeCopies = (action: "copy-skills" | "skip", text: string) => [
+    describeOperation({
+      capabilityId: PLUGIN_ID,
+      resourceId: AGENTS_COPIES_RESOURCE_ID,
+      targetPath: CANONICAL_SKILLS_DIRECTORY,
+      action,
+      riskClass: action === "skip" ? "inert" : "writes-config",
+      requiresConsent: true,
+      preview: { kind: "note", text },
+    }),
+  ];
+  const copyOperation = describeCopies(
+    "copy-skills",
+    describeCopyPlan(agents, review),
+  );
+  const askedByName = (ctx.requestedSkillGroupIds?.size ?? 0) > 0;
+  if (confirmedCopyRecords(ctx).length > 0 || askedByName) {
+    return copyOperation;
+  }
+  if (agentsCopiesWereDeclined(ctx)) {
+    return [];
+  }
+  if (ctx.yes) {
+    return copyOperation;
+  }
+  if (!ctx.interactive) {
+    return [];
+  }
+  return ctx.dryRun ||
+    (await ctx.confirm(
+      `Also copy skills to ${CANONICAL_SKILLS_DIRECTORY} for ${agents.join(", ")}, which do not read ${CLAUDE_SKILLS_DIRECTORY}?`,
+    ))
+    ? copyOperation
+    : describeCopies("skip", DECLINED_GROUP_PREVIEW);
 }
 
 async function describeSkillGroups(
@@ -896,6 +1086,16 @@ async function planSkills(ctx: Context): Promise<ProposedOperation[]> {
   }
   operations.push(...declinedGroups.map(describeGroupDecline));
   operations.push(...(await planRetiredSkillRemovals(ctx)));
+  const namesBeingUpdated = new Set(
+    [...updatesByGroupId.values()].flat().map((update) => update.name),
+  );
+  operations.push(
+    ...(await planAgentsCopies(
+      ctx,
+      [...new Set([...recordedGroups, ...groupsToInstall])],
+      namesBeingUpdated,
+    )),
+  );
   return operations;
 }
 
@@ -1268,6 +1468,30 @@ function findOperationGroup(
   return group;
 }
 
+async function applyAgentsCopyDecision(
+  ctx: Context,
+  copyOperations: ProposedOperation[],
+): Promise<void> {
+  if (copyOperations.some(({ action }) => action === "skip")) {
+    await ctx.manifest.recordAction({
+      plugin: PLUGIN_ID,
+      type: ACTION_TYPE_DECLINED_AGENTS_COPIES,
+      target: AGENTS_COPIES_RESOURCE_ID,
+      preExisting: false,
+    });
+  } else if (copyOperations.length > 0) {
+    await writeCopies(
+      ctx,
+      await listCopyCandidates(ctx, getRecordedGroups(ctx)),
+    );
+    await ctx.manifest.removeActionIds(
+      skillsLedgerEntries(ctx)
+        .filter(({ type }) => type === ACTION_TYPE_DECLINED_AGENTS_COPIES)
+        .map(({ id }) => id),
+    );
+  }
+}
+
 async function applySkills(
   ctx: Context,
   operations: ProposedOperation[],
@@ -1278,8 +1502,14 @@ async function applySkills(
   const retiredSkillRemovals = operations.filter(
     (operation) => operation.action === "remove-skill",
   );
+  const copyOperations = operations.filter(
+    (operation) => operation.resourceId === AGENTS_COPIES_RESOURCE_ID,
+  );
   for (const operation of operations) {
-    if (operation.action === "remove-skill") {
+    if (
+      operation.action === "remove-skill" ||
+      operation.resourceId === AGENTS_COPIES_RESOURCE_ID
+    ) {
       continue;
     }
     const group = findOperationGroup(availableGroups, operation);
@@ -1305,6 +1535,7 @@ async function applySkills(
     );
   }
   await removeRetiredSkills(ctx, retiredSkillRemovals);
+  await applyAgentsCopyDecision(ctx, copyOperations);
 }
 
 async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
@@ -1340,6 +1571,19 @@ async function verifySkills(ctx: Context): Promise<PluginVerificationResult> {
     );
     for (const keptSkill of revisions.kept) {
       ctx.ui.info(printable(describeKeptSkill(keptSkill)));
+    }
+  }
+  if ((await agentsCopiesAreWanted(ctx)) !== null) {
+    const { kept } = await reviewCopies(
+      ctx,
+      await listCopyCandidates(ctx, recordedGroups),
+    );
+    for (const { skillName, reason } of kept) {
+      ctx.ui.info(
+        printable(
+          `skills: agemon keeps ${CANONICAL_SKILLS_DIRECTORY}/${skillName} (${reason}); delete it and run agemon to get agemon's copy`,
+        ),
+      );
     }
   }
   if (outdatedNames.length > 0) {
@@ -1397,6 +1641,29 @@ function recordedInstallFingerprints(
     .filter((fingerprint) => fingerprint !== null);
 }
 
+async function revertAgentsCopy(
+  ctx: Context,
+  skillName: string,
+  failures: string[],
+): Promise<void> {
+  if (!isPlainSkillName(skillName)) {
+    throw new RefusedPathError(
+      `Refusing to remove the skill '${printable(skillName)}': it is not a plain skill name. The ledger in .agemon/state.json may have been edited; check it before running agemon again.`,
+    );
+  }
+  if (!confirmedCopyRecords(ctx).some(({ target }) => target === skillName)) {
+    ctx.ui.info(
+      `${ctx.dryRun ? "Would keep" : "Keeping"} ${CANONICAL_SKILLS_DIRECTORY}/${skillName}: agemon has no record on this machine that it wrote it.`,
+    );
+    return;
+  }
+  try {
+    await removeRecordedCopy(ctx, skillName);
+  } catch (error) {
+    failures.push(errorMessage(error));
+  }
+}
+
 async function revertSkills(
   ctx: Context,
   entries: LedgerEntry[],
@@ -1434,6 +1701,11 @@ async function revertSkills(
 
   const removedNames: string[] = [];
   const failures: string[] = [];
+  for (const { target, type } of entries) {
+    if (type === ACTION_TYPE_AGENTS_SKILL_COPY) {
+      await revertAgentsCopy(ctx, target, failures);
+    }
+  }
   for (const skillName of managedSkillNames) {
     const entry = flattenSkills(getAvailableGroups(ctx)).find(
       (candidate) => candidate.skillName === skillName,

@@ -290,10 +290,33 @@ the skill groups this run installs.
 - Every `skills add` passes `--agent claude-code`; with one agent the pinned CLI copies into
   `.claude/skills/<name>` and never writes `.agents/skills/`. Before it runs,
   `.claude/skills` must be a real directory (created if missing), `.agents/skills` and
-  `.agents/skills/<name>` must not be symlinks (never created), and `skills-lock.json` must
-  be absent or a regular file. agemon never runs `skills remove`: that command also deletes
+  `.agents/skills/<name>` must not be symlinks, and `skills-lock.json` must be absent or a
+  regular file. agemon never runs `skills remove`: that command also deletes
   `.agents/skills/<name>` when no other detected agent uses it, which can be another tool's
   or a team's committed copy.
+- **Copies in `.agents/skills`** (`src/plugins/skills/agents-copies.ts`). agemon itself, not the
+  skills CLI, writes these. It plans one `copy-skills` operation, behind its own consent gate,
+  when an agent whose docs list no `.claude/skills` path is found: `codex`, `gemini`, `antigravity`,
+  `agy` or `devin` on `PATH` (looked up, never run), or a `.codex`, `.gemini` or `.devin` folder.
+  First-time copies are a decision: an interactive run asks and a no is recorded as
+  `declined-agents-skill-copies`; `--yes` agrees unless a no is recorded; naming a group with
+  `--skill-groups` plans them regardless and clears the no on approval; an unattended run without
+  `--yes` plans nothing, so it stays at exit 0, and `status` reports copies as available. Once a
+  confirmed copy exists, the operation keeps being planned for updates even if that agent has gone,
+  including in the same run as a bundled update of the skill. A skill is copied only from a `.claude/skills/<name>` agemon installed unchanged, so an
+  edited or pre-existing skill never spreads. A copy gets portable frontmatter
+  (`portable-manifest.ts`: keys outside the Agent Skills standard move into `metadata` as strings;
+  a manifest it cannot convert safely is not copied). A skill with
+  `disable-model-invocation: true` is not copied. Each copy is staged inside `.agents/skills` from the
+  entries agemon already read, so a swapped source cannot redirect a write, then renamed into place,
+  and an `installed-agents-skill-copy` ledger entry
+  records its fingerprint. Rules:
+  - absent: written, and the `.agents` and `.agents/skills` directories agemon created are recorded;
+  - confirmed record, same fingerprint, older content: replaced, keeping one record;
+  - no confirmed record, a symlink or a non-directory: kept and reported, never written;
+  - confirmed record, different fingerprint: kept and reported as changed.
+  `skills list` also reads `.agents/skills`, but a copy there does not give Claude Code the skill,
+  so agemon counts a skill as installed only if `.claude/skills/<name>` exists.
 - Custom local skills are read without following symlinks, copied into a private
   `<state>/agemon/skills-stage/run-*` directory, and installed from there; the content hash
   of the copy must equal the one in the plan. Custom GitHub skills are fetched from a
@@ -327,9 +350,13 @@ the skill groups this run installs.
   `git status --porcelain --ignored`. A custom-group skill with no recorded fingerprint is
   kept; nuke itself runs no git. A removal that fails
   keeps the skill and fails nuke after the others are done. `.agents/skills/<name>` is
-  never deleted; when its content matches a shipped version nuke prints `Left
-  .agents/skills/<name>: agemon's skills CLI no longer writes it; remove it if you no
-  longer need it.`
+  deleted only when a confirmed `installed-agents-skill-copy` entry names it and its
+  fingerprint equals that entry's, using the same re-check and quarantine; a symlink there is
+  never unlinked. A changed copy is kept with `Keeping .agents/skills/<name>: it differs from
+  what agemon wrote; delete it if you no longer need it.` An entry this machine cannot confirm
+  keeps the copy too. A copy with no entry is never deleted; when its content matches a shipped
+  version nuke prints `Left .agents/skills/<name>: agemon's skills CLI no longer writes it;
+  remove it if you no longer need it.`
 - **`skills-lock.json`** follows the CLI's own rule: agemon deletes the keys of the skills
   it removed (or found already gone) from any lock with `version: 1` and an object
   `skills`, keeping every other field, and writes it back in the CLI's format. It deletes

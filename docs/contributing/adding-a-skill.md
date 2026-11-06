@@ -80,6 +80,17 @@ description: Use when … — one or two sentences that tell the agent when to l
   `hooks` are not allowed: every tool use in a bundled skill goes through the user's normal
   permission prompt. If upstream has `allowed-tools`, remove it and say so in `NOTICE.md`.
 
+These keys are not all portable, so write the body so it still works without them. The copy
+agemon writes to `.agents/skills/` for agents such as Codex keeps `name` and `description` as they
+are and moves `version`, `author`, `tags`, `triggers` and `argument-hint` into `metadata` as
+strings. Devin reads `triggers` as `user` or `model`, and Codex's validator rejects keys outside
+the standard.
+
+`disable-model-invocation` is not universal either. Claude Code and Cursor document it; Codex and
+Devin use their own controls; other agents' docs do not mention it. So a skill that sets it is
+**not copied** to `.agents/skills/`, and those agents will not have it. See the
+[agent matrix](../../evals/design/agent-matrix.md).
+
 ## 4. Guard skills that read web content
 
 A skill is treated as web-reading when any of its files mentions a web tool by name
