@@ -2,7 +2,7 @@
 
 ## Apache License 2.0
 
-Applies to `tells-2026-11.md`, which is adapted from `skills/frontend-design/SKILL.md` in https://github.com/anthropics/skills at commit ca45fc496a3436251f191354091d557da31c15b5. The licence text is reproduced below unchanged. Changes made are listed in the skill's attribution record.
+Applies to `tells-2026-11.md` and the plan and review steps of `stage-build.md`, which are adapted from `skills/frontend-design/SKILL.md` in https://github.com/anthropics/skills at commit ca45fc496a3436251f191354091d557da31c15b5. The licence text is reproduced below unchanged. Changes made are listed in the skill's attribution record.
 
 
                                  Apache License
@@ -181,3 +181,31 @@ Applies to `tells-2026-11.md`, which is adapted from `skills/frontend-design/SKI
       of your accepting any such warranty or additional liability.
 
    END OF TERMS AND CONDITIONS
+
+## MIT License
+
+Applies to the ui-craft text this skill is based on, including the presets.
+
+```text
+MIT License
+
+Copyright (c) 2026 Eduardo Calvo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

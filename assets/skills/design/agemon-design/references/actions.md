@@ -13,9 +13,9 @@ Eight focused passes you can ask `agemon-design` for. Invoke one as `/agemon-des
 | [audit](#audit) | Technical audit: accessibility, performance, responsive | no, until approved |
 | [animate](#animate) | Add purposeful motion, or remove excess | yes |
 
-**Shared rules.** Run Stack Detection and the Discovery Phase from `SKILL.md` first. Knobs (CRAFT_LEVEL, MOTION_INTENSITY, VISUAL_DENSITY) come from the user, else the defaults in `SKILL.md`. Findings use the Review Format table from `SKILL.md`. Never commit unless the user asks.
+**Shared rules.** Run [stage-intake.md](stage-intake.md) and [stage-assets.md](stage-assets.md) first, as your track requires. Knobs (CRAFT_LEVEL, MOTION_INTENSITY, VISUAL_DENSITY) come from the user, else the defaults in [core-rules.md](core-rules.md). Findings use the Review Format table from [core-rules.md](core-rules.md). Never commit unless the user asks. In a non-interactive run, every "ask" below becomes: proceed and log the assumption in `.design/brief.md`. New working files go in `.design/`: where these references say to write under `.ui-craft/`, write the same file under `.design/`, and read an existing `.ui-craft/` file without rewriting it.
 
-**Visual capture** (review and audit start here). Code-only review misses what the user sees. If you can run a browser, capture the surface at desktop (1280×800), tablet (768×1024) and mobile (375×812), plus dark mode if the app has one. If you cannot, ask the user for those screenshots and say you are waiting for them. If they decline, run a code-only pass and mark the report `[CODE-ONLY REVIEW — visual issues not assessed]` at the top. Never silently fall back to code-only.
+**Visual capture** (review and audit start here). Code-only review misses what the user sees. If you can run a browser, capture the surface at desktop (1280×800), tablet (768×1024) and mobile (375×812), plus dark mode if the app has one. If you cannot, ask the user for those screenshots. If they decline, or if nobody can answer, run a code-only pass and mark the report `[CODE-ONLY REVIEW — visual issues not assessed]` at the top. Never silently fall back to code-only.
 
 ---
 
@@ -33,7 +33,7 @@ Write or update the project's durable design brief at `.ui-craft/brief.md`. Form
 3. **Principles workshop.** If the user has no principles yet or gives vague ones ("make it good", "keep it simple"), do not fabricate any. Read [principles-catalog.md](principles-catalog.md) for worked examples, show two or three from the closest category as conversation seeds (not templates), and ask which resonate or which they would flip. Then run the workshop from [brief.md](brief.md): ask for three past design decisions that were debated and derive candidate principles from the patterns. Refuse platitudes; ask for substance.
 4. **Long input.** If the user pastes a product description or PRD, parse it into the five sections, state what you extracted, and ask for confirmation instead of re-asking.
 5. **Thin answers.** If an answer is too vague to constrain a design decision, ask one targeted follow-up. At most two follow-ups per section, then mark it incomplete and move on.
-6. **Show before writing.** Show the proposed brief in full and ask whether to adjust anything. Do not write until confirmed.
+6. **Show before writing.** Show the proposed brief in full and ask whether to adjust anything, and write it once the user confirms. In a non-interactive run, write it and mark unconfirmed sections as assumptions.
 7. **Write.** Create `.ui-craft/` if needed and write all five sections under the exact headings from [brief.md](brief.md). Tell the user where the file is and suggest committing it (it is documentation, not config). Do not commit for them.
 
 Constraints: all five sections are required; if one is genuinely unknown, write `[TO DEFINE — YYYY-MM-DD]` so the gap stays visible. Updates are append-mostly: never delete past content, mark it deprecated with a date and reason. No brand names, product examples or generic SaaS language in the user's brief; it describes their product, not the template.
@@ -63,7 +63,7 @@ Audit or establish the project's 3-layer token spine (primitive → semantic →
    | Low | Z-index | Arbitrary values (`z-index: 999`) in 3 components |
 
    To iterate until nothing is off-system, the user must ask for it explicitly: fix the top off-system value (raw hex, arbitrary radius, magic spacing), re-scan, and repeat per [loops.md](loops.md) (preset `token-consistency`) until zero off-system values or the budget runs out.
-4. **Establish** (no tokens found). Propose a minimal spine inline covering all 7 categories, with intentional light and dark blocks. Order: primitives (neutral ramp gray-50 to gray-950, one accent ramp, status bases, spacing, type, radii, shadows, motion, z-index); semantics (5-level surface stack, text, border, accent and status roles); component tokens only when a component is already being built. Use OKLCH unless the project is sRGB throughout; then flag it, propose OKLCH, and do not auto-convert. Before writing, ask which file, suggested from the stack: Tailwind → `globals.css`; CSS-in-JS → `theme.ts`; vanilla CSS → `tokens.css`; cross-platform → `design-tokens.json`.
+4. **Establish** (no tokens found). Propose a minimal spine inline covering all 7 categories, with intentional light and dark blocks. Order: primitives (neutral ramp gray-50 to gray-950, one accent ramp, status bases, spacing, type, radii, shadows, motion, z-index); semantics (5-level surface stack, text, border, accent and status roles); component tokens only when a component is already being built. Use OKLCH unless the project is sRGB throughout; then flag it, propose OKLCH, and do not auto-convert. Before writing, ask which file (in a non-interactive run, take the suggestion and log it), suggested from the stack: Tailwind → `globals.css`; CSS-in-JS → `theme.ts`; vanilla CSS → `tokens.css`; cross-platform → `design-tokens.json`.
 5. **Never overwrite.** If a token file exists, show additions as a diff and let the user apply it.
 
 Constraints: do not impose Tailwind on vanilla CSS; do not impose OKLCH on a consistent sRGB project; extend the project's naming (`--color-primary`) rather than adding a parallel scheme.
@@ -79,8 +79,8 @@ Build a complete surface from an outcome recipe, ending in working code that pas
 Recipes: dashboard → [recipe-dashboard.md](recipe-dashboard.md) · landing → [recipe-landing.md](recipe-landing.md) · auth → [recipe-auth.md](recipe-auth.md). If the surface has no recipe (settings, docs, e-commerce), say so and fall back to the standard build with the closest references; do not improvise a fake recipe.
 
 0. **Spec.** If `.ui-craft/spec.md` has a `## Surface: <name>` section matching the request ([spec.md](spec.md)), load it. Its composition, component inventory, state lattice and acceptance bar override the recipe defaults; note which bar items came from where.
-1. **Inputs.** Run Stack Detection and Discovery Step 1 (existing tokens, `.ui-craft/brief.md`). Read [craft-intent.md](craft-intent.md). Ask the recipe's Step 0 questions in one compact prompt, pre-filling anything the request or brief already answers. If the user declines or says "you decide", apply the recipe defaults silently and say which. Never ask twice, never block. Set DESIGN_VARIANCE from the craft-intent default for the surface type unless the user or brief says otherwise.
-2. **Craft Read and plan.** Output the Craft Read line (`SKILL.md`) before any code, including the signature bet. Choose composition, tokens (the project's existing ones, else derived from the brief; a theme preset only when the user asks or no direction exists), density, variance and signature bet; with no brand direction, rotate one axis (craft-intent §6) and name it.
+1. **Inputs.** Run [stage-intake.md](stage-intake.md) and [stage-assets.md](stage-assets.md) (existing tokens, briefs). Read [craft-intent.md](craft-intent.md). Ask the recipe's Step 0 questions in one compact prompt, pre-filling anything the request or brief already answers. If the user declines or says "you decide", apply the recipe defaults silently and say which. Never ask twice, never block. Set DESIGN_VARIANCE from the craft-intent default for the surface type unless the user or brief says otherwise.
+2. **Craft Read and plan.** Output the Craft Read line ([stage-build.md](stage-build.md)) before any code, including the signature bet. Choose composition, tokens (the project's existing ones, else derived from the brief; a theme preset only when the user asks or no direction exists), density, variance and signature bet; with no brand direction, rotate one axis (craft-intent §6) and name it.
 
    For **landing** surfaces, choose the fold class by exclusion, not taste. List the composition classes already recorded under `## Fold classes used` in `.ui-craft/brief.md`, then commit to one the project has not used, and say out loud what sacrifice that class demands: the sacrifice is what makes the page look like itself. Do not average candidate compositions together and do not fall back to text-left/visual-right because it fits everything: it fits everything because it commits to nothing.
 
@@ -108,8 +108,8 @@ Start with Visual capture (above). Knob awareness: CRAFT_LEVEL 3 → flag only C
 
 Run these lenses in order:
 
-1. **Anti-Slop Test** (`SKILL.md`): every item present, Critical first, then Major, then Minor.
-2. **Craft Test** (`SKILL.md`): where the design falls short of "one accent, 3–5 placements; plain secondary text for comparisons; functional color only; every section earns its space".
+1. **Anti-Slop Test** ([core-rules.md](core-rules.md)): every item present, Critical first, then Major, then Minor.
+2. **Craft Test** ([core-rules.md](core-rules.md)): where the design falls short of "one accent, 3–5 placements; plain secondary text for comparisons; functional color only; every section earns its space".
 3. **Hierarchy**: can the user tell primary, secondary and tertiary at a glance, or does everything shout equally?
 4. **Clarity**: is the value proposition legible in 5 seconds? Are CTAs specific, not "Learn more"?
 5. **Signature detail**: is there one memorable element that makes it feel designed, not assembled? If not, suggest one (motif, layout break, custom marker, distinctive hover).
@@ -196,7 +196,7 @@ Next: `/agemon-design harden` to turn the findings into real production coverage
 Motion pass: add purposeful animation, fix janky transitions, or trim motion that distracts ("make it feel smoother"). Edits code directly.
 
 1. **Decision Ladder.** Run the Decision Ladder in [motion.md](motion.md) first. Anything that fails it is removed, not improved.
-2. **Pick the library.** If the user opted into a stack during Discovery, read [stack.md](stack.md) and use the matching section (Motion, GSAP or Three.js); never mix libraries on one property. Otherwise use CSS transitions, `@keyframes` and `animation-timeline: view()` only.
+2. **Pick the library.** If the user opted into a stack during intake, read [stack.md](stack.md) and use the matching section (Motion, GSAP or Three.js); never mix libraries on one property. Otherwise use CSS transitions, `@keyframes` and `animation-timeline: view()` only.
 3. **Motion budget.**
 
    | Element | Budget |

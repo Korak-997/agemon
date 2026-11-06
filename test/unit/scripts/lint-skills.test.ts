@@ -475,6 +475,24 @@ describe("lintSkillAssets design skill references", () => {
     ]);
   });
 
+  it("reports a design SKILL.md over the size that survives compaction", () => {
+    expect(designProblems("x".repeat(20_001))).toEqual([
+      `${DESIGN_SKILL}/SKILL.md: is over 20000 bytes; compaction keeps only the first 5000 tokens, so move detail to references`,
+    ]);
+  });
+
+  it("does not apply the size limit to other skills", () => {
+    writeSkillFile(
+      "design/other",
+      "SKILL.md",
+      skillManifest("other", "", "x".repeat(20_001)),
+    );
+    writeSkillFile("design/other", "NOTICE.md", VALID_NOTICE);
+    writeSkillFile("design/other", "LICENSE", MIT_LICENSE);
+
+    expect(problemsFor("design/other")).toEqual([]);
+  });
+
   it("reports a command agemon does not ship", () => {
     expect(designProblems("Run `/craft` first.\n")).toEqual([
       `${DESIGN_SKILL}/SKILL.md: refers to /craft, which agemon does not ship`,

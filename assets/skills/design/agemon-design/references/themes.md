@@ -1,6 +1,6 @@
 # Theme Presets
 
-Four named, production-ready token stacks. Each is a complete primitive layer for the 3-layer contract in [tokens.md](tokens.md) — map these into your semantic tokens, don't reference them raw from components. If the project has tokens, those win ([SKILL.md](../SKILL.md) Discovery).
+Four named, production-ready token stacks. Each is a complete primitive layer for the 3-layer contract in [tokens.md](tokens.md) — map these into your semantic tokens, don't reference them raw from components. If the project has tokens, those win ([stage-assets.md](stage-assets.md)).
 
 **Presets are opt-in starting points.** Use one only when the user asks for it, or when there is no brand and no direction at all. Rotate each preset's accent for the brief (see Accent rotation below); the accents shown are placeholders, not recommendations. Several presets sit close to the looks in [tells-2026-11.md](tells-2026-11.md), and a near-black page with one bright accent is a current tell in its own right.
 

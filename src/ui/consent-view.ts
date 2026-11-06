@@ -8,6 +8,7 @@ const GATE_TITLES: Record<string, string> = {
   "trust-repository-git-config": "Trust this repository's git config",
   "install-custom-skills": "Install skills from this repository",
   "install-tooling": "Install tooling",
+  "remove-retired-skills": "Remove retired skills",
   "install-subagents": "Install Claude Code subagents",
   "register-service": "Register background service",
   "write-config": "Write structured config",

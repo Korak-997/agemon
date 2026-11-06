@@ -83,7 +83,7 @@ Follow this sequence. Each section is a separate lens.
 
 ### Step 1: Anti-Slop Detection (CRITICAL)
 
-Run the Anti-Slop Test from SKILL.md (Critical → Major → Minor). Every item present is a finding.
+Run the Anti-Slop Test from [core-rules.md](core-rules.md) (Critical → Major → Minor). Every item present is a finding.
 
 **The test**: "If someone said AI made this, would they believe it immediately?"
 

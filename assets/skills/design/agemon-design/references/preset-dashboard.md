@@ -1,10 +1,6 @@
----
-name: agemon-design-dashboard
-description: "Dense dashboard / admin / Bloomberg / Retool / data-heavy internal tools. Locked knobs: CRAFT=7, MOTION=3, DENSITY=9. a UI face chosen for dense data + mono numbers, semantic palette, 4/8px grid, sparklines, tabular-nums. Trigger on: dashboard, admin panel, data-dense, analytics, Bloomberg-like, Retool-like."
-argument-hint: "[action: build|review|polish] [target]"
----
+# Preset: Dense dashboard
 
-# UI Craft — Dense Dashboard
+Use this preset only when the user names this look. It is a starting vocabulary for that request, never a default, and the project's brand still wins.
 
 Pre-committed dense style: data-first, keyboard-first, operator tools. Bloomberg, Retool, Linear issues view, admin panels. Every pixel earns its place.
 
@@ -14,7 +10,7 @@ Pre-committed dense style: data-first, keyboard-first, operator tools. Bloomberg
 - **MOTION_INTENSITY = 3** — micro-only. Row hover, row active tint, inline confirm. No scroll reveals in table areas.
 - **VISUAL_DENSITY = 9** — tight 4/8px grid; whitespace earns its place.
 
-Do not re-ask these in Discovery. Confirm brand accent + dark/light preference only.
+Do not re-ask these during intake. Confirm brand accent + dark/light preference only.
 
 ## Style anchors
 
@@ -29,7 +25,7 @@ Do not re-ask these in Discovery. Confirm brand accent + dark/light preference o
 
 ## Base rules (inherited)
 
-All rules in `../agemon-design/SKILL.md` apply. This file overrides knob defaults and adds style-specific guidance below. The anti-slop and craft tests still apply in full.
+The hard rules in `SKILL.md` and [core-rules.md](core-rules.md) apply. This file overrides knob defaults and adds style-specific guidance below. The anti-slop and craft tests still apply in full.
 
 ## Style-specific overrides
 
@@ -88,7 +84,7 @@ All rules in `../agemon-design/SKILL.md` apply. This file overrides knob default
 
 ## Reference files to read first
 
-Load these from `../agemon-design/references/`:
+Load these from this folder:
 
 - `dashboard.md` — primary reference; metric cards, charts, sidebar, tables
 - `typography.md` — tabular-nums, mono pairing, scale
@@ -99,14 +95,14 @@ Skip `inspiration.md` (landing-page focused), `sound.md`.
 
 ## Anti-patterns for THIS style
 
-- Serif fonts anywhere in chrome or data. Editorial is a different variant.
+- Serif fonts anywhere in chrome or data. Editorial is a different preset.
 - Proportional figures in numeric columns — always `tabular-nums`.
 - Saturated hues — reads as consumer app, not operator tool.
 - Colored pills on every delta — plain text in semantic color.
 - Pie charts, donut charts, 3D charts. Ever.
 - Vertical bar chart for time-series — use area/line.
 - Uniform colored top borders on metric cards.
-- Card grids with heavy whitespace — if it feels airy, wrong variant.
+- Card grids with heavy whitespace — if it feels airy, wrong preset.
 - Full-dark sidebar (common AI pattern) — subtle tint only.
 - Scroll-triggered reveals or stagger animations in table areas.
 - Hidden keyboard shortcuts — always surface `⌘K`, row shortcuts, help trigger.

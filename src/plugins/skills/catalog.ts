@@ -97,14 +97,9 @@ export const SKILL_GROUPS: SkillGroup[] = [
     id: "design",
     label: "Design & UI/UX",
     description:
-      "agemon-design: design engineering with anti-slop rules, discovery, and outcome recipes for dashboards, landings, and auth screens.",
+      "agemon-design: a staged UI workflow that reads your real brand, builds from the subject, and reports what it could not verify. Auto-triggering is not guaranteed, its gates are voluntary, and a passing run does not mean a good design.",
     defaultSelected: false,
-    skills: [
-      vendoredSkill("design", "agemon-design"),
-      vendoredSkill("design", "agemon-design-minimal"),
-      vendoredSkill("design", "agemon-design-editorial"),
-      vendoredSkill("design", "agemon-design-dashboard"),
-    ],
+    skills: [vendoredSkill("design", "agemon-design")],
   },
   {
     id: "security",
@@ -286,6 +281,12 @@ export const SKILL_GROUPS: SkillGroup[] = [
 ];
 
 export const RETIRED_AGENT_NAMES: readonly string[] = [];
+
+export const RETIRED_SKILL_NAMES: readonly string[] = [
+  "agemon-design-minimal",
+  "agemon-design-editorial",
+  "agemon-design-dashboard",
+];
 
 export function findSkillGroup(groupId: string): SkillGroup | undefined {
   return SKILL_GROUPS.find((group) => group.id === groupId);

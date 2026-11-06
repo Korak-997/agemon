@@ -82,15 +82,15 @@ Every loop report MUST state:
 
 | Preset | target | lens | gate | renderer | maps to |
 |--------|--------|------|------|----------|---------|
-| `visual-anti-slop` | new-build \| existing-surface | SKILL.md Anti-Slop Test + finish-bar.md Pass 1 + Pass 9 | zero-critical (Major: absent or explicitly user-confirmed — no self-accept, silence ≠ accepted) | required — degrades to code-only | pre-ship pass |
+| `visual-anti-slop` | new-build \| existing-surface | core-rules.md Anti-Slop Test + finish-bar.md Pass 1 + Pass 9 | zero-critical (Major: absent or explicitly user-confirmed — no self-accept, silence ≠ accepted) | required — degrades to code-only | pre-ship pass |
 | `state-coverage` | new-build \| existing-surface | state-design.md lattice, knob-gated to CRAFT_LEVEL | checklist-all-green (all required states present) | none | `/agemon-design harden` |
-| `token-consistency` | new-build \| existing-surface | tokens.md 3-layer contract + SKILL.md Anti-Slop Minor items | zero-off-system | none (static scan) | `/agemon-design tokens` audit |
+| `token-consistency` | new-build \| existing-surface | tokens.md 3-layer contract + core-rules.md Anti-Slop Minor items | zero-off-system | none (static scan) | `/agemon-design tokens` audit |
 
 ---
 
 ## visual-anti-slop — eliminate AI-template signals until the gate passes
 
-**Lens:** SKILL.md Anti-Slop Test (Critical + Major items) + `finish-bar.md` Pass 1 (hierarchy) + Pass 9 (pixel honesty).
+**Lens:** core-rules.md Anti-Slop Test (Critical + Major items) + `finish-bar.md` Pass 1 (hierarchy) + Pass 9 (pixel honesty).
 **Gate:** all Critical Anti-Slop items absent AND all Major items absent or explicitly user-confirmed. A Major is "accepted" ONLY when the user explicitly confirms it (during pre-flight or mid-loop); absent explicit confirmation it stays OPEN and counts against the gate. No self-accept, no "not found on re-eval = accepted".
 **Renderer:** required — degrades to code-only (partial confidence) if unavailable. The gate is reported as "partial — visual rendering unverified" when renderer=none. MUST NOT claim full pass on visual criteria without a renderer.
 **Highest-impact ranking:** Critical Anti-Slop findings first; within Major, earlier-numbered finish-bar pass wins.
@@ -120,7 +120,7 @@ Every loop report MUST state:
 
 ## token-consistency — iterate until zero off-system values remain
 
-**Lens:** `tokens.md` 3-layer contract (per tokens.md 3-layer contract — see that file for canonical layer definitions) + SKILL.md Anti-Slop Minor items for hardcoded values.
+**Lens:** `tokens.md` 3-layer contract (per tokens.md 3-layer contract — see that file for canonical layer definitions) + core-rules.md Anti-Slop Minor items for hardcoded values.
 **Gate:** zero off-system values — any color, radius, or spacing value not drawn from the project's token system.
 **Renderer:** none — static code scan; always available.
 **Highest-impact ranking:** Critical token violations (raw hex colors) before Major (arbitrary radii, magic spacing); tiebreaker = order of appearance in the file.

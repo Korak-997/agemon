@@ -20,6 +20,7 @@ import {
   DEFAULT_SKILL_REF,
   designSkillNames,
   EVAL_ROOT,
+  finalResultText,
   ISOLATION_NOTE,
   installArm,
   newBatchId,
@@ -33,6 +34,7 @@ import {
   spawnClaude,
   sumUsage,
   transcriptsDirectory,
+  writtenFilePaths,
 } from "./claude.js";
 
 const BUILD_MAX_TURNS = 40;
@@ -48,6 +50,7 @@ export interface OutputCase {
   status: "ok" | "errored" | "fatal";
   errorReason?: string;
   contaminated: boolean;
+  builtWithoutQuestion: boolean;
   announcedSkillCount: number;
   costUsd?: number;
   numTurns?: number;
@@ -109,6 +112,7 @@ export async function runOutputBuild(options: OutputOptions) {
     exitCode: run.exitCode,
     status: assessment.status,
     errorReason: assessment.reason,
+    builtWithoutQuestion: builtWithoutQuestion(run.transcript),
     announcedSkillCount: announcedSkills(run.transcript).length,
     ...runUsage(run.transcript),
     contaminated:
@@ -117,6 +121,13 @@ export async function runOutputBuild(options: OutputOptions) {
         : announced.some((name) => name.includes(":")),
   };
   return { case: outputCase, model: reportedModel(run.transcript) };
+}
+
+export function builtWithoutQuestion(transcript: string): boolean {
+  const wroteProductFile = writtenFilePaths(transcript).some(
+    (path) => !path.includes("/.design/"),
+  );
+  return wroteProductFile && !finalResultText(transcript).trim().endsWith("?");
 }
 
 async function main(): Promise<void> {

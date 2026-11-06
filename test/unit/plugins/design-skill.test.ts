@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveVendoredSkillPath } from "../../../src/core/package-assets.js";
@@ -7,6 +7,15 @@ const designSkillDirectory = resolveVendoredSkillPath(
   "design",
   "agemon-design",
 );
+
+const STAGE_FILES = [
+  "references/stage-intake.md",
+  "references/stage-assets.md",
+  "references/stage-directions.md",
+  "references/stage-build.md",
+  "references/stage-verify.md",
+  "references/stage-critique.md",
+];
 
 function designFile(relativePath: string): string {
   return readFileSync(join(designSkillDirectory, relativePath), "utf8");
@@ -20,13 +29,93 @@ describe("agemon-design skill content", () => {
     },
   );
 
-  it("does not lock the minimal variant to Inter or Geist", () => {
-    const minimal = readFileSync(
-      join(designSkillDirectory, "..", "agemon-design-minimal", "SKILL.md"),
-      "utf8",
+  it("does not lock the minimal preset to Inter or Geist", () => {
+    expect(designFile("references/preset-minimal.md")).not.toMatch(
+      /Inter|Geist/u,
+    );
+  });
+
+  it("links every reference from SKILL.md or a stage file", () => {
+    const entryPoints = ["SKILL.md", ...STAGE_FILES].map(designFile).join("\n");
+    const references = readdirSync(join(designSkillDirectory, "references"));
+
+    const unreachable = references.filter(
+      (file) =>
+        !entryPoints.includes(`(references/${file}`) &&
+        !entryPoints.includes(`(${file}`),
     );
 
-    expect(minimal).not.toMatch(/Inter|Geist/u);
+    expect(unreachable).toEqual([]);
+  });
+
+  it("stays inside the first 5000 tokens with the hard rules up front", () => {
+    const skill = designFile("SKILL.md");
+
+    expect(Buffer.byteLength(skill)).toBeLessThanOrEqual(20_000);
+    const order = [
+      "## Untrusted content",
+      "## Hard rules",
+      "## Tracks",
+      "## Stages",
+      "## Actions",
+      "## Capability ladder",
+      "## Final report",
+    ].map((heading) => skill.indexOf(heading));
+    expect(order).not.toContain(-1);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it.each([
+    ["Small edit", "Read the contract"],
+    ["In-brand feature", "only free axes vary"],
+    ["New surface", "All six"],
+    ["Review only", "changes nothing"],
+  ])("routes the %s track", (track, stages) => {
+    const row = designFile("SKILL.md")
+      .split("\n")
+      .find((line) => line.startsWith(`| ${track} |`));
+
+    expect(row).toContain(stages);
+  });
+
+  it("builds several directions only on explicit request and skips non-visual work", () => {
+    const skill = designFile("SKILL.md");
+
+    expect(skill).toContain(
+      "Multiple full builds happen only on explicit request",
+    );
+    expect(skill).toContain("cost notice");
+    expect(skill).toContain("Skip this skill for non-visual changes");
+  });
+
+  it("never tells an action to wait for an answer in a headless run", () => {
+    const actions = designFile("references/actions.md");
+
+    expect(actions).not.toContain("say you are waiting");
+    expect(actions).not.toContain("Do not write until confirmed");
+    expect(actions).toContain(
+      "if nobody can answer, run a code-only pass and mark the report",
+    );
+    expect(actions).toContain(
+      "In a non-interactive run, write it and mark unconfirmed sections as assumptions",
+    );
+  });
+
+  it("names every Apache-adapted file in the licence record", () => {
+    const licenses = designFile("references/third-party-licenses.md");
+
+    expect(licenses).toContain("`tells-2026-11.md`");
+    expect(licenses).toContain("`stage-build.md`");
+  });
+
+  it("does not point references at sections that left SKILL.md", () => {
+    const movedSections =
+      /(Stack Detection|Discovery Phase|Anti-Slop|Craft Test|Review Format|Craft Read)[^\n]{0,40}SKILL\.md|SKILL\.md[^\n]{0,40}(Stack Detection|Discovery Phase|Anti-Slop|Craft Test|Review Format)/u;
+    const stale = readdirSync(join(designSkillDirectory, "references")).filter(
+      (file) => movedSections.test(designFile(`references/${file}`)),
+    );
+
+    expect(stale).toEqual([]);
   });
 
   it("names no preset as the default theme", () => {

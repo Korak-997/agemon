@@ -78,7 +78,7 @@ Drawn from the recipe's acceptance criteria. All items must be green before buil
 
 ## How the Spec Gets Used
 
-**Discovery phase** — read `.ui-craft/spec.md` after `brief.md`. If the surface already has a spec section, it is the composition ground truth; do not re-derive from scratch.
+**Intake** — read `.ui-craft/spec.md` after `brief.md`. If the surface already has a spec section, it is the composition ground truth; do not re-derive from scratch.
 
 **Build phase** — `/agemon-design build <surface>` builds against the acceptance bar in the surface's spec section. Every item in the acceptance bar must be green before the build reports done.
 

@@ -41,10 +41,12 @@ import {
   runUsage,
   sumUsage,
   transcriptsDirectory,
+  WORKING_TREE_REF,
   writesOutsideProject,
 } from "../../../scripts/design-eval/claude.js";
 import {
   briefNames,
+  builtWithoutQuestion,
   runOutputBuild,
 } from "../../../scripts/design-eval/output.js";
 
@@ -89,8 +91,8 @@ afterEach(() => {
 });
 
 describe("activation corpus", () => {
-  it("holds 12 cases that name no skill", () => {
-    expect(corpus).toHaveLength(12);
+  it("holds 13 cases that name no skill", () => {
+    expect(corpus).toHaveLength(13);
     for (const { prompt } of corpus) {
       expect(prompt.toLowerCase()).not.toMatch(/agemon|skill|web-design/u);
     }
@@ -104,11 +106,23 @@ describe("activation corpus", () => {
   });
 });
 
+describe("activation corpus tracks", () => {
+  it("has a trigger case for each track of the skill", () => {
+    const tracks = corpus
+      .filter((entry) => entry.expected === "trigger")
+      .map((entry) => entry.track);
+
+    expect(new Set(tracks)).toEqual(
+      new Set(["small-edit", "in-brand-feature", "new-surface", "review-only"]),
+    );
+  });
+});
+
 describe("splitCases", () => {
   it("is stable for a seed and splits 60/40", () => {
     const first = splitCases(corpus, 7);
     expect(splitCases(corpus, 7)).toEqual(first);
-    expect(first.train).toHaveLength(7);
+    expect(first.train).toHaveLength(8);
     expect(first.validation).toHaveLength(5);
   });
 
@@ -296,7 +310,64 @@ describe("assessRun", () => {
   });
 });
 
+describe("headless build outcome", () => {
+  function transcriptOf(writes: string[], finalText: string): string {
+    const write = writes.map((file_path) =>
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", name: "Write", input: { file_path } }],
+        },
+      }),
+    );
+    const result = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: finalText,
+    });
+    return [...write, result].join("\n");
+  }
+
+  it("counts a run that wrote files and did not end at a question", () => {
+    expect(
+      builtWithoutQuestion(transcriptOf(["/p/index.html"], "Built it.")),
+    ).toBe(true);
+  });
+
+  it("fails a run that wrote only design state", () => {
+    expect(
+      builtWithoutQuestion(transcriptOf(["/p/.design/brief.md"], "Done.")),
+    ).toBe(false);
+  });
+
+  it("fails a run that wrote nothing", () => {
+    expect(builtWithoutQuestion(transcriptOf([], "All set."))).toBe(false);
+  });
+
+  it("fails a run that ended at a question", () => {
+    expect(
+      builtWithoutQuestion(
+        transcriptOf(["/p/index.html"], "Built it. Which accent do you want?"),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("installArm", () => {
+  it("installs the working tree's skills when asked, without reading git", () => {
+    installArm(workDirectory, "B", WORKING_TREE_REF);
+
+    const installed = readdirSync(join(workDirectory, ".claude", "skills"));
+    expect(installed).toContain(DESIGN_SKILL);
+    expect(installed).not.toContain("agemon-design-minimal");
+    expect(
+      readFileSync(
+        join(workDirectory, ".claude/skills", DESIGN_SKILL, "SKILL.md"),
+        "utf8",
+      ),
+    ).toContain("## Tracks");
+  });
+
   it("arm B installs the design skills plus a realistic companion subset", () => {
     installArm(workDirectory, "B");
     const installed = readdirSync(join(workDirectory, ".claude", "skills"));
@@ -379,7 +450,7 @@ describe("planBatch", () => {
   });
 
   it("walks every case across offsets", () => {
-    const seen = [0, 3, 6, 9].flatMap((offset) =>
+    const seen = [0, 3, 6, 9, 12].flatMap((offset) =>
       planBatch(corpus, { offset, limit: 3, runsPerCase: 2 }),
     );
     expect(seen).toEqual(corpus);

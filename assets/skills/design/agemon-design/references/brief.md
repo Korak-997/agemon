@@ -107,7 +107,7 @@ This section is not documentation, it is the mechanism. Asking a model for varie
 
 ## How the Brief Gets Used
 
-Read `.ui-craft/brief.md` first when working on any UI. It is Discovery Phase Step 1.
+Read `.ui-craft/brief.md` first when working on any UI. It is the first step of [stage-intake.md](stage-intake.md).
 
 When making a design decision, cite the principle it applies. Write it as: *"Density reduced per principle 2: 'Show the data, not the design.'"* If a decision isn't covered by any principle, flag it — the brief is incomplete, not the decision wrong. Surface the gap so the brief can be updated.
 

@@ -857,22 +857,17 @@ describe("bundled skill updates in plan and apply", () => {
 
   it("each update is re-checked inside the lock right before its add", async () => {
     const ctx = await createTestContext();
-    const designSkills = [
-      "agemon-design",
-      "agemon-design-minimal",
-      "agemon-design-editorial",
-      "agemon-design-dashboard",
-    ];
-    for (const name of designSkills) {
+    const codeQualitySkills = ["agemon-clean-code", "agemon-house-rules"];
+    for (const name of codeQualitySkills) {
       await mkdir(join(ctx.cwd, ".claude/skills"), { recursive: true });
       await cp(
-        resolveVendoredSkillPath("design", name),
+        resolveVendoredSkillPath("code-quality", name),
         join(ctx.cwd, ".claude/skills", name),
         { recursive: true },
       );
       await recordInstalled(ctx, name);
     }
-    for (const name of designSkills.slice(0, 2)) {
+    for (const name of codeQualitySkills) {
       const copy = await writeCopy(
         ctx,
         `.claude/skills/${name}`,
@@ -881,18 +876,18 @@ describe("bundled skill updates in plan and apply", () => {
       shippedHistory.history[name] = [await fingerprintInstalledSkill(copy)];
     }
     const operation = (await planSkills(ctx)).find(
-      (candidate) => candidate.resourceId === "skill-group:design",
+      (candidate) => candidate.resourceId === "skill-group:code-quality",
     );
     expect(operation?.updates?.map((update) => update.name)).toEqual(
-      designSkills.slice(0, 2),
+      codeQualitySkills,
     );
     const racingCtx: Context = {
       ...ctx,
       run: async (command, args, options) => {
         const result = await runSubprocess(command, args, options);
-        if (args.includes("add") && args.includes("agemon-design")) {
+        if (args.includes("add") && args.includes("agemon-clean-code")) {
           await writeFile(
-            join(ctx.cwd, ".claude/skills/agemon-design-minimal/SKILL.md"),
+            join(ctx.cwd, ".claude/skills/agemon-house-rules/SKILL.md"),
             "edited meanwhile\n",
           );
         }
@@ -906,11 +901,11 @@ describe("bundled skill updates in plan and apply", () => {
         operation === undefined ? [] : [operation],
       ),
     ).rejects.toThrow(
-      "The skill group 'design' changed since it was planned. Re-run 'agemon plan' and review it again.",
+      "The skill group 'code-quality' changed since it was planned. Re-run 'agemon plan' and review it again.",
     );
     expect(
       await readFile(
-        join(ctx.cwd, ".claude/skills/agemon-design-minimal/SKILL.md"),
+        join(ctx.cwd, ".claude/skills/agemon-house-rules/SKILL.md"),
         "utf8",
       ),
     ).toBe("edited meanwhile\n");
@@ -1145,5 +1140,158 @@ describe("bundled skill updates in plan and apply", () => {
     await skillsPlugin.apply?.(ctx, operation === undefined ? [] : [operation]);
 
     expect((await skillsPlugin.verify(ctx)).attention).toBeUndefined();
+  });
+});
+
+describe("retired bundled skills", () => {
+  const RETIRED_SKILL = "agemon-design-minimal";
+  const RETIRED_COPY = `.claude/skills/${RETIRED_SKILL}`;
+  const RETIRED_RESOURCE = `retired-skill:${RETIRED_SKILL}`;
+  const SHIPPED_MANIFEST = `---\nname: ${RETIRED_SKILL}\n---\n\nshipped\n`;
+
+  async function installRetiredCopy(ctx: Context): Promise<void> {
+    await recordInstalled(ctx, RETIRED_SKILL);
+    const copy = await writeCopy(ctx, RETIRED_COPY, SHIPPED_MANIFEST);
+    shippedHistory.history[RETIRED_SKILL] = [
+      await fingerprintInstalledSkill(copy),
+    ];
+  }
+
+  async function retiredOperation(ctx: Context) {
+    return (await planSkills(ctx)).find(
+      (candidate) => candidate.resourceId === RETIRED_RESOURCE,
+    );
+  }
+
+  async function retiredRow(ctx: Context) {
+    const rows = (await skillsPlugin.describeState?.(ctx)) ?? [];
+    return rows.find((row) => row.resourceId === RETIRED_RESOURCE);
+  }
+
+  it("offers an unmodified copy for removal behind consent", async () => {
+    const ctx = await createTestContext();
+    await installRetiredCopy(ctx);
+
+    const operation = await retiredOperation(ctx);
+
+    expect(operation).toMatchObject({
+      action: "remove-skill",
+      requiresConsent: true,
+    });
+    expect(operation?.preview.text).toContain("no longer ships");
+  });
+
+  it("removes the approved copy and forgets it, leaving other skills alone", async () => {
+    const ctx = await createTestContext();
+    await installRetiredCopy(ctx);
+    const otherCopy = await writeCopy(
+      ctx,
+      ".claude/skills/not-ours",
+      "---\nname: not-ours\n---\n",
+    );
+    await writeFile(
+      join(ctx.cwd, "skills-lock.json"),
+      JSON.stringify({
+        version: 1,
+        skills: { [RETIRED_SKILL]: {}, "not-ours": {} },
+      }),
+    );
+    const operation = await retiredOperation(ctx);
+
+    await skillsPlugin.apply?.(ctx, operation === undefined ? [] : [operation]);
+
+    expect(existsSync(join(ctx.cwd, RETIRED_COPY))).toBe(false);
+    expect(existsSync(otherCopy)).toBe(true);
+    expect(await retiredOperation(ctx)).toBeUndefined();
+    expect(await retiredRow(ctx)).toBeUndefined();
+    const rows = (await skillsPlugin.describeState?.(ctx)) ?? [];
+    expect(
+      rows.find((row) => row.resourceId === "skill-groups:orphaned"),
+    ).toBeUndefined();
+    expect(
+      JSON.parse(await readFile(join(ctx.cwd, "skills-lock.json"), "utf8")),
+    ).toEqual({ version: 1, skills: { "not-ours": {} } });
+  });
+
+  it("never touches an edited copy and reports it in status", async () => {
+    const ctx = await createTestContext();
+    await installRetiredCopy(ctx);
+    await writeFile(join(ctx.cwd, RETIRED_COPY, "SKILL.md"), "my edits\n");
+
+    expect(await retiredOperation(ctx)).toBeUndefined();
+    expect(await retiredRow(ctx)).toMatchObject({
+      label: RETIRED_SKILL,
+      state: "present-modified",
+      detail: expect.stringContaining("keeps your edited copy"),
+    });
+    expect(
+      await readFile(join(ctx.cwd, RETIRED_COPY, "SKILL.md"), "utf8"),
+    ).toBe("my edits\n");
+  });
+
+  it("keeps a copy edited between plan and apply", async () => {
+    const ctx = await createTestContext();
+    await installRetiredCopy(ctx);
+    const operation = await retiredOperation(ctx);
+    await writeFile(join(ctx.cwd, RETIRED_COPY, "SKILL.md"), "edited later\n");
+
+    await skillsPlugin.apply?.(ctx, operation === undefined ? [] : [operation]);
+
+    expect(
+      await readFile(join(ctx.cwd, RETIRED_COPY, "SKILL.md"), "utf8"),
+    ).toBe("edited later\n");
+    expect(await retiredRow(ctx)).toMatchObject({ state: "present-modified" });
+  });
+
+  it("reports an unmodified copy and says how to remove it", async () => {
+    const ctx = await createTestContext();
+    await installRetiredCopy(ctx);
+
+    expect(await retiredRow(ctx)).toMatchObject({
+      state: "present-managed",
+      detail: expect.stringContaining("run agemon to remove it"),
+    });
+  });
+
+  it("ignores a copy agemon did not install", async () => {
+    const ctx = await createTestContext();
+    await writeCopy(ctx, RETIRED_COPY, SHIPPED_MANIFEST);
+
+    expect(await retiredOperation(ctx)).toBeUndefined();
+    expect(await retiredRow(ctx)).toBeUndefined();
+  });
+
+  it("refuses a plan that names a skill that is not retired", async () => {
+    const ctx = await createTestContext();
+    await installRetiredCopy(ctx);
+    const operation = await retiredOperation(ctx);
+    if (operation === undefined) throw new Error("expected an operation");
+
+    await expect(
+      skillsPlugin.apply?.(ctx, [
+        { ...operation, resourceId: "retired-skill:agemon-commit" },
+      ]),
+    ).rejects.toThrow("agemon-commit");
+  });
+
+  it("still lets nuke remove an unmodified retired copy", async () => {
+    const ctx = await createTestContext();
+    await installRetiredCopy(ctx);
+
+    await skillsPlugin.uninstall?.(ctx);
+
+    expect(existsSync(join(ctx.cwd, RETIRED_COPY))).toBe(false);
+  });
+
+  it("names a removed skill when a later failure rolls the rest back", async () => {
+    const ctx = await createTestContext();
+    await installRetiredCopy(ctx);
+    const operation = await retiredOperation(ctx);
+    if (operation === undefined) throw new Error("expected an operation");
+    await skillsPlugin.apply?.(ctx, [operation]);
+
+    expect(
+      await skillsPlugin.describeKeptAfterRollback?.(ctx, [operation]),
+    ).toEqual([`removed skill ${RETIRED_SKILL} (agemon no longer ships it)`]);
   });
 });

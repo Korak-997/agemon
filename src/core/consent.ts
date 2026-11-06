@@ -19,6 +19,7 @@ export type ConsentGateId =
   | "trust-repository-git-config"
   | "install-custom-skills"
   | "install-tooling"
+  | "remove-retired-skills"
   | "install-subagents"
   | "register-service"
   | "write-config"
@@ -65,6 +66,7 @@ type OperationGateId = Exclude<ConsentGateId, "workspace-isolation">;
 
 export const CUSTOM_SKILL_GROUP_RESOURCE_PREFIX = "custom-skill-group:";
 export const AGENT_FILE_RESOURCE_PREFIX = "agent-file:";
+export const RETIRED_SKILL_RESOURCE_PREFIX = "retired-skill:";
 
 const TRUST_GATE_EXPLANATION =
   "code-review-graph and its daemon will run git here with these repository settings, which agemon does not trust by default:";
@@ -77,6 +79,7 @@ const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
   "trust-repository-git-config",
   "install-custom-skills",
   "install-tooling",
+  "remove-retired-skills",
   "install-subagents",
   "register-service",
   "write-config",
@@ -232,6 +235,9 @@ function gateForOperation(
   if (operation.action === "install-package") {
     return "install-tooling";
   }
+  if (operation.action === "remove-skill") {
+    return "remove-retired-skills";
+  }
   if (operation.action === "register-service") {
     return "register-service";
   }
@@ -339,6 +345,8 @@ function operationGateSummary(
       return `Install skills from ${operations.length} skill group(s) defined in this repository's agemon.toml (${targets}). They come from the repository's own sources, not from agemon — review every source shown. Proceed?`;
     case "install-tooling":
       return installToolingSummary(operations);
+    case "remove-retired-skills":
+      return `Remove ${operations.length} skill(s) agemon no longer ships (${operations.map(({ resourceId }) => resourceId.slice(RETIRED_SKILL_RESOURCE_PREFIX.length)).join(", ")}). Each matches a version agemon installed. Proceed?`;
     case "install-subagents":
       return `Install ${describeSubagents(operations)}. Proceed?`;
     case "register-service":

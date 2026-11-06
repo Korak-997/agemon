@@ -9,7 +9,8 @@ Measures whether `agemon-design` loads when it should (activation) and what it p
 - **B**: the skill as it exists at a git ref, read with `git ls-tree` and `git show` (read-only:
   the index and working tree are never touched). `--skill-ref <git-ref>` picks the ref; the
   default is `c056fdc41d9eef734b85239bb21b5560e081cb3c`, which is what Phase 5 tests. Arm B
-  installs the `design` group (four skills) from that ref.
+  installs the `design` group from that ref. `--skill-ref WORKTREE` copies the skills from the
+  working tree instead, for testing uncommitted changes.
 
 Both arms install a realistic subset, not the whole catalogue (58 descriptions total about
 16,561 characters, which distorts the listing budget): the `architecture`, `code-quality`,
@@ -89,8 +90,8 @@ unless `--allow-contaminated` is passed; then every result in the batch is label
 
 ## Corpus
 
-`activation-cases.json`: 12 cases, none naming a skill. `splitCases(cases, seed)` gives a
-stable 7 train / 5 validation split per seed. Rates from this few runs are rough: report
+`activation-cases.json`: 13 cases, none naming a skill, with a trigger case for each track
+(`track`). `splitCases(cases, seed)` gives a stable 8 train / 5 validation split per seed. Rates from this few runs are rough: report
 counts (`correct/total`) next to percentages. `expected` for `small-edit` and the
 `guidelines-boundary` cases is an owner judgement call; review before trusting those rates.
 
@@ -132,3 +133,28 @@ can be inspected; its path is printed and recorded in the summary. Delete it wit
   competing skill. Both arms now install Essentials. Phase 1's test measures this.
 - **Arm B, read two ways.** Clear requests: 6/8 activated `agemon-design` strictly, and 8/8 when
   an `agemon-design-*` variant counts. Small edits: 4/4. Near-misses: 8/8 correct no-trigger.
+
+### Phase 1 trigger test (2026-11-06)
+
+Rough counts: claude-opus-5-5 on CLI 2.1.318, one run per case per arm, `--skill-ref WORKTREE`.
+Exit thresholds were at least 80% on clear requests and at most 10% false triggers on near-misses.
+
+| Kind | Without pointer | With pointer |
+|---|---|---|
+| Clear (trigger) | 5/5 | 5/5 |
+| Small edit (trigger) | 2/2 | 2/2 |
+| Near-miss (no trigger) | 4/4 | 4/4 |
+| Guidelines boundary | 2/2 | 2/2 |
+
+- The description needed no tuning rounds: the train split scored 8/8 on the first run, and
+  validation scored 5/5. Five correct out of five cannot separate 80% from 100%, and a corpus this
+  small hits a ceiling, so these show the thresholds were not missed, not how far they were cleared.
+- **Headless build:** 1 of 1 built without stopping, on `field-notes-greenfield` with no question
+  answered ($1.44). It wrote the page and every stage artifact, and reported all rendered checks as
+  `not-verified`, since the run had no browser. `builtWithoutQuestion` is coarse: it only checks that
+  files other than `.design/` were written and that the final message does not end in `?`.
+- **The project pointer was removed.** It gave no measured gain. All 13 pointer runs spent a turn
+  reading `AGENTS.md`, because `CLAUDE.md` only points there. A fresh session with no tools could not
+  repeat a marker from that file; with `Read`, it followed the pointer and could. Costs were
+  $3.20 with the pointer and $2.87 without, in API-equivalent figures. Larger catalogues and other
+  agents remain untested.

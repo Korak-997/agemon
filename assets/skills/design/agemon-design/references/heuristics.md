@@ -145,7 +145,7 @@ Dialogues should not contain information that is irrelevant or rarely needed.
 **What to look for:**
 - [ ] Every section answers one question; no filler
 - [ ] Visual weight proportional to importance
-- [ ] One accent, 3-5 placements per viewport (see SKILL.md anti-slop)
+- [ ] One accent, 3-5 placements per viewport (see core-rules.md, Anti-Slop Test)
 - [ ] White space is used, not avoided
 - [ ] No decorative graphics competing with content
 

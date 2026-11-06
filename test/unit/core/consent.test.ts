@@ -294,6 +294,35 @@ describe("buildConsentGates", () => {
     );
   });
 
+  it("puts a retired skill removal in its own gate, apart from installs and updates", () => {
+    const gates = buildConsentGates({
+      isolationStatus: "ignored",
+      plan: planWith([
+        operation({
+          action: "remove-skill",
+          targetPath: "",
+          resourceId: "retired-skill:agemon-design-minimal",
+        }),
+        operation({
+          id: "skills:skill-group:design:install-package",
+          action: "install-package",
+          targetPath: "",
+          resourceId: "skill-group:design",
+          riskClass: "executes",
+        }),
+      ]),
+    });
+
+    expect(gates.map((gate) => gate.id)).toEqual([
+      "install-tooling",
+      "remove-retired-skills",
+    ]);
+    expect(gates[0]?.summary).not.toContain("agemon-design-minimal");
+    expect(gates[1]?.summary).toBe(
+      "Remove 1 skill(s) agemon no longer ships (agemon-design-minimal). Each matches a version agemon installed. Proceed?",
+    );
+  });
+
   it("install-tooling summary mentions skill group updates", () => {
     const gates = buildConsentGates({
       isolationStatus: "ignored",

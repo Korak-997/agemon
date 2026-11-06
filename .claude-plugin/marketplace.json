@@ -14,7 +14,7 @@
     },
     {
       "name": "agemon-design",
-      "description": "agemon-design: design engineering with anti-slop rules, discovery, and outcome recipes for dashboards, landings, and auth screens.",
+      "description": "agemon-design: a staged UI workflow that reads your real brand, builds from the subject, and reports what it could not verify. Auto-triggering is not guaranteed, its gates are voluntary, and a passing run does not mean a good design.",
       "source": "./assets/skills/design",
       "strict": false,
       "skills": ["./"]

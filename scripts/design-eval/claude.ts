@@ -54,6 +54,7 @@ export interface RunUsage {
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "../..");
 export const EVAL_ROOT = join(REPOSITORY_ROOT, "evals", "design");
 export const DEFAULT_SKILL_REF = "c056fdc41d9eef734b85239bb21b5560e081cb3c";
+export const WORKING_TREE_REF = "WORKTREE";
 export const PROJECT_DESIGN_SKILL = "agemon-design";
 export const DESIGN_SKILL_PATTERN = /(^|:)agemon-design(-\w+)?$/u;
 export const ACTIVATION_TOOLS = "Skill,Read,Glob,Grep";
@@ -158,7 +159,13 @@ export function installArm(
   const skillsDirectory = join(projectDirectory, ".claude", "skills");
   mkdirSync(skillsDirectory, { recursive: true });
   for (const group of groups) {
-    installSkillGroupFromRef(skillsDirectory, group, skillRef);
+    if (skillRef === WORKING_TREE_REF) {
+      cpSync(join(REPOSITORY_ROOT, SKILLS_ROOT, group), skillsDirectory, {
+        recursive: true,
+      });
+    } else {
+      installSkillGroupFromRef(skillsDirectory, group, skillRef);
+    }
   }
 }
 
@@ -372,6 +379,27 @@ function projectDirectoryForms(projectDirectory: string): string[] {
   } catch {
     return [lexicalDirectory];
   }
+}
+
+export function writtenFilePaths(transcript: string): string[] {
+  return transcriptEvents(transcript).flatMap((event) => {
+    const content = (event.message as { content?: unknown } | undefined)
+      ?.content;
+    if (event.type !== "assistant" || !Array.isArray(content)) return [];
+    return content
+      .filter(
+        (block) =>
+          block.type === "tool_use" && FILE_WRITING_TOOLS.has(block.name),
+      )
+      .map((block) => String(block.input?.file_path));
+  });
+}
+
+export function finalResultText(transcript: string): string {
+  const result = transcriptEvents(transcript)
+    .filter((event) => event.type === "result")
+    .at(-1);
+  return String(result?.result ?? "");
 }
 
 export function writesOutsideProject(

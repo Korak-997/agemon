@@ -1,10 +1,6 @@
----
-name: agemon-design-minimal
-description: "Minimal / clean / Linear / Notion / Vercel / whitespace-heavy UIs. Locked knobs: CRAFT=8, MOTION=3, DENSITY=2. Monochrome + one accent, a neutral sans chosen for the brief, hairline borders over shadows. Trigger on: minimal, clean, Linear-like, Notion-like, Vercel-like, whitespace-heavy."
-argument-hint: "[action: build|review|polish] [target]"
----
+# Preset: Minimal
 
-# UI Craft — Minimal
+Use this preset only when the user names this look. It is a starting vocabulary for that request, never a default, and the project's brand still wins.
 
 Pre-committed minimal style: editorial clean, Linear / Notion / Vercel. Whitespace is the composition. One accent, hairline borders, almost no motion.
 
@@ -14,7 +10,7 @@ Pre-committed minimal style: editorial clean, Linear / Notion / Vercel. Whitespa
 - **MOTION_INTENSITY = 3** — hover + modal enter/exit only. No scroll reveals, no page transitions, no stagger.
 - **VISUAL_DENSITY = 2** — whitespace-heavy, 1-2 items per row, generous gutters.
 
-Do not re-ask these in Discovery. Skip straight to accent + font confirmation if ambiguous.
+Do not re-ask these during intake. Skip straight to accent + font confirmation if ambiguous.
 
 ## Style anchors
 
@@ -29,7 +25,7 @@ Do not re-ask these in Discovery. Skip straight to accent + font confirmation if
 
 ## Base rules (inherited)
 
-All rules in `../agemon-design/SKILL.md` apply. This file overrides knob defaults and adds style-specific guidance below. The anti-slop and craft tests still apply in full.
+The hard rules in `SKILL.md` and [core-rules.md](core-rules.md) apply. This file overrides knob defaults and adds style-specific guidance below. The anti-slop and craft tests still apply in full.
 
 ## Style-specific overrides
 
@@ -75,7 +71,7 @@ All rules in `../agemon-design/SKILL.md` apply. This file overrides knob default
 
 ## Reference files to read first
 
-Keep the reading list tight. Load only these from `../agemon-design/references/`:
+Keep the reading list tight. Load only these from this folder:
 
 - `layout.md` — spacing, hierarchy, composition
 - `typography.md` — scale, readability, weight
@@ -92,6 +88,6 @@ Skip `dashboard.md`, `stack.md`, `sound.md` unless explicitly relevant.
 - Scroll-triggered reveals, stagger, page transitions — even "subtle" ones.
 - Uniform 3-column icon-heading-text feature grids.
 - Colored shadows or glows as affordances.
-- Dense layouts. If density feels right, this is the wrong variant — switch to `agemon-design-dashboard`.
+- Dense layouts. If density feels right, this is the wrong preset — switch to [preset-dashboard.md](preset-dashboard.md).
 - Pill backgrounds on nav links or buttons by default; prefer text + underline.
 - Section padding under 96px on desktop.

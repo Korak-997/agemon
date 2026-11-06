@@ -50,6 +50,7 @@ export interface ActivationCase {
   prompt: string;
   expected: "trigger" | "no-trigger";
   kind: ActivationKind;
+  track?: "small-edit" | "in-brand-feature" | "new-surface" | "review-only";
 }
 
 export interface ActivationRun {

@@ -66,7 +66,7 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 | Group | Skills | What it covers |
 |---|---|---|
 | `essentials` (always on) | `web-design-guidelines`, `writing-guidelines` | Vercel Labs' web design and writing review guidelines, vendored as copies taken at one pinned upstream commit each. They keep their upstream names — see [Vendored Skills](#vendored-skills--attribution). |
-| `design` | `agemon-design` + 3 recipe variants (`agemon-design-minimal`, `agemon-design-editorial`, `agemon-design-dashboard`) | Design engineering: anti-slop rules, discovery, and outcome recipes (dashboard/landing/auth), covering both visual design and UI/UX. |
+| `design` | `agemon-design` | A staged UI workflow: it picks a track, reads your real brand and tokens, builds from the product's subject, checks objective facts, and reports what it could not verify. Dashboard, editorial and minimal looks are presets it uses when you name them. Limits: auto-triggering cannot be guaranteed, its gates are voluntary without hooks, and a passing run does not mean a good design. |
 | `security` | `agemon-security`, `agemon-security-audit` | Exploit-driven security review — no finding without a working proof-of-concept — plus a multi-agent, multi-phase codebase audit with independently verified findings. |
 | `code-quality` | `agemon-clean-code`, `agemon-house-rules` | Simplicity, DRY architecture, self-documenting naming, surgical scope control. |
 | `architecture` | `agemon-architecture` | Clean Architecture review: dependency rule, layering, boundary crossing, SOLID. |
@@ -141,6 +141,10 @@ the `geo-audit` that launches the installed subagents.
 
 Skills recorded for a custom group that `agemon.toml` no longer defines are listed in one
 "skills of removed groups" row.
+
+`agemon-design-minimal`, `agemon-design-editorial` and `agemon-design-dashboard` are retired; their
+looks are now presets of `agemon-design`, used when you name one. Running `agemon` offers to remove
+an unmodified copy behind consent. An edited copy is never touched, and `agemon status` reports it.
 
 #### Project-defined skill groups
 
@@ -935,7 +939,7 @@ The `essentials`, `design`, `security`, `code-quality`, `architecture`, `self-re
 `workflow`, `output-style`, `founder`, `teamlead` and `geo-seo` skill groups (see [Skill Groups](#skill-groups)) are vendored under
 `assets/skills/<group>/<skill>/`.
 Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
-and a copy of its upstream `LICENSE`. Sources, MIT-licensed except where noted. One file is Apache-2.0: `agemon-design`'s `references/tells-2026-11.md` is adapted from Anthropic's `frontend-design` skill (https://github.com/anthropics/skills) under Apache-2.0, with its licence text in `references/third-party-licenses.md`:
+and a copy of its upstream `LICENSE`. Sources, MIT-licensed except where noted. Some `agemon-design` text is Apache-2.0: `references/tells-2026-11.md` and the plan-and-review steps of `references/stage-build.md` are adapted from Anthropic's `frontend-design` skill (https://github.com/anthropics/skills), with the licence text in `references/third-party-licenses.md`:
 
 Every skill vendored from a third-party project is renamed to an `agemon-*` identity (frontmatter
 `name` and directory) — it should never be obvious from installing it that the content originated
@@ -948,7 +952,7 @@ that already have those skills recognise them and can update them.
 
 | Renamed to | Originally | Source |
 |---|---|---|
-| `agemon-design`, `agemon-design-minimal`, `agemon-design-editorial`, `agemon-design-dashboard` | `ui-craft` + 3 recipe variants | [educlopez/ui-craft](https://github.com/educlopez/ui-craft) |
+| `agemon-design` | `ui-craft` + 3 recipe variants, now presets (open fork; see its `NOTICE.md`) | [educlopez/ui-craft](https://github.com/educlopez/ui-craft) |
 | `agemon-security` | `security-review` (also avoids colliding with Claude Code's own built-in skill of the same name) | [Dilaz/security-review-skill](https://github.com/Dilaz/security-review-skill) |
 | `agemon-security-audit` | `security-audit` | [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill) |
 | `agemon-brainstorming`, `agemon-writing-plans`, `agemon-executing-plans`, `agemon-subagent-driven-development`, `agemon-test-driven-development`, `agemon-using-git-worktrees`, `agemon-dispatching-parallel-agents`, `agemon-finishing-a-development-branch` | the same names without `agemon-` | [obra/superpowers](https://github.com/obra/superpowers) |
@@ -964,7 +968,7 @@ that already have those skills recognise them and can update them.
 `agemon-design`'s reference files still say "ui-craft" in two places: the `.ui-craft/` directory
 that holds a project's design brief (renamed in a later phase), and a few "clashes with ui-craft
 rules" headings in `references/stack.md`. Commands, tools and agents that agemon does not ship are
-gone, and `npm run lint-skills` fails if one comes back in `agemon-design` (the `-minimal`, `-editorial` and `-dashboard` variants are not linted for this) or a link in the skill points at a missing
+gone, and `npm run lint-skills` fails if one comes back in `agemon-design` or a link in the skill points at a missing
 file; the skill's own identity (what gets installed, listed, and invoked) is fully renamed.
 
 `geo-seo` is vendored from [zubair-trabzada/geo-seo-claude](https://github.com/zubair-trabzada/geo-seo-claude)

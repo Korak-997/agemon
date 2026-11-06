@@ -2,32 +2,44 @@
   {
     "prompt": "Build a pricing page for my SaaS with three tiers and a monthly/yearly toggle.",
     "expected": "trigger",
-    "kind": "clear"
+    "kind": "clear",
+    "track": "new-surface"
   },
   {
     "prompt": "Design a dashboard for our support team showing ticket volume, response times and open escalations.",
     "expected": "trigger",
-    "kind": "clear"
+    "kind": "clear",
+    "track": "new-surface"
   },
   {
     "prompt": "Create a login and sign-up screen for a React app. Make it feel polished, not generic.",
     "expected": "trigger",
-    "kind": "clear"
+    "kind": "clear",
+    "track": "new-surface"
   },
   {
     "prompt": "Make a landing page for a small ceramics studio. Hero, three product highlights and a newsletter form.",
     "expected": "trigger",
-    "kind": "clear"
+    "kind": "clear",
+    "track": "new-surface"
+  },
+  {
+    "prompt": "Add a billing history page to our app, matching the design system we already use.",
+    "expected": "trigger",
+    "kind": "clear",
+    "track": "in-brand-feature"
   },
   {
     "prompt": "In the settings page, make the Save button full width on mobile.",
     "expected": "trigger",
-    "kind": "small-edit"
+    "kind": "small-edit",
+    "track": "small-edit"
   },
   {
     "prompt": "The card grid on the homepage has uneven gaps. Tighten the spacing and align the headings.",
     "expected": "trigger",
-    "kind": "small-edit"
+    "kind": "small-edit",
+    "track": "small-edit"
   },
   {
     "prompt": "Fix this SQL query, it returns duplicate orders when a customer has two addresses.",
@@ -52,7 +64,8 @@
   {
     "prompt": "Review my UI and tell me what looks generic or off about it.",
     "expected": "trigger",
-    "kind": "guidelines-boundary"
+    "kind": "guidelines-boundary",
+    "track": "review-only"
   },
   {
     "prompt": "Check this component against accessibility and web interface best practices and list every violation.",

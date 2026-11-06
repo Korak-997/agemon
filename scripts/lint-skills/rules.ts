@@ -73,6 +73,7 @@ const MISSING_GUARD_PROBLEM = `uses a web tool but has no "${UNTRUSTED_CONTENT_H
 const UNREAD_GUARD_PROBLEM = `reads untrusted content but has no "${UNTRUSTED_CONTENT_HEADING}" section with the sentence "${UNTRUSTED_CONTENT_SENTENCE}"`;
 
 const DESIGN_SKILL_PATH = "design/agemon-design";
+export const DESIGN_SKILL_MAX_BYTES = 20_000;
 const UPSTREAM_ONLY_DESIGN_COMMANDS = [
   "adapt",
   "animate",
@@ -433,6 +434,18 @@ export function lintDesignSkillReferences(
   }
 }
 
+function lintDesignSkillSize(
+  manifestPath: string,
+  report: (path: string, problem: string) => void,
+): void {
+  if (lstatSync(manifestPath).size > DESIGN_SKILL_MAX_BYTES) {
+    report(
+      manifestPath,
+      `is over ${DESIGN_SKILL_MAX_BYTES} bytes; compaction keeps only the first 5000 tokens, so move detail to references`,
+    );
+  }
+}
+
 export function lintSkillAssets(skillsRoot: string): string[] {
   const problems: string[] = [];
   const skillsRelative = (path: string) =>
@@ -489,6 +502,7 @@ export function lintSkillAssets(skillsRoot: string): string[] {
     );
     if (skillPath === DESIGN_SKILL_PATH) {
       lintDesignSkillReferences(skillDirectory, report);
+      lintDesignSkillSize(pathOf(SKILL_MANIFEST), report);
     }
   }
   return problems;
