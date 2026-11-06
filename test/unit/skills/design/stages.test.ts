@@ -163,6 +163,74 @@ describe("agemon-design assets stage", () => {
   });
 });
 
+describe("agemon-design directions stage", () => {
+  const directions = stage("directions");
+
+  it("derives exactly 3 specs on coarse axes that locks remove", () => {
+    for (const phrase of [
+      "exactly 3 specs",
+      "`humanist-serif`",
+      "`locks`",
+      "K=3 is a convention",
+    ]) {
+      expect(directions).toContain(phrase);
+    }
+  });
+
+  it("runs the Mirror test and the honesty rule on every spec", () => {
+    for (const phrase of [
+      "**Mirror test:**",
+      "neighbouring prompt",
+      "**Honesty rule:**",
+      "metric, testimonial, logo wall or case-study count",
+    ]) {
+      expect(directions).toContain(phrase);
+    }
+  });
+
+  it("lets a person or the selector choose", () => {
+    for (const phrase of [
+      "scripts/deal.mjs",
+      "`--pick <id>`",
+      "`--check`",
+      "repo name",
+      "brief slug",
+      "re-propose once",
+      "`allCollide`",
+    ]) {
+      expect(directions).toContain(phrase);
+    }
+  });
+
+  it("logs and reports a pick made without Node", () => {
+    expect(directions).toContain('`pickedBy: "fallback"`');
+    expect(directions).toContain('"Selection not dealt"');
+    expect(directions).toContain("`printf '%s'");
+    expect(directions).toContain("0 means the first spec");
+  });
+
+  it("resumes from the logged pick instead of dealing again", () => {
+    expect(directions).toContain("`logged`");
+    expect(directions).toContain("do not deal again");
+    expect(stage("build")).toContain("`logged`");
+  });
+
+  it("keeps repo text out of the shell command", () => {
+    expect(directions).toContain("--seed=");
+    expect(directions).toContain("lowercase letters, digits and hyphens");
+  });
+
+  it("gives a failed log write a reported way forward", () => {
+    expect(directions).toContain("names the log");
+  });
+
+  it("names all three pickers in the final report", () => {
+    expect(
+      readFileSync(join(designSkillDirectory, "SKILL.md"), "utf8"),
+    ).toContain("who picked it (user, deal or fallback)");
+  });
+});
+
 describe("agemon-design contract and working files", () => {
   const references = join(designSkillDirectory, "references");
 
@@ -229,6 +297,17 @@ describe("agemon-design derived material", () => {
     expect(derived).toContain("`scripts/inventory.mjs`");
     expect(derived).toContain("shadcn-ui/ui");
     expect(derived).toContain("vercel/next.js");
+  });
+
+  it("records what the direction stage took from Hallmark", () => {
+    expect(derived).toContain("`references/stage-directions.md`");
+    expect(derived).toContain("Nutlope/hallmark");
+    expect(
+      readFileSync(
+        join(designSkillDirectory, "references", "third-party-licenses.md"),
+        "utf8",
+      ),
+    ).toContain("Copyright (c) 2026 Hallmark contributors");
   });
 
   it("carries the licence text of every licence the section names", () => {

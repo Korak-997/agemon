@@ -27,6 +27,7 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
       "3581e052b7effcfe82b98c788dbed81023a6d59b5806e69d74270049458a1d5b",
       "5e565bfdd50ec5bf4dc1480fea3f5f6cea0b9ff0f3e98ccad5fcdaefdc09ab99",
       "a7e453034da8bccf513c72f59aedca951642f4ff7046ad4c9a4a0c25fbcb5009",
+      "b8bc96d4c9e6d11f298a218096012616a486f4dc385d12136f53fad889fac5eb",
       "ca2db4034532ef31ba2a8680bfed29a3ef3ab399a0b52d44db9ddc1c7a31b3d0",
       "e1d0211a2fd87dcbbaf5854e0b8209472fa1c52cf8dfe86a2866297412b85727",
       "e9cf85b0a2ebfa9fb84a31d7af0feae54ded04d2761fb60679fe71ea60d34300",

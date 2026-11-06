@@ -13,6 +13,7 @@ import {
 } from "../skill-provenance.js";
 
 const NON_MARKDOWN_FILES: readonly string[] = [
+  "design/agemon-design/scripts/deal.mjs",
   "design/agemon-design/scripts/inventory.mjs",
   "founder/agemon-founder-cfo/example.json",
   "founder/agemon-founder-cfo/unit_economics.py",

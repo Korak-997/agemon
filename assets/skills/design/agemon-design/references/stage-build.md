@@ -4,7 +4,7 @@ Builds **one direction in one agent**. Several full builds happen only on explic
 
 ## Needs
 
-Whichever exist for the track: `.design/brief.md`, `.design/assets.md`, the picked spec in `.design/directions.json`. On a small edit, just the contract and the screen being changed.
+Whichever exist for the track: `.design/brief.md`, `.design/assets.md`, the spec in `.design/directions.json` that the log picked (`logged` from the `--check` run in [stage-directions.md](stage-directions.md), or the brief's last `.design/log.jsonl` line). On a small edit, just the contract and the screen being changed.
 
 ## Does
 

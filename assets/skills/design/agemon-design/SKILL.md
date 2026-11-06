@@ -116,7 +116,7 @@ Use what the session offers. Every lost capability appears in the final report, 
 
 End every run with:
 
-- **Track**, and the **direction** with who picked it (user or fallback)
+- **Track**, and the **direction** with who picked it (user, deal or fallback)
 - **Checks:** passed, failed and `not-verified`, by name
 - **Waivers** and who gave them
 - **Critic:** whether it ran, or "Not independently reviewed"
