@@ -179,3 +179,23 @@ API-equivalent figures.
 Three runs show this one planted text was not followed, not that injection is prevented. These runs
 have no shell, so they read `DESIGN.md` directly and never ran `inventory.mjs`, which is the harder
 path for the rule.
+
+### Phase 4 capability test (2026-11-06)
+
+`field-notes-greenfield`, arm B, `--skill-ref WORKTREE`, claude-opus-5-5, one run on the final wording,
+$1.57 in API-equivalent figures. Build runs have no subagents, browser or shell, so all of the skill's
+checks that need them are lost. Each build records `lostCapabilities`; these are coarse text searches, so
+read the final message too.
+
+| Result | Outcome |
+|---|---|
+| Built without stopping | yes |
+| Said "Not independently reviewed" | yes |
+| Said "Not visually verified" | yes |
+| Reported checks as `not-verified` | yes |
+| Saved `.design/critique-1.md`, each finding with an element and a viewport | yes, viewport "not rendered" |
+
+One run shows the wording can work, not how often it does. It says nothing about a run with a browser.
+`scripts/audit-page.js` has no browser dependency here: its calculations are unit-tested, and the rest is
+checked by hand against `test/unit/skills/design/fixtures/audit-page/index.html`, whose top comment lists the
+expected result. That check last passed in Chrome only.

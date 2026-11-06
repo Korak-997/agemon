@@ -1,0 +1,106 @@
+<!doctype html>
+<!--
+  Manual check for scripts/audit-page.js at a 375 pixel wide viewport. Expected:
+  overflow:    html, #wide
+  targets:     #tiny-a, #tiny-b, #small-checkbox, #label-for-hidden;
+               not #big, #isolated, #sentence-link, #sup-link, the native checkbox, or anything hidden
+  contrast:    #low, #input-low, in oklch #low-oklch; not #ok, #large, #disabled, or anything hidden
+  notVerified: #over-photo, #over-layer, #gradient, #faded, #frame, #placeholder-text, #pseudo-text,
+               #svg-text, #canvas, #custom-element, #stack-text, #scrim-text, #svg-layer-text,
+               #escaped, #inner-scroller
+  scan:        contrastChecked above 0
+  fonts:       Georgia is the top family
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>audit-page fixture</title>
+    <style>
+      body { margin: 0; background: #ffffff; color: #111111; font: 16px/1.5 Georgia, serif; }
+      section { position: relative; padding: 8px; }
+      button { padding: 0; border: 0; }
+      #wide { width: 500px; height: 10px; background: #0f4c5c; }
+      #clip-host { overflow: hidden; width: 100px; }
+      #clipped { width: 900px; }
+      #tiny-a, #tiny-b { width: 16px; height: 16px; }
+      #big { width: 44px; height: 44px; }
+      #isolated { display: block; width: 16px; height: 16px; margin-top: 60px; }
+      #low { color: #777777; }
+      #low-oklch { color: oklch(0.7 0 0); }
+      #ok { color: #767676; }
+      #large { color: #949494; font-size: 24px; }
+      #photo { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #over-photo-host { min-height: 80px; }
+      #over-photo { position: relative; color: #ffffff; }
+      #layer { position: absolute; inset: 0; background: #000000; }
+      #over-layer { position: relative; color: #ffffff; }
+      #gradient { background: linear-gradient(#000000, #ffffff); color: #ffffff; }
+      #faded { opacity: 0.5; }
+      #small-checkbox { width: 10px; height: 10px; margin: 0; }
+      #hidden-input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+      #label-for-hidden { display: inline-block; width: 10px; height: 10px; font-size: 8px; overflow: hidden; }
+      #input-low { color: #777777; background: #ffffff; border: 0; width: 200px; height: 30px; }
+      #placeholder-text { width: 200px; height: 30px; border: 0; }
+      #pseudo-text::before { content: "From a stylesheet"; color: #bbbbbb; }
+      #stack { display: grid; }
+      #stack > * { grid-area: 1 / 1; }
+      #stack-paint { background: #000000; }
+      #stack-text { color: #222222; }
+      #scrim-host { position: relative; }
+      #scrim-host::before { content: ""; position: absolute; inset: 0; background: #000000; }
+      #scrim-text { position: relative; color: #222222; }
+      #svg-layer { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #svg-layer-text { position: relative; }
+      #dark-box { background: #000000; height: 10px; }
+      #escaped { position: relative; top: 60px; color: #ffffff; }
+      #escaped-spacer { height: 80px; }
+      #hidden-menu { opacity: 0; }
+      #accordion { max-height: 0; padding: 0; overflow: hidden; }
+      #drawer { position: relative; overflow: hidden; height: 40px; }
+      #drawer-panel { position: absolute; left: 400px; width: 200px; }
+      #inner-scroller { overflow: auto; width: 100px; }
+      #inner-wide { width: 500px; height: 4px; }
+    </style>
+  </head>
+  <body>
+    <section><div id="wide"></div></section>
+    <section id="clip-host"><p id="clipped">Clipped wide text does not make the page scroll.</p></section>
+    <section><button id="tiny-a" aria-label="a"></button> <button id="tiny-b" aria-label="b"></button></section>
+    <section><button id="big">Go</button><button id="isolated" aria-label="c"></button></section>
+    <section><p>Read the <a id="sentence-link" href="#tides">tide tables</a> before you leave.</p></section>
+    <section><label><input type="checkbox" /> Native checkbox</label></section>
+    <section>
+      <p id="low">Grey at 4.48 to 1 fails.</p>
+      <p id="low-oklch">Oklch grey fails too.</p>
+      <p id="ok">Grey at 4.54 to 1 passes.</p>
+      <p id="large">Large grey passes at 3 to 1.</p>
+      <p id="disabled" aria-disabled="true" style="color: #dddddd">A disabled control has no requirement.</p>
+    </section>
+    <section id="over-photo-host">
+      <img id="photo" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" />
+      <p id="over-photo">Text over a photo.</p>
+    </section>
+    <section><div id="layer"></div><p id="over-layer">Text over a sibling layer.</p></section>
+    <section><p id="gradient">Text over a gradient.</p></section>
+    <section><p id="faded">Text in a faded block.</p></section>
+    <section><iframe id="frame" title="frame" width="100" height="40"></iframe></section>
+    <section><input id="small-checkbox" type="checkbox" aria-label="small" /><button id="near-small" aria-label="near" style="width: 40px; height: 40px"></button></section>
+    <section><input id="hidden-input" type="checkbox" /><label id="label-for-hidden" for="hidden-input">x</label><button aria-label="beside" style="width: 40px; height: 40px"></button></section>
+    <section><p>A footnote<sup><a id="sup-link" href="#one">1</a></sup> sits in the sentence.</p></section>
+    <section><input id="input-low" value="Value text at 4.48 to 1" /></section>
+    <section><input id="placeholder-text" placeholder="Hint text" /></section>
+    <section><p id="pseudo-text"></p></section>
+    <section><svg width="100" height="30"><text id="svg-text" x="0" y="20" fill="#eeeeee">Pale</text></svg></section>
+    <section><canvas id="canvas" width="50" height="20"></canvas></section>
+    <section><tide-chart id="custom-element" style="display: block; width: 100px; height: 20px"></tide-chart></section>
+    <section id="stack"><div id="stack-paint"></div><p id="stack-text">Dark text stacked over black.</p></section>
+    <section id="scrim-host"><p id="scrim-text">Dark text under a pseudo-element scrim.</p></section>
+    <section><svg id="svg-layer" aria-hidden="true"><rect width="100%" height="100%" fill="#000000"></rect></svg><p id="svg-layer-text">Text over a drawn layer.</p></section>
+    <section><div id="dark-box"><p id="escaped">White text moved off its dark box.</p></div><div id="escaped-spacer"></div></section>
+    <section id="hidden-menu"><button style="width: 10px; height: 10px" aria-label="m"></button><button style="width: 10px; height: 10px" aria-label="n"></button><p style="color: #dddddd">Hidden menu.</p></section>
+    <section id="accordion"><button style="width: 10px; height: 10px" aria-label="o"></button><button style="width: 10px; height: 10px" aria-label="p"></button><p style="color: #dddddd">Closed accordion.</p></section>
+    <section id="drawer"><div id="drawer-panel"><button style="width: 10px; height: 10px" aria-label="q"></button><button style="width: 10px; height: 10px" aria-label="r"></button><p style="color: #dddddd">Closed drawer.</p></div></section>
+    <section><div id="inner-scroller"><div id="inner-wide"></div></div></section>
+  </body>
+</html>

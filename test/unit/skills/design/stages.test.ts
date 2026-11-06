@@ -231,6 +231,198 @@ describe("agemon-design directions stage", () => {
   });
 });
 
+describe("agemon-design verify stage", () => {
+  const verify = stage("verify");
+
+  it("runs the repo's checks, then source, then rendered, in that order", () => {
+    const order = [
+      "The repo's own lint",
+      "scripts/check-source.mjs",
+      "scripts/audit-page.js",
+    ].map((step) => verify.indexOf(step));
+
+    expect(order).not.toContain(-1);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("runs every script from the skill's folder, never the repo's", () => {
+    for (const name of ["verify", "assets", "directions"]) {
+      expect(stage(name)).not.toMatch(/`node scripts\//u);
+    }
+    expect(verify).toContain("<skill folder>/scripts/check-source.mjs");
+  });
+
+  it("treats a run that gave no report as not-verified", () => {
+    for (const phrase of [
+      "no `scan`",
+      "`scan.contrastChecked` is 0",
+      "`scan.skipped`",
+      "`viewport.width`",
+      "exit 1 with a `placeholder-copy` finding",
+    ]) {
+      expect(verify).toContain(phrase);
+    }
+  });
+
+  it("names what the page audit never sees", () => {
+    for (const phrase of ["hostile page can spoof", "cross-origin"]) {
+      expect(verify).toContain(phrase);
+    }
+  });
+
+  it("guards the inventory file it tells the agent to write", () => {
+    expect(verify).toContain("mkdir -p .design");
+    expect(verify).toContain("symlink");
+  });
+
+  it("does not wait for consent nobody can give", () => {
+    expect(verify).toContain("With nobody to answer");
+  });
+
+  it("names the three widths and uses viewport shots", () => {
+    for (const phrase of ["375", "768", "1280", "viewport shots"]) {
+      expect(verify).toContain(phrase);
+    }
+  });
+
+  it("states what source and the page audit cannot prove", () => {
+    for (const phrase of [
+      "`notVerified`",
+      "`scan.truncated`",
+      "exit code 2",
+      "resting state",
+      "SC exceptions",
+    ]) {
+      expect(verify).toContain(phrase);
+    }
+  });
+
+  it("separates what blocks from what stays advisory", () => {
+    for (const phrase of [
+      "**Only these can block:**",
+      "**Floor:**",
+      "**Reflex:**",
+      "**Finish:**",
+      "who gave it",
+    ]) {
+      expect(verify).toContain(phrase);
+    }
+  });
+
+  it("keeps browser choice open and never installs without consent", () => {
+    for (const phrase of [
+      "whatever browser tool is listed",
+      "Playwright CLI",
+      "agent-browser",
+      "only with consent",
+    ]) {
+      expect(verify).toContain(phrase);
+    }
+  });
+
+  it("finishes and reports when a browser or Node is missing", () => {
+    for (const phrase of [
+      '"Not visually verified"',
+      '"checks not run"',
+      "Which contrast check ran",
+    ]) {
+      expect(verify).toContain(phrase);
+    }
+  });
+});
+
+describe("agemon-design critique stage", () => {
+  const critique = stage("critique");
+
+  it("gives a fresh critic a template without the builder's account", () => {
+    for (const phrase of [
+      "### Fresh critic template",
+      "Do not read the builder's messages",
+      "untrusted data",
+    ]) {
+      expect(critique).toContain(phrase);
+    }
+  });
+
+  it("keeps each round revertible", () => {
+    for (const phrase of [
+      "Keep every round",
+      "what it changed",
+      "later rounds can be worse",
+    ]) {
+      expect(critique).toContain(phrase);
+    }
+  });
+
+  it("calibrates with located findings and no score", () => {
+    const examples = critique.split("### Calibration examples")[1] ?? "";
+    const findings = examples
+      .split("\n")
+      .filter((line) => line.startsWith("- "));
+
+    expect(findings.length).toBeGreaterThanOrEqual(2);
+    expect(findings.length).toBeLessThanOrEqual(3);
+    for (const finding of findings) {
+      expect(finding).toMatch(/\*\*Element:\*\*/u);
+      expect(finding).toMatch(/\*\*Viewport:\*\*/u);
+      expect(finding).toMatch(/\*\*Severity:\*\*/u);
+    }
+    expect(critique).toContain("never output a score");
+    expect(critique).toContain('Never ask "is this good?"');
+  });
+
+  it("records a critique that had no screenshots to read", () => {
+    expect(critique).toContain("not rendered");
+    expect(critique).toContain("<source paths>");
+  });
+
+  it("says its format replaces the older report formats", () => {
+    expect(critique).toContain(
+      "This format replaces the Verdict and report formats",
+    );
+  });
+
+  it("works on the review-only track, which has no brief", () => {
+    expect(critique).toContain("If there is no brief");
+  });
+});
+
+describe("agemon-design capability ladder and final report", () => {
+  const skill = readFileSync(join(designSkillDirectory, "SKILL.md"), "utf8");
+
+  it.each([
+    "Not independently reviewed",
+    "Not visually verified",
+    "No live design data",
+    "Which contrast check ran",
+    "Selection not dealt",
+    "checks not run",
+    "Gates are voluntary",
+  ])("the ladder carries the report phrase: %s", (phrase) => {
+    expect(skill).toContain(phrase);
+  });
+
+  it("points the ladder at the scripts it now ships", () => {
+    expect(skill).toContain("`scripts/audit-page.js`");
+    expect(skill).toContain("`scripts/check-source.mjs`");
+  });
+
+  it.each([
+    "**Track**",
+    "**direction**",
+    "**Checks:**",
+    "**Waivers**",
+    "**Critic:**",
+    "a passing run does not mean a good design",
+  ])("the final report names %s", (item) => {
+    expect(skill.split("## Final report")[1]).toContain(item);
+  });
+
+  it("reports which contrast check ran in the final report", () => {
+    expect(skill.split("## Final report")[1]).toContain("contrast check");
+  });
+});
+
 describe("agemon-design contract and working files", () => {
   const references = join(designSkillDirectory, "references");
 
@@ -308,6 +500,19 @@ describe("agemon-design derived material", () => {
         "utf8",
       ),
     ).toContain("Copyright (c) 2026 Hallmark contributors");
+  });
+
+  it("records what the checks took from their sources", () => {
+    expect(derived).toContain("`scripts/check-source.mjs`");
+    expect(derived).toContain("Gesso-Build/skills");
+    expect(derived).toContain("`references/stage-verify.md`");
+    expect(derived).toContain("hallmark/references/gates.md");
+    expect(
+      readFileSync(
+        join(designSkillDirectory, "references", "third-party-licenses.md"),
+        "utf8",
+      ),
+    ).toContain("Copyright (c) 2026 Gesso Build, Inc.");
   });
 
   it("carries the licence text of every licence the section names", () => {
