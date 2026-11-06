@@ -32,6 +32,8 @@ import {
   type ClaudeRunner,
   createResultsFile,
   DEFAULT_SKILL_REF,
+  DIRECTION_BUILD_TOOLS,
+  designScriptRules,
   designSkillNames,
   installArm,
   newBatchId,
@@ -39,7 +41,9 @@ import {
   parseModel,
   redactHome,
   resultsPath,
+  runScratchDirectory,
   runUsage,
+  skillRefFor,
   sumUsage,
   transcriptsDirectory,
   WORKING_TREE_REF,
@@ -50,6 +54,9 @@ import {
   assessLostCapabilities,
   briefNames,
   builtWithoutQuestion,
+  directionPickedBy,
+  keepProject,
+  productFilesWritten,
   runOutputBuild,
 } from "../../../scripts/design-eval/output.js";
 
@@ -427,10 +434,11 @@ describe("installArm", () => {
 });
 
 describe("option parsing", () => {
-  it("requires arm A or B", () => {
+  it("requires arm A, B or C", () => {
     expect(parseArm("A")).toBe("A");
+    expect(parseArm("C")).toBe("C");
     expect(() => parseArm(undefined)).toThrow(/--arm/u);
-    expect(() => parseArm("C")).toThrow(/--arm/u);
+    expect(() => parseArm("D")).toThrow(/--arm/u);
   });
 
   it("rejects an odd-looking model", () => {
@@ -912,6 +920,145 @@ describe("tool restriction", () => {
       transcriptDirectory: join(workDirectory, "t"),
     });
     expect(seen).toEqual([ACTIVATION_TOOLS, BUILD_TOOLS]);
+  });
+});
+
+describe("arm C", () => {
+  const request = {
+    cwd: "/x",
+    prompt: "p",
+    maxTurns: 4,
+    permissionMode: "acceptEdits" as const,
+  };
+
+  it("has a shell only when asked for, limited to named scripts", () => {
+    const withShell = buildClaudeArgv({
+      ...request,
+      tools: DIRECTION_BUILD_TOOLS,
+      allowedTools: designScriptRules("/project"),
+    });
+    const disallowed = withShell[withShell.indexOf("--disallowed-tools") + 1];
+    expect(disallowed).not.toMatch(/Bash/u);
+    expect(disallowed).toMatch(/Artifact/u);
+    const allowed = withShell[withShell.indexOf("--allowedTools") + 1] ?? "";
+    expect(allowed).toContain(
+      "Bash(node .claude/skills/agemon-design/scripts/deal.mjs:*)",
+    );
+    expect(allowed).toContain(
+      "Bash(node /project/.claude/skills/agemon-design/scripts/deal.mjs:*)",
+    );
+    expect(allowed).not.toMatch(/Bash\(node:|Bash\(\*|Bash,/u);
+
+    const withoutShell = buildClaudeArgv({ ...request, tools: BUILD_TOOLS });
+    expect(
+      withoutShell[withoutShell.indexOf("--disallowed-tools") + 1],
+    ).toMatch(/Bash/u);
+    expect(withoutShell).not.toContain("--allowedTools");
+  });
+
+  it("installs the design group, and gives only arm C the shell", async () => {
+    const seen: { tools: string; allowedTools?: string[] }[] = [];
+    const runner: ClaudeRunner = async ({ tools, allowedTools, cwd }) => {
+      seen.push({ tools, allowedTools });
+      expect(
+        existsSync(join(cwd, ".claude", "skills", DESIGN_SKILL, "SKILL.md")),
+      ).toBe(true);
+      return { transcript: completedTranscript([]), exitCode: 0 };
+    };
+    await runOutputBuild({
+      arm: "C",
+      brief: briefNames()[0] as string,
+      runner,
+      workRoot: workDirectory,
+      transcriptDirectory: join(workDirectory, "t"),
+      skillRef: WORKING_TREE_REF,
+    });
+    await runOutputBuild({
+      arm: "B",
+      brief: briefNames()[1] as string,
+      runner,
+      workRoot: workDirectory,
+      transcriptDirectory: join(workDirectory, "t"),
+      skillRef: WORKING_TREE_REF,
+    });
+    expect(seen[0]?.tools).toBe(DIRECTION_BUILD_TOOLS);
+    expect(seen[0]?.allowedTools?.length).toBeGreaterThan(0);
+    expect(seen[1]).toEqual({ tools: BUILD_TOOLS, allowedTools: undefined });
+  });
+
+  it("must name its commit, while arm B defaults to the old skill", () => {
+    expect(() => skillRefFor("C", undefined)).toThrow(/--skill-ref/u);
+    expect(skillRefFor("C", "abc123")).toBe("abc123");
+    expect(skillRefFor("B", undefined)).toBe(DEFAULT_SKILL_REF);
+  });
+
+  it("reads who picked the direction from the project log", () => {
+    expect(directionPickedBy(workDirectory)).toBeUndefined();
+    mkdirSync(join(workDirectory, ".design"));
+    writeFileSync(
+      join(workDirectory, ".design", "log.jsonl"),
+      `${JSON.stringify({ pickedBy: "user" })}\n${JSON.stringify({ pickedBy: "deal" })}\n`,
+    );
+    expect(directionPickedBy(workDirectory)).toBe("deal");
+    writeFileSync(join(workDirectory, ".design", "log.jsonl"), "not json\n");
+    expect(directionPickedBy(workDirectory)).toBe("unreadable");
+  });
+});
+
+describe("a run's own scratch folder", () => {
+  const project = "/tmp/design-eval-AbC/field-notes-X1";
+
+  it("is named after the project, and writing there is not outside the project", () => {
+    const scratch = runScratchDirectory(project);
+    expect(scratch).toBe(
+      `/tmp/claude-${process.getuid?.()}/-tmp-design-eval-AbC-field-notes-X1`,
+    );
+    const transcript = writeCall(
+      "Write",
+      `${scratch}/session/scratchpad/r.mjs`,
+    );
+    expect(writesOutsideProject(transcript, project)).toEqual([]);
+  });
+
+  it("does not exempt another run's folder or anywhere else", () => {
+    const other = runScratchDirectory("/tmp/design-eval-AbC/other");
+    for (const target of [`${other}/r.mjs`, "/home/x/.claude/plans/p.md"]) {
+      expect(writesOutsideProject(writeCall("Write", target), project)).toEqual(
+        [target],
+      );
+    }
+  });
+});
+
+describe("kept builds", () => {
+  it("lists product files only, once each, with paths inside the project", () => {
+    const transcript = [
+      "index.html",
+      "index.html",
+      "styles.css",
+      ".design/brief.md",
+      ".claude/x.md",
+    ]
+      .map((file) => writeCall("Write", join(workDirectory, file)))
+      .join("");
+    expect(
+      productFilesWritten(
+        workDirectory,
+        `${transcript}${writeCall("Write", "/elsewhere/x.html")}`,
+      ),
+    ).toEqual(["index.html", "styles.css"]);
+  });
+
+  it("copies the project without the installed skills", () => {
+    const project = join(workDirectory, "project");
+    mkdirSync(join(project, ".claude", "skills"), { recursive: true });
+    mkdirSync(join(project, ".design"));
+    writeFileSync(join(project, "index.html"), "x");
+    writeFileSync(join(project, ".design", "brief.md"), "x");
+    writeFileSync(join(project, ".claude", "skills", "s.md"), "x");
+    const kept = join(workDirectory, "kept");
+    keepProject(project, kept);
+    expect(readdirSync(kept).sort()).toEqual([".design", "index.html"]);
   });
 });
 

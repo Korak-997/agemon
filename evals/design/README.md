@@ -11,11 +11,16 @@ Measures whether `agemon-design` loads when it should (activation) and what it p
   default is `c056fdc41d9eef734b85239bb21b5560e081cb3c`, which is what Phase 5 tests. Arm B
   installs the `design` group from that ref. `--skill-ref WORKTREE` copies the skills from the
   working tree instead, for testing uncommitted changes.
+- **C**: specs plus selector: the rebuilt skill at the commit named by `--skill-ref`, which has no
+  default, so a result cannot claim the pipeline while holding the old skill. It is the only arm
+  with a shell, limited by `--allowedTools` to `inventory.mjs`, `deal.mjs` and `check-source.mjs` in
+  the installed skill, because the selector cannot run without one. Each build records
+  `directionPickedBy` from `.design/log.jsonl`; anything but `deal` means the selector did not pick.
 
-Both arms install a realistic subset, not the whole catalogue (58 descriptions total about
+All arms install a realistic subset, not the whole catalogue (58 descriptions total about
 16,561 characters, which distorts the listing budget): the `architecture`, `code-quality`,
 `commit`, `performance`, `security` and `essentials` groups, also read from the ref, plus the `design`
-group in B only. `essentials` holds `web-design-guidelines` and `writing-guidelines`, the skills
+group in B and C. `essentials` holds `web-design-guidelines` and `writing-guidelines`, the skills
 the `guidelines-boundary` cases compete with. For a ref that predates the bundled `essentials`
 group, both arms install the copies in `test/fixtures/essentials-pinned-063bee94` instead. The
 ref is recorded as `skillRef` in every results file.
@@ -46,8 +51,9 @@ Every run passes `--tools` explicitly, plus `--disallowed-tools` as a second gua
 
 - activation (`ACTIVATION_TOOLS`): `Skill,Read,Glob,Grep`
 - output builds (`BUILD_TOOLS`): `Skill,Read,Glob,Grep,Write,Edit`
+- arm C builds (`DIRECTION_BUILD_TOOLS`): the same plus `Bash`, limited as described under Arms
 
-No Bash, web, MCP, Artifact or ToolSearch. A first real probe wrote a plan file into the
+Outside arm C no Bash, and in every arm no web, MCP, Artifact or ToolSearch. A first real probe wrote a plan file into the
 owner's real `~/.claude/plans/` and called the account-level `Artifact` tool, which are side
 effects outside the temp project. After every run the transcript is scanned: a `Write` or
 `Edit` whose path falls outside the run's temp directory marks the run `errored` with reason
@@ -103,6 +109,9 @@ the three Phase 5 compares. `hostile-design-md` is a safety case, not part of th
 `DESIGN.md` near a mention of the planted text in the final message. It is a coarse check, so read
 that message too.
 A brief's fixture is `fixtures/<brief name>/`, copied into the project before the build.
+`orbit-ledger-shadcn` keeps the fixture's stock shadcn tokens and `components.json`, but asks for static
+HTML so that no build needs installing or running. It therefore tests stock tokens, not a working
+Next.js and shadcn stack.
 
 ## Commands
 
@@ -115,8 +124,47 @@ npm run design-eval:activation -- --arm B --label baseline --runs 2 --limit 3 --
 npm run design-eval:output -- --arm B --brief tarn-ember-brand --label baseline
 ```
 
-Output takes a required `--arm`, a required `--brief` (one build per invocation) and
+Output takes a required `--arm`, a required `--brief` (one build per invocation), `--repeat` and
 `--max-budget-usd` (default 5, passed to `claude`).
+
+## Output measures
+
+Everything below renders in the installed Chrome over its debugging port, so agemon gains no
+browser dependency. Set `CHROME_PATH` if it is not found. Generated pages run in that browser and
+may load remote assets such as fonts.
+
+```sh
+# 27 builds: 3 briefs x 3 arms x repeats 1-3. Arm B defaults to the old skill.
+npm run design-eval:output -- --arm C --skill-ref <commit> --brief field-notes-greenfield --repeat 1 --label proof
+npm run design-eval:capture -- --label proof
+npm run design-eval:pairs -- make --label proof --mode look --seed <seed> --raters <names>
+npm run design-eval:pairs -- tally --label proof --mode look <answer files>
+npm run design-eval:pairs -- make --label proof --mode preference --seed <seed> --raters <names>
+npm run design-eval:pairs -- tally --label proof --mode preference <answer files>
+npm run design-eval:score -- --label proof --preference evals/design/results/blind/proof-preference/tally.json
+```
+
+`capture` finds each build's page from the HTML files it wrote. To capture one build from a server
+instead, pass `--url`, `--brief`, `--arm`, `--repeat` and `--project`. A build that fails or cannot load is recorded as
+`not-rendered`: it is left out of distance and scores 0 on appropriateness, never treated as passing.
+
+| Measure | How | Status |
+|---|---|---|
+| Distance | Mean pairwise distance within one brief and arm, over the first three desktop viewports at 1440px. Half structure (luma grid correlation), half colour (RGB histogram). Arm figures average the briefs' own figures | A dependency-free stand-in for the embedding distance in the research. Only lightly validated: check it with `--mode look` before trusting it |
+| Fingerprint | Fonts, palette and radii from the skill's `audit-page.js`; shadows, layout sketch and palette family from `scripts/design-eval/page-fingerprint.js`. `paletteEntropy` is in bits | Explains why distance moved. Palette entropy is a hypothesis |
+| Tell count | Thirteen rendered heuristics for `tells-2026-11.md` | Coarse, and dated with that list. A count of how often a look appears, not a judgement of it |
+| Appropriateness | `acceptance.json` criteria for each brief, plus one point each for no rendered contrast failure, no overflow at any width, and no placeholder copy | Points are out of 7. The criteria are text and selector searches, so read failures by hand |
+| Preference | Blind pairs, "which would you ship?". Each C is matched once with an A from its brief; order and sides are random per rater | The arbiter. `p` is a two-sided binomial on all votes, optimistic because votes from one rater are not independent |
+| LLM judge | Named with `--llm-judges`: sees each pair in both orders, recorded under `llmJudge` with `flippedWithOrder` | Measures disagreement only. It never enters `preference` or the pass rule |
+
+**Pass rule:** C beats A on distance and on tell count, appropriateness is at most 2 points lower,
+and human preference is not significantly below A (p < 0.05). With no votes or a missing measure the
+outcome is `pending`, never `pass`. `score` also reports the top font and palette family share per
+arm, for comparison across sequential briefs. Results are **indicative**: this reduced run can only
+catch large effects, and a null result means "no large effect".
+
+Each rater gets only their own folder under `results/blind/<label>-<mode>/`. `key.json` beside
+those folders reveals the arms.
 
 ## Results stay local
 
@@ -127,9 +175,10 @@ run so a crash loses nothing. Raw transcripts go to `results/<same name>/transcr
 can contain session ids, account details and local paths. The whole `results/` folder is
 git-ignored, so record headline numbers worth keeping in this README.
 
-Activation temp projects are deleted after each run. An output build directory is kept so it
-can be inspected; its path is printed and recorded in the summary. Delete it with
-`rm -rf <that path>` when done.
+Activation temp projects are deleted after each run. An output build runs under the temp directory,
+so no parent `CLAUDE.md` can reach it, then is copied to `results/<same name>/project/` without its
+installed skills, so it survives a reboot during a multi-day eval. `projectDirectory` in a summary
+is the deleted temp path, and `keptProject` is the copy.
 
 ## Recorded results
 

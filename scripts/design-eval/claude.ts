@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-export type Arm = "A" | "B";
+export type Arm = "A" | "B" | "C";
 
 export interface ClaudeRequest {
   cwd: string;
@@ -12,6 +12,7 @@ export interface ClaudeRequest {
   maxTurns: number;
   permissionMode: "plan" | "acceptEdits";
   tools: string;
+  allowedTools?: string[];
   model?: string;
   effort?: string;
   maxBudgetUsd?: number;
@@ -59,8 +60,12 @@ export const PROJECT_DESIGN_SKILL = "agemon-design";
 export const DESIGN_SKILL_PATTERN = /(^|:)agemon-design(-\w+)?$/u;
 export const ACTIVATION_TOOLS = "Skill,Read,Glob,Grep";
 export const BUILD_TOOLS = "Skill,Read,Glob,Grep,Write,Edit";
-const NEVER_AVAILABLE_TOOLS =
-  "Bash,WebFetch,WebSearch,Artifact,ToolSearch,NotebookEdit";
+export const DIRECTION_BUILD_TOOLS = `${BUILD_TOOLS},Bash`;
+const SHELL_TOOL = "Bash";
+const ALWAYS_UNAVAILABLE_TOOLS =
+  "WebFetch,WebSearch,Artifact,ToolSearch,NotebookEdit";
+const SKILL_SCRIPTS_FOLDER = ".claude/skills/agemon-design/scripts";
+const SKILL_SCRIPTS = ["inventory.mjs", "deal.mjs", "check-source.mjs"];
 const FILE_WRITING_TOOLS = new Set([
   "Write",
   "Edit",
@@ -95,8 +100,28 @@ const LIMIT_OR_AUTH_PATTERN =
 const SAFE_MODEL_PATTERN = /^[a-z0-9][\w.[\]-]*$/iu;
 
 export function parseArm(value: string | undefined): Arm {
-  if (value === "A" || value === "B") return value;
-  throw new Error(`--arm must be A or B, got ${JSON.stringify(value)}`);
+  if (value === "A" || value === "B" || value === "C") return value;
+  throw new Error(`--arm must be A, B or C, got ${JSON.stringify(value)}`);
+}
+
+// Arm B is the old skill by definition. Arm C must name the commit it tests, so a results file
+// can never claim the pipeline while silently holding the old skill.
+export function skillRefFor(arm: Arm, requested: string | undefined): string {
+  if (requested) return requested;
+  if (arm === "C") throw new Error("arm C needs --skill-ref <commit>");
+  return DEFAULT_SKILL_REF;
+}
+
+// The selector cannot run without a shell, so arm C gets one limited to the skill's own read-only
+// scripts and its log-writing selector. Every other command stays denied in a headless run.
+export function designScriptRules(projectDirectory: string): string[] {
+  const folders = [
+    SKILL_SCRIPTS_FOLDER,
+    join(projectDirectory, SKILL_SCRIPTS_FOLDER),
+  ];
+  return folders.flatMap((folder) =>
+    SKILL_SCRIPTS.map((script) => `${SHELL_TOOL}(node ${folder}/${script}:*)`),
+  );
 }
 
 export function parseModel(value: string | undefined): string | undefined {
@@ -155,7 +180,7 @@ export function installArm(
   if (skillRef.startsWith("-"))
     throw new Error("--skill-ref must be a git ref");
   const groups =
-    arm === "B" ? [DESIGN_GROUP, ...COMPANION_GROUPS] : COMPANION_GROUPS;
+    arm === "A" ? COMPANION_GROUPS : [DESIGN_GROUP, ...COMPANION_GROUPS];
   const skillsDirectory = join(projectDirectory, ".claude", "skills");
   mkdirSync(skillsDirectory, { recursive: true });
   for (const group of groups) {
@@ -187,8 +212,13 @@ export function buildClaudeArgv(request: ClaudeRequest): string[] {
     "--tools",
     request.tools,
     "--disallowed-tools",
-    NEVER_AVAILABLE_TOOLS,
+    request.tools.split(",").includes(SHELL_TOOL)
+      ? ALWAYS_UNAVAILABLE_TOOLS
+      : `${SHELL_TOOL},${ALWAYS_UNAVAILABLE_TOOLS}`,
   ];
+  if (request.allowedTools) {
+    argv.push("--allowedTools", request.allowedTools.join(","));
+  }
   if (request.model) argv.push("--model", request.model);
   if (request.effort) argv.push("--effort", request.effort);
   if (request.maxBudgetUsd) {
@@ -381,6 +411,13 @@ function projectDirectoryForms(projectDirectory: string): string[] {
   }
 }
 
+// Claude Code gives each session a scratch folder named after the project, outside the project.
+// Only this run's own folder is exempt: a write anywhere else still fails the run.
+export function runScratchDirectory(projectDirectory: string): string {
+  const projectSlug = resolve(projectDirectory).replace(/[^a-zA-Z0-9]/gu, "-");
+  return join("/tmp", `claude-${process.getuid?.()}`, projectSlug);
+}
+
 export function writtenFilePaths(transcript: string): string[] {
   return transcriptEvents(transcript).flatMap((event) => {
     const content = (event.message as { content?: unknown } | undefined)
@@ -406,7 +443,10 @@ export function writesOutsideProject(
   transcript: string,
   projectDirectory: string,
 ): string[] {
-  const directoryForms = projectDirectoryForms(projectDirectory);
+  const directoryForms = [
+    ...projectDirectoryForms(projectDirectory),
+    runScratchDirectory(projectDirectory),
+  ];
   const outside: string[] = [];
   for (const event of transcriptEvents(transcript)) {
     const content = (event.message as { content?: unknown } | undefined)

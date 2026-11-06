@@ -1,0 +1,34 @@
+{
+  "field-notes-greenfield": [
+    {
+      "id": "hero-call-to-action",
+      "selector": "h1",
+      "pattern": "subscribe|start|join|order|sign up|get "
+    },
+    { "id": "how-it-works", "pattern": "how it works" },
+    { "id": "two-priced-plans", "pattern": "[$€£]\\s?\\d", "minMatches": 2 },
+    { "id": "footer", "selector": "footer" }
+  ],
+  "tarn-ember-brand": [
+    { "id": "six-priced-roasts", "pattern": "[$€£]\\s?\\d", "minMatches": 6 },
+    {
+      "id": "origin-named",
+      "pattern": "origin|ethiopia|colombia|kenya|guatemala|brazil|sumatra|peru|rwanda|honduras|costa rica"
+    },
+    {
+      "id": "roast-level-filter",
+      "selector": "select, input[type='radio'], button, [role='radiogroup'], [role='tab']",
+      "pattern": "light|medium|dark"
+    },
+    { "id": "keeps-brand-name", "pattern": "tarn" }
+  ],
+  "orbit-ledger-shadcn": [
+    { "id": "invoice-table", "selector": "table, [role='table']" },
+    {
+      "id": "summary-strip",
+      "pattern": "outstanding[\\s\\S]*overdue[\\s\\S]*paid|paid[\\s\\S]*overdue[\\s\\S]*outstanding"
+    },
+    { "id": "status-and-due-date", "pattern": "due" },
+    { "id": "empty-state", "sourcePattern": "no invoices|nothing here|empty" }
+  ]
+}
