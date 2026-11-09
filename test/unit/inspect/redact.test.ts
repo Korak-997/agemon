@@ -224,6 +224,37 @@ describe("redactSecretsInText", () => {
     ).toBe("ok\n<redacted:pem>");
   });
 
+  it.each([
+    "/home/someone/projects/my-big-monorepo",
+    "/Users/someone/Developer/client-website/hooks",
+    "/home/user/projects/-home-user-dev-some-long-project-name",
+    "/srv/git/repositories/backend-service",
+  ])("shows the long path %s, whose segments are words", (path) => {
+    expect(redactSecretsInText(`core.hooksPath=${path}`)).toBe(
+      `core.hooksPath=${path}`,
+    );
+  });
+
+  it.each([
+    [
+      "a base64 secret that starts with a slash",
+      "/AbcdEfgh/IjklMnopQrstUvwx0123456789",
+    ],
+    ["a path with a base64-shaped segment", "/srv/keys/AbcdEfghIjkl0123456789"],
+    [
+      "a path with a hash segment",
+      "/var/lib/3f9a7c1e2b8d4f6a0c5e9b7d1a3f8e2c/x",
+    ],
+    [
+      "a base64 secret with slashes inside it",
+      "AbcdEfgh/IjklMnop/QrstUvwx0123456789",
+    ],
+  ])("still redacts %s", (_label, value) => {
+    expect(redactSecretsInText(`value=${value}`)).toBe(
+      "value=<redacted:high-entropy>",
+    );
+  });
+
   it("leaves ordinary output untouched, keeping its whitespace", () => {
     const output =
       "added 3 packages in 2s\n  installed  code-review-graph==2.1.0\n\tdone";

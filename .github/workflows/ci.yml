@@ -35,7 +35,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # The design-eval tests read skills from the commit pinned in DEFAULT_SKILL_REF.
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -70,11 +69,11 @@ jobs:
 
       - name: Smoke-test the packaged bundle
         run: npm run smoke
-
       - name: Dry-run the npm publish
         run: |
+          npm pkg set version="$(node -p 'require("./package.json").version')-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           sh scripts/pack-release.sh "$RUNNER_TEMP/agemon.tgz"
-          npm publish --dry-run "$RUNNER_TEMP/agemon.tgz"
+          npm publish --dry-run --tag ci "$RUNNER_TEMP/agemon.tgz"
 
   sandbox:
     name: sandbox checks
