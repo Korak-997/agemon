@@ -45,6 +45,7 @@ const EXIT_DOMAIN_UNSUPPORTED = 125;
 const TEARDOWN_POLL_INTERVAL_MS = 250;
 const TEARDOWN_TIMEOUT_MS = 5_000;
 const OUTPUT_EXCERPT_LENGTH = 200;
+const LAUNCHD_SPAWNING_STATE = "xpcproxy";
 const NO_GUI_SESSION_HINT =
   "log in to this Mac's desktop session and run agemon there";
 
@@ -73,6 +74,13 @@ export function parseLaunchdJobState(printOutput: string): LaunchdJobState {
       lastExit !== null && /^-?\d+$/.test(lastExit) ? Number(lastExit) : null,
   };
 }
+function isSpawningFirstRun(job: LaunchdJobState): boolean {
+  return (
+    job.state === LAUNCHD_SPAWNING_STATE &&
+    job.runs === 1 &&
+    job.lastExitCode === null
+  );
+}
 
 function observeJob(
   label: string,
@@ -94,7 +102,7 @@ function observeJob(
   if (job.state === "running") {
     return { kind: "running" };
   }
-  if (job.runs >= 1) {
+  if (job.runs >= 1 && !isSpawningFirstRun(job)) {
     return {
       kind: "failed",
       reason: `${label} is ${printable(job.state ?? "stopped")}`,

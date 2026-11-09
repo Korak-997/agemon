@@ -182,6 +182,21 @@ describe("launchd service manager — register", () => {
     expect(fake.calls).toContain(`bootstrap gui/${UID} ${plistPath}`);
   });
 
+  it("waits while launchd is still spawning the first run through xpcproxy", async () => {
+    const fake = createFakeLaunchd({
+      print: (index) => ({
+        code: 0,
+        stdout: printOutput(index === 0 ? "xpcproxy" : "running", 1),
+        stderr: "",
+      }),
+    });
+    const { manager } = await createManager(fake);
+
+    await expect(
+      manager.registerAutostart({ unitName: PLIST, attempts: [ATTEMPT] }),
+    ).resolves.toMatchObject({ attemptLabel: "launchd", failedAttempts: [] });
+  });
+
   it("resets an existing plist's mode to 0644", async () => {
     const fake = createFakeLaunchd();
     const { manager, plistPath, homeDir } = await createManager(fake);
@@ -277,6 +292,11 @@ describe("launchd service manager — register", () => {
       "waits to respawn",
       printOutput("spawn scheduled", 1, "0"),
       "is spawn scheduled",
+    ],
+    [
+      "respawns through xpcproxy",
+      printOutput("xpcproxy", 1, "0"),
+      "is xpcproxy",
     ],
   ])(
     "fails and cleans up when the job %s",
