@@ -67,11 +67,12 @@ jobs:
           retention-days: 1
 
   push:
-    name: verify and push release commit
+    name: verify and merge release commit
     needs: tag
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
 
     env:
       RELEASE_TAG: ${{ needs.tag.outputs.tag }}
@@ -121,21 +122,54 @@ jobs:
           [[ "$(git show release:package.json | jq -r .version)" == "${RELEASE_TAG#v}" ]] || fail "package.json version does not match ${RELEASE_TAG}."
           [[ "$(git diff --numstat origin/master release -- CHANGELOG.md | cut -f2)" =~ ^0?$ ]] || fail "The release commit removes CHANGELOG.md lines."
 
-      - name: Push release commit and tag
+      - name: Merge release commit through a pull request and tag it
         working-directory: ${{ runner.temp }}/release-repo
         env:
-          PUSH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          BASIC_AUTH="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
+          fail() {
+            echo "$1"
+            exit 1
+          }
+
+          REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git"
+          RELEASE_BRANCH="release/${RELEASE_TAG}"
+          RELEASE_TITLE="$(git log -1 --format=%s release)"
+          BASE_SHA="$(git rev-parse origin/master)"
+          if git ls-remote --exit-code --tags "$REPO_URL" "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            fail "${RELEASE_TAG} already exists on GitHub; delete it before cutting this release again."
+          fi
+
+          BASIC_AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::${BASIC_AUTH}"
-          GIT_CONFIG_COUNT=2 \
+          export GIT_CONFIG_COUNT=2 \
             GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
             GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${BASIC_AUTH}" \
             GIT_CONFIG_KEY_1="core.hooksPath" \
-            GIT_CONFIG_VALUE_1="/dev/null" \
-            git push "https://github.com/${GITHUB_REPOSITORY}.git" release:refs/heads/master "refs/tags/${RELEASE_TAG}"
+            GIT_CONFIG_VALUE_1="/dev/null"
+
+          # Deleting the branch also closes the pull request if the merge never happened.
+          trap 'gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${RELEASE_BRANCH}" >/dev/null 2>&1 || true' EXIT
+
+          git push --quiet "$REPO_URL" "release:refs/heads/${RELEASE_BRANCH}"
+          PR_URL="$(gh pr create --base master --head "$RELEASE_BRANCH" --title "$RELEASE_TITLE" \
+            --body "Version bump and changelog for ${RELEASE_TAG}, opened by the Cut release workflow.")"
+          gh pr merge "$PR_URL" --squash --subject "$RELEASE_TITLE" --body "" \
+            --match-head-commit "$(git rev-parse release)"
+
+          MERGE_SHA="$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)"
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "${PR_URL} did not report a merge commit."
+          git fetch --quiet "$REPO_URL" "$MERGE_SHA"
+          [[ "$(git rev-parse "${MERGE_SHA}^")" == "$BASE_SHA" ]] || fail "master moved before ${PR_URL} merged; tag ${RELEASE_TAG} by hand."
+          [[ "$(git rev-parse "${MERGE_SHA}^{tree}")" == "$(git rev-parse "release^{tree}")" ]] || fail "The merge of ${PR_URL} differs from the verified release commit."
+
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            tag --force --annotate "$RELEASE_TAG" --message "$RELEASE_TAG" "$MERGE_SHA"
+          git push --quiet "$REPO_URL" "refs/tags/${RELEASE_TAG}"
 
   publish:
     needs: [tag, push]

@@ -111,8 +111,8 @@ It runs in three jobs:
    `CHANGELOG.md` entry from the commit subjects since the last tag, then commits and tags
    (`npm run deploy -- … --no-push`). It hands the commit and tag to the next job as a
    `git bundle`.
-2. **`push`** (`contents: write`) runs only `git` and `jq`, in a fresh repository. It
-   refuses the bundle unless all of these hold:
+2. **`push`** (`contents: write`, `pull-requests: write`) runs only `git`, `jq` and `gh`,
+   in a fresh repository. It refuses the bundle unless all of these hold:
    - it is a valid bundle with exactly one single-parent commit on top of the current
      `master`, and the tag points at that commit;
    - the commit modifies only `package.json`, `package-lock.json` and `CHANGELOG.md`, all
@@ -121,7 +121,11 @@ It runs in three jobs:
      matches the tag;
    - `CHANGELOG.md` only gains lines.
 
-   Then it pushes the commit and the tag.
+   Then it pushes the commit to a `release/vX.Y.Z` branch, opens a pull request and
+   squash-merges it, so the commit on `master` is signed by GitHub. It tags `master` only
+   after checking that the merge sits directly on the `master` it verified against and has
+   exactly the verified content, then deletes the branch. It stops before touching
+   anything if the tag already exists on GitHub.
 3. **`publish`** chains into the `Release` workflow to build, verify, and publish the
    GitHub Release.
 
@@ -130,8 +134,9 @@ No step that runs dependency code ever holds the write token.
 Add a `## X.Y.Z` entry to `CHANGELOG.md` yourself beforehand if you want curated notes —
 the workflow only auto-drafts one when the entry is missing.
 
-Requires that `master` accepts pushes from `GITHUB_TOKEN` (no branch protection blocking
-Actions). Prereleases (`alpha`/`beta`/`rc`) still use the manual steps below.
+Works with `master` protection that requires pull requests and signed commits, as long
+as no approving review is required and **Settings → Actions → General → Allow GitHub
+Actions to create and approve pull requests** is on. Prereleases (`alpha`/`beta`/`rc`) still use the manual steps below.
 
 ### Fast path: `npm run deploy`
 
