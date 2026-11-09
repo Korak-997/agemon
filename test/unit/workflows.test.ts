@@ -211,6 +211,24 @@ describe(".github/workflows", () => {
     expect(verification).toContain("git bundle verify");
   });
 
+  it("lands the release commit as a squash merge and tags only the merged commit", () => {
+    const pushJob = workflows.get("cut-release.yml")?.jobs.push as WorkflowJob;
+    const merge = stepRunning(pushJob, /gh pr merge/)?.run ?? "";
+
+    expect(pushJob.permissions).toEqual({
+      contents: "write",
+      "pull-requests": "write",
+    });
+    expect(merge).not.toContain("refs/heads/master");
+    expect(merge).toMatch(/gh pr merge .*--squash/);
+    expect(merge.indexOf("git ls-remote --exit-code --tags")).toBeLessThan(
+      merge.indexOf("gh pr create"),
+    );
+    expect(merge.indexOf("gh pr merge")).toBeLessThan(
+      merge.indexOf(`git push --quiet "$REPO_URL" "refs/tags/`),
+    );
+  });
+
   it("publishes releases from a job that runs no repository code", () => {
     const publishJob = workflows.get("release.yml")?.jobs
       .publish as WorkflowJob;
