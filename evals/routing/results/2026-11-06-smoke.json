@@ -1,0 +1,104 @@
+{
+  "label": "smoke",
+  "confidence": "Indicative: 12 runs per arm can catch only large effects, and a null result means no large effect.",
+  "sessionModel": "claude-opus-5-5",
+  "effort": "default",
+  "cliVersion": "2.1.318 (Claude Code)",
+  "agemonCommit": "df6726b0b14ea7717eec8275f812fc9e1e04e6b0",
+  "maxBudgetUsd": 5,
+  "isolationNote": "Runs use only project and local settings, with no MCP servers or web tools. Account-synced skills stay listed, but the Skill tool is off.",
+  "summary": {
+    "N": {
+      "runs": 1,
+      "passed": 1,
+      "costUsd": 0.3167123,
+      "turns": 33,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001519,
+        "claude-opus-5-5": 0.3165604
+      },
+      "agentCalls": 0,
+      "shareNamingModel": null,
+      "shareToRoleAgents": null,
+      "costChangeAgainstN": null,
+      "passes": null
+    },
+    "R": {
+      "runs": 1,
+      "passed": 1,
+      "costUsd": 0.42600109999999997,
+      "turns": 32,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.42585019999999996
+      },
+      "agentCalls": 0,
+      "shareNamingModel": null,
+      "shareToRoleAgents": null,
+      "costChangeAgainstN": 0.34507279950920755,
+      "passes": false
+    },
+    "RD": {
+      "runs": 1,
+      "passed": 1,
+      "costUsd": 0.37871029999999994,
+      "turns": 28,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.3785594
+      },
+      "agentCalls": 0,
+      "shareNamingModel": null,
+      "shareToRoleAgents": null,
+      "costChangeAgainstN": 0.19575494857635767,
+      "passes": false
+    }
+  },
+  "runs": [
+    {
+      "task": "mech-rename-account",
+      "arm": "R",
+      "repeat": 1,
+      "passed": true,
+      "turns": 32,
+      "costUsd": 0.42600109999999997,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.42585019999999996
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-rename-account",
+      "arm": "RD",
+      "repeat": 1,
+      "passed": true,
+      "turns": 28,
+      "costUsd": 0.37871029999999994,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001509,
+        "claude-opus-5-5": 0.3785594
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    },
+    {
+      "task": "mech-rename-account",
+      "arm": "N",
+      "repeat": 1,
+      "passed": true,
+      "turns": 33,
+      "costUsd": 0.3167123,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001519,
+        "claude-opus-5-5": 0.3165604
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0
+    }
+  ]
+}

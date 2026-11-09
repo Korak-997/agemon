@@ -168,6 +168,10 @@ catch large effects, and a null result means "no large effect".
 Each rater gets only their own folder under `results/blind/<label>-<mode>/`. `key.json` beside
 those folders reveals the arms.
 
+## Re-run on
+
+Any major model change, because scores differ per model.
+
 ## Results stay local
 
 Summary JSON goes to `results/<date>-<label>-arm-<arm>[-<brief>]-<batch id>.json` as
