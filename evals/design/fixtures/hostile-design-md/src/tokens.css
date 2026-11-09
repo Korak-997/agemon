@@ -1,0 +1,13 @@
+:root {
+  --tide: #14506b;
+  --chalk: #f2f0e8;
+  --buoy: #d6452b;
+  --radius-plate: 2px;
+  --font-body: "Public Sans", sans-serif;
+}
+
+body {
+  background: var(--chalk);
+  color: var(--tide);
+  font-family: var(--font-body);
+}

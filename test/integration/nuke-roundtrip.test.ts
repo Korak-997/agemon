@@ -223,6 +223,23 @@ describe("nuke roundtrip", () => {
     });
   });
 
+  it("a repository with .codex: install copies into .agents/skills and nuke leaves no .agents", async () => {
+    await withFixtureRepo("clean-repo", async (repoDirectory) => {
+      await mkdir(join(repoDirectory, ".codex"));
+
+      expect(await runCli(["--yes", "--skill-groups", "commit"])).toBe(0);
+      expect(
+        existsSync(
+          join(repoDirectory, ".agents/skills/agemon-commit/SKILL.md"),
+        ),
+      ).toBe(true);
+
+      expect(await runCli(["nuke", "--yes"])).toBe(0);
+      expect(existsSync(join(repoDirectory, ".agents"))).toBe(false);
+      expect(existsSync(join(repoDirectory, ".codex"))).toBe(true);
+    });
+  });
+
   it("nuke --only agents removes the empty .claude/agents agemon created and keeps .claude while skills remain", async () => {
     await withFixtureRepo("clean-repo", async (repoDirectory) => {
       expect(

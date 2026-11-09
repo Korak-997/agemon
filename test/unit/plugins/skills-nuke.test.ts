@@ -30,7 +30,6 @@ import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
 
 const shippedHistory = vi.hoisted(() => ({
   history: {} as Record<string, string[]>,
-  pinned: {} as Record<string, Record<string, string>>,
 }));
 
 vi.mock("../../../src/plugins/skills/bundle-fingerprints.js", () => ({
@@ -101,7 +100,6 @@ beforeEach(() => {
   process.env.AGEMON_FAKE_SUBPROCESS = "1";
   resetFakeSubprocessState();
   shippedHistory.history = {};
-  shippedHistory.pinned = {};
   raceHooks.afterFingerprint = [];
   raceHooks.afterResolvingClaudeSkills = [];
 });
@@ -755,7 +753,7 @@ describe("skills CLI target checks", () => {
   });
 });
 
-describe("nuke never deletes .agents/skills", () => {
+describe("nuke never deletes an .agents/skills copy it has no record of", () => {
   it("keeps .agents/skills/<name> with user content and prints nothing about it", async () => {
     const ctx = await createTestContext();
     await installCurrent(ctx, "commit", COMMIT);

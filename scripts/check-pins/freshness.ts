@@ -1,16 +1,10 @@
 const SETTLING_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
-const FULL_COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 
 export interface PublishedRelease {
   version: string;
   publishedAt: string;
   withdrawn: boolean;
-}
-
-export interface CommitSummary {
-  sha: string;
-  committedAt: string;
 }
 
 function unexpectedResponse(detail: string): Error {
@@ -152,54 +146,4 @@ export function pypiReleases(project: unknown): PublishedRelease[] {
     });
   }
   return releases;
-}
-
-export function githubCommitSummaries(commits: unknown): CommitSummary[] {
-  if (!Array.isArray(commits)) {
-    throw unexpectedResponse("the GitHub commit list is not an array");
-  }
-  return commits.map((commit: unknown) => {
-    const committedAt =
-      isRecord(commit) &&
-      isRecord(commit.commit) &&
-      isRecord(commit.commit.committer)
-        ? commit.commit.committer.date
-        : undefined;
-    if (
-      !isRecord(commit) ||
-      typeof commit.sha !== "string" ||
-      typeof committedAt !== "string"
-    ) {
-      throw unexpectedResponse("a GitHub commit has no sha or committer date");
-    }
-    return { sha: commit.sha, committedAt };
-  });
-}
-
-export interface NewestSettledCommitInput {
-  pinnedCommittedAt: string;
-  commits: CommitSummary[];
-  now: Date;
-}
-
-export function newestSettledCommitAfterPin(
-  input: NewestSettledCommitInput,
-): string | undefined {
-  for (const commit of input.commits) {
-    if (!FULL_COMMIT_PATTERN.test(commit.sha)) {
-      throw unexpectedResponse("a commit id is not a full hex SHA");
-    }
-  }
-  const pinnedCommittedAtMs = Date.parse(input.pinnedCommittedAt);
-  return input.commits
-    .filter(
-      (commit) =>
-        hasSettled(commit.committedAt, input.now) &&
-        Date.parse(commit.committedAt) > pinnedCommittedAtMs,
-    )
-    .sort(
-      (left, right) =>
-        Date.parse(left.committedAt) - Date.parse(right.committedAt),
-    )
-    .at(-1)?.sha;
 }

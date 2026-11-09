@@ -1,13 +1,8 @@
 import { lstat, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "../../core/context.js";
-import {
-  fakePinnedSkillFingerprint,
-  fakeSubprocessesActive,
-} from "../../core/fake-pinned-skills.js";
 import { RefusedFileError } from "../../core/files.js";
 import { resolveRepoDirectory } from "../../core/repo-paths.js";
-import { ESSENTIALS_SKILLS_COMMIT } from "../pins.js";
 import { BUNDLE_FINGERPRINTS } from "./bundle-fingerprints.js";
 import type { SkillBundleEntry } from "./catalog.js";
 import {
@@ -61,18 +56,7 @@ export async function currentSkillFingerprint(
     return null;
   }
   if (entry.pinnedRepository !== undefined) {
-    const isEssentialsPin =
-      entry.pinnedRepository.commit === ESSENTIALS_SKILLS_COMMIT;
-    if (isEssentialsPin && fakeSubprocessesActive()) {
-      return fakePinnedSkillFingerprint(entry.skillName);
-    }
-    const pinnedCommit = ownValue(
-      BUNDLE_FINGERPRINTS.pinned,
-      entry.pinnedRepository.commit,
-    );
-    return pinnedCommit === undefined
-      ? null
-      : (ownValue(pinnedCommit, entry.skillName) ?? null);
+    return null;
   }
   let source: string;
   try {

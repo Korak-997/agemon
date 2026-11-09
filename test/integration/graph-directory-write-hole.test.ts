@@ -126,7 +126,7 @@ describe("a repository whose .code-review-graph/graph.db links outside it", () =
 
       expect(await readdir(outside)).toEqual([]);
       expect(output).toContain(
-        "crg [ present · managed ] [ unhealthy ] .code-review-graph/graph.db",
+        "crg [ present · managed ] [ unhealthy ] .code-review-graph/gr",
       );
     },
     CLI_TIMEOUT_MS,

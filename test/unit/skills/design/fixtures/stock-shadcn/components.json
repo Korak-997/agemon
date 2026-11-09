@@ -1,0 +1,9 @@
+{
+  "style": "new-york",
+  "tailwind": {
+    "css": "src/app/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true
+  },
+  "aliases": { "components": "@/components" }
+}

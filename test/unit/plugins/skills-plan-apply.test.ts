@@ -30,10 +30,6 @@ import { resetFakeSubprocessState } from "../../../src/core/fake-subprocess.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
-import {
-  ESSENTIALS_SKILLS_COMMIT,
-  ESSENTIALS_SKILLS_REPOSITORY_URL,
-} from "../../../src/plugins/pins.js";
 import { describeOperation } from "../../../src/plugins/proposed-operation.js";
 import { findSkillGroup } from "../../../src/plugins/skills/catalog.js";
 import { skillsPlugin } from "../../../src/plugins/skills/index.js";
@@ -184,8 +180,127 @@ async function recordInstalledGroups(
   }
 }
 
+describe("skill groups a repository can still take", () => {
+  function listOffers(ctx: Context) {
+    return (
+      skillsPlugin.listOffers as NonNullable<typeof skillsPlugin.listOffers>
+    )(ctx);
+  }
+
+  it("calls a group never offered new and a refused group declined, and skips installed ones", async () => {
+    const ctx = await createTestContext();
+    await recordInstalledGroups(ctx, ["essentials"]);
+    await ctx.manifest.recordAction({
+      plugin: "skills",
+      type: "declined-skill-group",
+      target: "security",
+      preExisting: false,
+    });
+
+    const offers = listOffers(ctx);
+
+    expect(offers.find((offer) => offer.id === "security")).toEqual({
+      kind: "skill-group",
+      id: "security",
+      state: "declined",
+    });
+    expect(offers.find((offer) => offer.id === "design")).toEqual({
+      kind: "skill-group",
+      id: "design",
+      state: "new",
+    });
+    expect(offers.map((offer) => offer.id)).not.toContain("essentials");
+  });
+
+  it("reports the same group as new until the prompt has been answered", async () => {
+    const ctx = await createTestContext({ yes: true });
+    await recordInstalledGroups(ctx, ["essentials"]);
+
+    await planSkills(ctx);
+
+    expect(listOffers(ctx).find((offer) => offer.id === "design")?.state).toBe(
+      "new",
+    );
+  });
+});
+
+describe("skills plan and apply for a group the user asked to add", () => {
+  async function contextWithDeclinedSecurity(): Promise<Context> {
+    const ctx = await createTestContext({
+      preinstalledSkills: skillNamesOf("essentials"),
+    });
+    await recordInstalledGroups(ctx, ["essentials"]);
+    for (const type of ["offered-skill-group", "declined-skill-group"]) {
+      await ctx.manifest.recordAction({
+        plugin: "skills",
+        type,
+        target: "security",
+        preExisting: false,
+      });
+    }
+    return ctx;
+  }
+
+  function declinedTargets(ctx: Context): string[] {
+    return ctx.manifest
+      .getActions()
+      .filter((action) => action.type === "declined-skill-group")
+      .map((action) => action.target);
+  }
+
+  it("plans a declined group once it is requested, and nothing else", async () => {
+    const ctx = await contextWithDeclinedSecurity();
+    ctx.requestedSkillGroupIds = new Set(["security"]);
+
+    const operations = await planSkills(ctx);
+
+    expect(operations.map((operation) => operation.resourceId)).toEqual([
+      "skill-group:security",
+    ]);
+    expect(operations[0].action).toBe("install-package");
+  });
+
+  it("clears the decline after the group installs", async () => {
+    const ctx = await contextWithDeclinedSecurity();
+    ctx.requestedSkillGroupIds = new Set(["security"]);
+
+    await applySkills(ctx, await planSkills(ctx));
+
+    expect(declinedTargets(ctx)).toEqual([]);
+  });
+
+  it("keeps the decline when planning without applying", async () => {
+    const ctx = await contextWithDeclinedSecurity();
+    ctx.requestedSkillGroupIds = new Set(["security"]);
+
+    await planSkills(ctx);
+
+    expect(declinedTargets(ctx)).toEqual(["security"]);
+  });
+
+  it("keeps the decline when the install fails", async () => {
+    const ctx = await contextWithDeclinedSecurity();
+    ctx.requestedSkillGroupIds = new Set(["security"]);
+    const operations = await planSkills(ctx);
+    ctx.run = async () => {
+      throw new Error("skills CLI failed");
+    };
+
+    await expect(applySkills(ctx, operations)).rejects.toThrow();
+
+    expect(declinedTargets(ctx)).toEqual(["security"]);
+  });
+
+  it("leaves a declined group alone when it was not requested", async () => {
+    const ctx = await contextWithDeclinedSecurity();
+
+    expect(await planSkills(ctx)).toEqual([]);
+    expect(declinedTargets(ctx)).toEqual(["security"]);
+  });
+});
+
 describe("skills plan: one operation per group", () => {
-  it("lists each group with its skills and pinned sources", async () => {
+  it("lists each group with its skills", async () => {
     const ctx = await createTestContext({ skillGroupsOption: "security" });
 
     const operations = await planSkills(ctx);
@@ -205,12 +320,12 @@ describe("skills plan: one operation per group", () => {
     expect(operations[0].preview.text).toBe(
       [
         "Essentials:",
-        `web-design-guidelines — ${ESSENTIALS_SKILLS_REPOSITORY_URL} at ${ESSENTIALS_SKILLS_COMMIT}`,
-        `writing-guidelines — ${ESSENTIALS_SKILLS_REPOSITORY_URL} at ${ESSENTIALS_SKILLS_COMMIT}`,
+        "web-design-guidelines — bundled with agemon",
+        "writing-guidelines — bundled with agemon",
       ].join("\n"),
     );
     expect(operations[1].preview.text).toBe(
-      "Security:\nagemon-security — bundled with agemon",
+      "Security:\nagemon-security — bundled with agemon\nagemon-security-audit — bundled with agemon",
     );
   });
 

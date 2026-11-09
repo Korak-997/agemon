@@ -189,6 +189,7 @@ describe("recording the workspace footprint", () => {
 
     expect(workspaceEntries(ctx).map((entry) => entry.resourceId)).toEqual([
       "created-directory:.claude",
+      "created-directory:.agents/skills",
     ]);
   });
 });

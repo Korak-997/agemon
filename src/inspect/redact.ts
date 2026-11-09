@@ -51,6 +51,9 @@ export const MAX_REDACTED_LINE_CHARACTERS = 4096;
 const HIGH_ENTROPY_MIN_LENGTH = 32;
 const HIGH_ENTROPY_MIN_BITS_PER_CHAR = 3.5;
 const HIGH_ENTROPY_CHARSET = /^[A-Za-z0-9+/=_-]+$/;
+const MIN_PATH_SEGMENTS = 3;
+const MIXED_SEGMENT_MIN_LENGTH = 16;
+const WORD_SEPARATOR = /[-_]/;
 
 export type RedactionReason =
   | "credential-key"
@@ -82,11 +85,36 @@ function shannonEntropyBitsPerChar(value: string): number {
   return bitsPerChar;
 }
 
+function mixesCasesAndDigits(value: string): boolean {
+  return /[A-Z]/.test(value) && /[a-z]/.test(value) && /[0-9]/.test(value);
+}
+
+function looksLikeSecretPathSegment(segment: string): boolean {
+  if (shannonEntropyBitsPerChar(segment) < HIGH_ENTROPY_MIN_BITS_PER_CHAR) {
+    return false;
+  }
+  return (
+    (segment.length >= MIXED_SEGMENT_MIN_LENGTH &&
+      mixesCasesAndDigits(segment)) ||
+    (segment.length >= HIGH_ENTROPY_MIN_LENGTH && !WORD_SEPARATOR.test(segment))
+  );
+}
+
+function looksLikeWordPath(value: string): boolean {
+  const segments = value.split("/");
+  return (
+    value.startsWith("/") &&
+    segments.length >= MIN_PATH_SEGMENTS &&
+    !segments.some(looksLikeSecretPathSegment)
+  );
+}
+
 function looksHighEntropy(value: string): boolean {
   return (
     value.length >= HIGH_ENTROPY_MIN_LENGTH &&
     HIGH_ENTROPY_CHARSET.test(value) &&
-    shannonEntropyBitsPerChar(value) >= HIGH_ENTROPY_MIN_BITS_PER_CHAR
+    shannonEntropyBitsPerChar(value) >= HIGH_ENTROPY_MIN_BITS_PER_CHAR &&
+    !looksLikeWordPath(value)
   );
 }
 

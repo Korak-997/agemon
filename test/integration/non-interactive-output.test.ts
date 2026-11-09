@@ -30,6 +30,7 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
+      subagent-default: agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in 2.1.251); no default written
       Plan <PLAN_ID>   ·   agemon <VERSION>
 
       crg
@@ -43,8 +44,8 @@ describe("non-interactive output contract", () => {
       skills
         v  skill-group:essentials   [executes]
              Essentials:
-             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
-             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             web-design-guidelines — bundled with agemon
+             writing-guidelines — bundled with agemon
 
       cli-tool
         v  agnix                    [executes]
@@ -84,6 +85,15 @@ describe("non-interactive output contract", () => {
              +- Prefer safe, reversible changes; call out irreversible or outward-facing steps first.
              +- Security and performance by default within scope: validate input, least privilege,
              +  no needless recomputation.
+             +
+             +## Subagent Models
+             +
+             +- A few tool calls: do them yourself. Every subagent pays for its own startup context.
+             +- Choose a subagent's model whenever you can. An omitted model usually inherits the session's.
+             +- Cheapest tier: read-only search, log digests, or code the plan already spells out.
+             +- Mid tier: other implementation and routine reviews.
+             +- Top tier: cross-module debugging, security or concurrency review, architecture, final branch review.
+             +- Failed twice on one task: go one tier up.
              +
              +## Output Conventions
              +
@@ -138,6 +148,7 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
+      subagent-default: agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in 2.1.251); no default written
       Plan <PLAN_ID>   ·   agemon <VERSION>
 
       crg
@@ -151,8 +162,8 @@ describe("non-interactive output contract", () => {
       skills
         v  skill-group:essentials   [executes]
              Essentials:
-             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
-             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             web-design-guidelines — bundled with agemon
+             writing-guidelines — bundled with agemon
 
       cli-tool
         v  agnix                    [executes]
@@ -192,6 +203,15 @@ describe("non-interactive output contract", () => {
              +- Prefer safe, reversible changes; call out irreversible or outward-facing steps first.
              +- Security and performance by default within scope: validate input, least privilege,
              +  no needless recomputation.
+             +
+             +## Subagent Models
+             +
+             +- A few tool calls: do them yourself. Every subagent pays for its own startup context.
+             +- Choose a subagent's model whenever you can. An omitted model usually inherits the session's.
+             +- Cheapest tier: read-only search, log digests, or code the plan already spells out.
+             +- Mid tier: other implementation and routine reviews.
+             +- Top tier: cross-module debugging, security or concurrency review, architecture, final branch review.
+             +- Failed twice on one task: go one tier up.
              +
              +## Output Conventions
              +
@@ -246,15 +266,16 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       5/5 tools present — python3, pip, pipx, uv, code-review-graph
-      Installing 5 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash]. Each agent can use only the tools listed.
+      subagent-default: agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in 2.1.251); no default written
+      Installing 7 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash]. Each agent can use only the tools listed.
       daemon hardening: strict
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
-      ╭ [ok] Applied 23 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 28 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             10 operations                                   │
-      │     Subagents          5 operations                                    │
+      │     Skills             13 operations                                   │
+      │     Subagents          7 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
       │                                                                        │
@@ -270,13 +291,13 @@ describe("non-interactive output contract", () => {
       await captureNonInteractiveRun("clean-repo", ["--yes", "--quiet"]),
     ).toMatchInlineSnapshot(`
       "exit 0
-      Installing 5 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash]. Each agent can use only the tools listed.
-      ╭ [ok] Applied 23 operations · environment verified ─────────────────────╮
+      Installing 7 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash]. Each agent can use only the tools listed.
+      ╭ [ok] Applied 28 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             10 operations                                   │
-      │     Subagents          5 operations                                    │
+      │     Skills             13 operations                                   │
+      │     Subagents          7 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
       │                                                                        │
@@ -305,8 +326,8 @@ describe("non-interactive output contract", () => {
       skills
         v  skill-group:essentials   [executes]
              Essentials:
-             web-design-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
-             writing-guidelines — https://github.com/vercel-labs/agent-skills.git at 063bee94c3f4df8453406c830b0a7df0f2860278
+             web-design-guidelines — bundled with agemon
+             writing-guidelines — bundled with agemon
 
       cli-tool
         v  agnix                    [executes]
@@ -346,6 +367,15 @@ describe("non-interactive output contract", () => {
              +- Prefer safe, reversible changes; call out irreversible or outward-facing steps first.
              +- Security and performance by default within scope: validate input, least privilege,
              +  no needless recomputation.
+             +
+             +## Subagent Models
+             +
+             +- A few tool calls: do them yourself. Every subagent pays for its own startup context.
+             +- Choose a subagent's model whenever you can. An omitted model usually inherits the session's.
+             +- Cheapest tier: read-only search, log digests, or code the plan already spells out.
+             +- Mid tier: other implementation and routine reviews.
+             +- Top tier: cross-module debugging, security or concurrency review, architecture, final branch review.
+             +- Failed twice on one task: go one tier up.
              +
              +## Output Conventions
              +
@@ -491,6 +521,13 @@ describe("non-interactive output contract", () => {
             "label": "skill groups",
             "state": "absent",
             "detail": null
+          },
+          {
+            "capabilityId": "subagent-default",
+            "resourceId": "settings-key:env.CLAUDE_CODE_SUBAGENT_MODEL",
+            "label": "env.CLAUDE_CODE_SUBAGENT_MODEL",
+            "state": "absent",
+            "detail": "agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in 2.1.251); no default written"
           }
         ],
         "structuredConfig": [
@@ -605,7 +642,15 @@ describe("non-interactive output contract", () => {
               "evidence": []
             }
           }
-        ]
+        ],
+        "cloud": {
+          "uncommittedPaths": [],
+          "ignoredPaths": [],
+          "unpushedCommits": null,
+          "gitCheckError": "not a git repository, so Claude Code on the web can't clone it",
+          "toolsToInstall": [],
+          "setupScript": null
+        }
       }"
     `);
   });

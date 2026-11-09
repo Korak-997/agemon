@@ -3,10 +3,6 @@ import type { CustomSkillGroupConfig } from "../../core/config.js";
 import { resolveVendoredSkillPath } from "../../core/package-assets.js";
 import { printable } from "../../core/untrusted-text.js";
 import {
-  ESSENTIALS_SKILLS_COMMIT,
-  ESSENTIALS_SKILLS_REPOSITORY_URL,
-} from "../pins.js";
-import {
   type PinnedSkillsRepository,
   resolvePinnedSkillPath,
 } from "./pinned-source.js";
@@ -20,15 +16,13 @@ export interface SkillBundleEntry {
   localSourcePath?: string;
 }
 
-const ESSENTIALS_REPOSITORY: PinnedSkillsRepository = {
-  url: ESSENTIALS_SKILLS_REPOSITORY_URL,
-  commit: ESSENTIALS_SKILLS_COMMIT,
-};
+export type AgentModel = "haiku" | "sonnet" | "opus";
 
 export interface AgentDefinition {
   name: string;
   description: string;
   tools: readonly string[];
+  model?: AgentModel;
   readonly briefPath: string;
 }
 
@@ -44,6 +38,7 @@ export interface SkillGroup {
 
 const GEO_AUDIT_AGENT_DESCRIPTION_SUFFIX =
   "Used by the geo-audit skill; do not use it for other tasks.";
+const GEO_AUDIT_AGENT_MODEL: AgentModel = "sonnet";
 
 function vendoredSkill(groupId: string, skillId: string): SkillBundleEntry {
   return {
@@ -81,9 +76,35 @@ function geoAuditAgent(
     name,
     description: `${purpose} ${GEO_AUDIT_AGENT_DESCRIPTION_SUFFIX}`,
     tools,
+    model: GEO_AUDIT_AGENT_MODEL,
     get briefPath() {
       return join(
         resolveVendoredSkillPath("geo-seo", "geo-audit"),
+        "references",
+        briefFileName,
+      );
+    },
+  };
+}
+
+function workflowRoleAgent(
+  name: string,
+  briefFileName: string,
+  description: string,
+  tools: readonly string[],
+  model: AgentModel,
+): AgentDefinition {
+  return {
+    name,
+    description,
+    tools,
+    model,
+    get briefPath() {
+      return join(
+        resolveVendoredSkillPath(
+          "workflow",
+          "agemon-subagent-driven-development",
+        ),
         "references",
         briefFileName,
       );
@@ -98,30 +119,28 @@ export const SKILL_GROUPS: SkillGroup[] = [
     description: "Web design and writing guidelines from Vercel Labs.",
     defaultSelected: true,
     skills: [
-      pinnedSkill(ESSENTIALS_REPOSITORY, "web-design-guidelines"),
-      pinnedSkill(ESSENTIALS_REPOSITORY, "writing-guidelines"),
+      vendoredSkill("essentials", "web-design-guidelines"),
+      vendoredSkill("essentials", "writing-guidelines"),
     ],
   },
   {
     id: "design",
     label: "Design & UI/UX",
     description:
-      "agemon-design: design engineering with anti-slop rules, discovery, and outcome recipes for dashboards, landings, and auth screens.",
+      "agemon-design: a staged UI workflow that reads your real brand, builds from the subject, and reports what it could not verify. Auto-triggering is not guaranteed, its gates are voluntary, and a passing run does not mean a good design.",
     defaultSelected: false,
-    skills: [
-      vendoredSkill("design", "agemon-design"),
-      vendoredSkill("design", "agemon-design-minimal"),
-      vendoredSkill("design", "agemon-design-editorial"),
-      vendoredSkill("design", "agemon-design-dashboard"),
-    ],
+    skills: [vendoredSkill("design", "agemon-design")],
   },
   {
     id: "security",
     label: "Security",
     description:
-      "Exploit-driven security review — no finding without a working proof-of-concept, CVSS-aligned severity.",
+      "Exploit-driven security review — no finding without a working proof-of-concept, CVSS-aligned severity — plus a multi-agent, multi-phase codebase audit with independently verified findings.",
     defaultSelected: false,
-    skills: [vendoredSkill("security", "agemon-security")],
+    skills: [
+      vendoredSkill("security", "agemon-security"),
+      vendoredSkill("security", "agemon-security-audit"),
+    ],
   },
   {
     id: "code-quality",
@@ -175,7 +194,7 @@ export const SKILL_GROUPS: SkillGroup[] = [
     id: "teamlead",
     label: "Team Lead",
     description:
-      "Team-lead workflows: structured RFC planning and PRD generation for major features or architectural changes.",
+      "Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync.",
     defaultSelected: false,
     skills: [
       vendoredSkill("team-lead", "agemon-plan-rfc"),
@@ -244,9 +263,76 @@ export const SKILL_GROUPS: SkillGroup[] = [
       ),
     ],
   },
+  {
+    id: "workflow",
+    label: "Development Workflow",
+    description:
+      "Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Pairs with Self-Review.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("workflow", "agemon-brainstorming"),
+      vendoredSkill("workflow", "agemon-writing-plans"),
+      vendoredSkill("workflow", "agemon-executing-plans"),
+      vendoredSkill("workflow", "agemon-subagent-driven-development"),
+      vendoredSkill("workflow", "agemon-test-driven-development"),
+      vendoredSkill("workflow", "agemon-using-git-worktrees"),
+      vendoredSkill("workflow", "agemon-dispatching-parallel-agents"),
+      vendoredSkill("workflow", "agemon-finishing-a-development-branch"),
+    ],
+    agents: [
+      workflowRoleAgent(
+        "agemon-scout",
+        "role-scout.md",
+        "Cheap read-only search: finds code, traces usages and digests logs, then reports paths and lines. Changes nothing.",
+        ["Read", "Grep", "Glob"],
+        "haiku",
+      ),
+      workflowRoleAgent(
+        "agemon-worker",
+        "role-worker.md",
+        "Mid-tier implementer for one well-defined task: routine code changes and routine reviews. Hands back anything needing a design decision.",
+        ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+        "sonnet",
+      ),
+    ],
+  },
+  {
+    id: "output-style",
+    label: "Output Style",
+    description:
+      "agemon-adhd: on request, replies lead with the next action, number their steps, restate progress, and skip preamble and tangents.",
+    defaultSelected: false,
+    skills: [vendoredSkill("output-style", "agemon-adhd")],
+  },
+  {
+    id: "founder",
+    label: "Founder",
+    description:
+      "Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("founder", "agemon-founder-board"),
+      vendoredSkill("founder", "agemon-founder-competitors"),
+      vendoredSkill("founder", "agemon-founder-consumer"),
+      vendoredSkill("founder", "agemon-founder-pricing"),
+      vendoredSkill("founder", "agemon-founder-offer"),
+      vendoredSkill("founder", "agemon-founder-cfo"),
+      vendoredSkill("founder", "agemon-founder-marketing"),
+      vendoredSkill("founder", "agemon-founder-brand"),
+      vendoredSkill("founder", "agemon-founder-ops"),
+      vendoredSkill("founder", "agemon-founder-launch"),
+      vendoredSkill("founder", "agemon-founder-plan"),
+    ],
+  },
 ];
 
 export const RETIRED_AGENT_NAMES: readonly string[] = [];
+
+export const RETIRED_SKILL_NAMES: readonly string[] = [
+  "agemon-design-minimal",
+  "agemon-design-editorial",
+  "agemon-design-dashboard",
+];
 
 export function findSkillGroup(groupId: string): SkillGroup | undefined {
   return SKILL_GROUPS.find((group) => group.id === groupId);

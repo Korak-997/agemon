@@ -11,7 +11,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakePinnedSkillManifest } from "../../../src/core/fake-pinned-skills.js";
 import {
   createFakeVerifiedBinaryInstaller,
   fakeCodeReviewGraphOnPath,
@@ -22,7 +21,6 @@ import {
 import {
   AGNIX_VERSION,
   CODE_REVIEW_GRAPH_VERSION,
-  ESSENTIALS_SKILLS_COMMIT,
 } from "../../../src/plugins/pins.js";
 
 const PINNED_SKILLS_CLI =
@@ -152,25 +150,6 @@ describe("runFakeSubprocess", () => {
     expect(existsSync(join(cwd, ".claude/escape"))).toBe(false);
   });
 
-  it("writes stand-ins for the pinned skills on checkout", async () => {
-    const sourceDirectory = join(
-      await mkdtemp(join(tmpdir(), "agemon-fake-pinned-")),
-      ESSENTIALS_SKILLS_COMMIT,
-    );
-    await mkdir(sourceDirectory);
-
-    runFakeSubprocess("git", ["checkout", "-q", "FETCH_HEAD"], {
-      cwd: sourceDirectory,
-    });
-
-    expect(
-      await readFile(
-        join(sourceDirectory, "skills/writing-guidelines/SKILL.md"),
-        "utf8",
-      ),
-    ).toBe(fakePinnedSkillManifest("writing-guidelines"));
-  });
-
   it("installs code-review-graph only at the pinned version, under the fake pipx home", async () => {
     const home = await mkdtemp(join(tmpdir(), "agemon-fake-crg-"));
     vi.stubEnv("HOME", home);
@@ -224,12 +203,6 @@ describe("runFakeSubprocess", () => {
       /--global or --prefix/,
     );
     expect(() => runFakeSubprocess("npm", ["root", "--global"])).not.toThrow();
-  });
-
-  it("reports the pinned Essentials commit as the fetched HEAD", () => {
-    const result = runFakeSubprocess("git", ["rev-parse", "HEAD"]);
-
-    expect(result.stdout.trim()).toBe(ESSENTIALS_SKILLS_COMMIT);
   });
 });
 

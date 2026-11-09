@@ -5,6 +5,7 @@ import { theme } from "../ui/theme.js";
 import { isDevMode } from "./dev-mode.js";
 import {
   compareReleaseVersions,
+  describeStepsAfterUpgrade,
   fetchLatestReleaseVersion,
   parseReleaseVersion,
 } from "./github-release.js";
@@ -204,6 +205,7 @@ async function offerUpdate(
   }
 
   console.log(theme.ok(`Updated to ${latestVersion}.`));
+  console.log(describeStepsAfterUpgrade(latestVersion));
   return "updated";
 }
 

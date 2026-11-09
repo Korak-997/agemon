@@ -1,11 +1,13 @@
+import { multiselect } from "@clack/prompts";
 import { readIsolationStatus } from "../inspect/discover.js";
-import type { AgemonPlugin } from "../plugins/types.js";
+import type { AgemonPlugin, Offer } from "../plugins/types.js";
 import {
   type AgemonConfig,
   type ConfigCapabilityUpdate,
   rewriteConfigCapabilities,
 } from "./config.js";
 import type { RunOutcome } from "./orchestrator.js";
+import { assertNotCancelled } from "./prompt-clack.js";
 
 const CAPABILITIES_BEFORE_KNOWN_LIST: readonly string[] = [
   "crg",
@@ -15,8 +17,6 @@ const CAPABILITIES_BEFORE_KNOWN_LIST: readonly string[] = [
   "master-prompt",
 ];
 
-const AUTO_ADDED_TO_EXISTING_CONFIGS: readonly string[] = ["agents"];
-
 const OUTCOMES_THAT_UPDATE_CONFIG: ReadonlySet<RunOutcome> = new Set([
   "applied",
   "nothing-to-do",
@@ -24,25 +24,44 @@ const OUTCOMES_THAT_UPDATE_CONFIG: ReadonlySet<RunOutcome> = new Set([
   "declined",
 ]);
 
-export function capabilitiesToAutoAdd(
+export function findCapabilityOffers(
   config: AgemonConfig,
   plugins: AgemonPlugin[],
-): string[] {
+): Offer[] {
   const knownIds = new Set(
     config.knownCapabilities ?? CAPABILITIES_BEFORE_KNOWN_LIST,
   );
   const listedIds = new Set(config.capabilities);
-  return AUTO_ADDED_TO_EXISTING_CONFIGS.filter((id) => {
-    const plugin = plugins.find((candidate) => candidate.id === id);
-    return (
-      plugin !== undefined &&
-      !knownIds.has(id) &&
-      !listedIds.has(id) &&
-      (plugin.dependsOn ?? []).every((dependencyId) =>
-        listedIds.has(dependencyId),
-      )
-    );
-  });
+  return plugins
+    .filter(
+      (plugin) =>
+        !listedIds.has(plugin.id) &&
+        (plugin.dependsOn ?? []).every((dependencyId) =>
+          listedIds.has(dependencyId),
+        ),
+    )
+    .map((plugin) => ({
+      kind: "capability",
+      id: plugin.id,
+      state: knownIds.has(plugin.id) ? "declined" : "new",
+    }));
+}
+
+export async function promptForNewCapabilities(
+  newCapabilities: AgemonPlugin[],
+): Promise<string[]> {
+  return assertNotCancelled(
+    await multiselect<string>({
+      message: "New capabilities to add",
+      options: newCapabilities.map((plugin) => ({
+        value: plugin.id,
+        label: plugin.id,
+        hint: plugin.summary,
+      })),
+      required: false,
+      initialValues: [],
+    }),
+  );
 }
 
 export type AddedCapabilitiesUpdate =

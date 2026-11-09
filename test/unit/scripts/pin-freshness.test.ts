@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   compareVersions,
   declaredInstallDependencies,
-  githubCommitSummaries,
-  newestSettledCommitAfterPin,
   newestSettledVersion,
   npmReleases,
   pinnedReleaseProblem,
@@ -13,8 +11,6 @@ import {
 const NOW = new Date("2026-10-25T12:00:00Z");
 const EIGHT_DAYS_AGO = "2026-10-17T12:00:00Z";
 const SIX_DAYS_AGO = "2026-10-19T12:00:00Z";
-const COMMIT_A = "a".repeat(40);
-const COMMIT_B = "b".repeat(40);
 
 describe("newestSettledVersion", () => {
   it("picks the highest version that is at least 7 days old", () => {
@@ -122,63 +118,6 @@ describe("pypiReleases", () => {
 
   it("rejects a project without a releases map", () => {
     expect(() => pypiReleases({ info: {} })).toThrow("unexpected response");
-  });
-});
-
-describe("newestSettledCommitAfterPin", () => {
-  it("reports a settled commit newer than the pinned one", () => {
-    expect(
-      newestSettledCommitAfterPin({
-        pinnedCommittedAt: "2026-08-28T00:00:00Z",
-        commits: [
-          { sha: COMMIT_B, committedAt: SIX_DAYS_AGO },
-          { sha: COMMIT_A, committedAt: EIGHT_DAYS_AGO },
-        ],
-        now: NOW,
-      }),
-    ).toBe(COMMIT_A);
-  });
-
-  it("ignores commits that are older than the pin or not yet settled", () => {
-    expect(
-      newestSettledCommitAfterPin({
-        pinnedCommittedAt: "2026-08-28T00:00:00Z",
-        commits: [
-          { sha: COMMIT_B, committedAt: SIX_DAYS_AGO },
-          { sha: COMMIT_A, committedAt: "2026-08-01T00:00:00Z" },
-        ],
-        now: NOW,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("rejects a commit id that is not a full hex SHA", () => {
-    expect(() =>
-      newestSettledCommitAfterPin({
-        pinnedCommittedAt: "2026-08-28T00:00:00Z",
-        commits: [{ sha: "main; echo pwned", committedAt: EIGHT_DAYS_AGO }],
-        now: NOW,
-      }),
-    ).toThrow("unexpected response");
-  });
-});
-
-describe("githubCommitSummaries", () => {
-  it("reads the sha and committer date of each commit", () => {
-    expect(
-      githubCommitSummaries([
-        { sha: COMMIT_A, commit: { committer: { date: EIGHT_DAYS_AGO } } },
-      ]),
-    ).toEqual([{ sha: COMMIT_A, committedAt: EIGHT_DAYS_AGO }]);
-  });
-
-  it("rejects a response that is not a commit list", () => {
-    expect(() => githubCommitSummaries({ message: "Not Found" })).toThrow(
-      "unexpected response",
-    );
-    expect(() => githubCommitSummaries([{ sha: COMMIT_A }])).toThrow(
-      "unexpected response",
-    );
   });
 });
 

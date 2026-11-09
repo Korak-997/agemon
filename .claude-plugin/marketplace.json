@@ -1,0 +1,100 @@
+{
+  "name": "agemon",
+  "owner": {
+    "name": "Korak-997"
+  },
+  "description": "agemon's skill groups for Claude: pick the groups you want, in claude.ai or Claude Code.",
+  "plugins": [
+    {
+      "name": "agemon-essentials",
+      "description": "Web design and writing guidelines from Vercel Labs.",
+      "source": "./assets/skills/essentials",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-design",
+      "description": "agemon-design: a staged UI workflow that reads your real brand, builds from the subject, and reports what it could not verify. Auto-triggering is not guaranteed, its gates are voluntary, and a passing run does not mean a good design.",
+      "source": "./assets/skills/design",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-security",
+      "description": "Exploit-driven security review — no finding without a working proof-of-concept, CVSS-aligned severity — plus a multi-agent, multi-phase codebase audit with independently verified findings.",
+      "source": "./assets/skills/security",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-code-quality",
+      "description": "Simplicity, DRY architecture, self-documenting naming, and surgical scope control for day-to-day edits.",
+      "source": "./assets/skills/code-quality",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-architecture",
+      "description": "Clean Architecture review: dependency rule, layer separation, boundary crossing, SOLID.",
+      "source": "./assets/skills/architecture",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-self-review",
+      "description": "Verification before claiming completion, giving and receiving code review, and root-cause-first debugging.",
+      "source": "./assets/skills/self-review",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-performance",
+      "description": "Algorithmic-complexity-first discipline: N+1 detection, hot-loop hygiene, and when not to optimize.",
+      "source": "./assets/skills/performance",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-commit",
+      "description": "Staging review, commit message structure, and splitting unrelated changes into separate commits.",
+      "source": "./assets/skills/commit",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-teamlead",
+      "description": "Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync.",
+      "source": "./assets/skills/team-lead",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-geo-seo",
+      "description": "Audit and optimize websites for AI search citation (ChatGPT, Perplexity, Google AI Overviews): citability, AI crawlers, llms.txt, schema, technical SEO, reports.",
+      "source": "./assets/skills/geo-seo",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-workflow",
+      "description": "Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Pairs with Self-Review.",
+      "source": "./assets/skills/workflow",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-output-style",
+      "description": "agemon-adhd: on request, replies lead with the next action, number their steps, restate progress, and skip preamble and tangents.",
+      "source": "./assets/skills/output-style",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-founder",
+      "description": "Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict.",
+      "source": "./assets/skills/founder",
+      "strict": false,
+      "skills": ["./"]
+    }
+  ]
+}

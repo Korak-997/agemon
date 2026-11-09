@@ -4,6 +4,7 @@ import { crgPlugin } from "./crg/index.js";
 import { daemonPlugin } from "./daemon/index.js";
 import { masterPromptPlugin } from "./master-prompt/index.js";
 import { skillsPlugin } from "./skills/index.js";
+import { subagentDefaultPlugin } from "./subagent-default/index.js";
 import type { AgemonPlugin } from "./types.js";
 
 const capabilityRegistry: AgemonPlugin[] = [
@@ -11,6 +12,7 @@ const capabilityRegistry: AgemonPlugin[] = [
   daemonPlugin,
   skillsPlugin,
   agentsPlugin,
+  subagentDefaultPlugin,
   cliToolPlugin,
   masterPromptPlugin,
 ];

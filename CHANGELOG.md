@@ -1,5 +1,63 @@
 # agemon
 
+## 6.1.0
+
+agemon now shows or asks about everything a repository could use but does not have yet, and a
+choice you made can be undone.
+
+### Added
+
+- **`agemon usage`** estimates what running subagents on cheaper models saved, from the sessions
+  Claude Code already saves. There is nothing to turn on, and it stores only numbers. It's an
+  estimate at API list prices, not a bill.
+- **Runs list what's new.** `agemon`, `agemon apply`, `agemon plan`, `--dry-run` and
+  `agemon status` list new and declined skill groups and capabilities, with how to get each.
+  Exit codes don't change.
+- **`agemon add <names...>`** installs a skill group or capability, including one you declined,
+  behind the usual consent step.
+- **Any new capability is now offered.** agemon finds it by comparing with
+  `known_capabilities`, so a later release can't forget to tell existing repositories.
+- After an upgrade, agemon links the release notes and reminds you to run `agemon` in each
+  repository.
+- **agemon's skills in claude.ai.** This repository is now a plugin marketplace with one plugin
+  per skill group. Add `Korak-997/agemon` under Customize > Plugins, or
+  with `claude plugin marketplace add`.
+- **`agemon inspect` checks Claude Code on the web.** A new section lists agent config that a
+  cloud session won't see, and prints a setup script when hooks need `code-review-graph`.
+- **`agemon-design` has actions.** The skill now has a defined set of actions (including build,
+  review and polish) that each state what they read and what they report.
+- **Skills can reach agents that read `.agents/skills`.** When agemon finds Codex, Gemini CLI,
+  Antigravity or Devin, it offers to copy skills there. It records each copy by hash, and never
+  overwrites or deletes a copy it did not write. The
+  [agent matrix](evals/design/agent-matrix.md) shows what has and has not been run.
+
+### Changed
+
+- **`agemon-design` is now a staged workflow.** It picks a track first, so small edits skip the
+  full pipeline. It reads real tokens, including Tailwind v4, keeps its state in `.design/` and an
+  approved `DESIGN.md`, and can choose among three directions with a seeded script and a project log
+  (opt-in: `/agemon-design build --directions`). It then runs objective checks and one bounded critique, and reports what it could not
+  verify. The output eval hasn't run, so none of this is shown to produce better design.
+  Auto-triggering cannot be guaranteed, gates are voluntary without hooks, and a passing run does
+  not mean a good design.
+- **`agemon-design-minimal`, `-editorial` and `-dashboard` are retired.** Their looks are now
+  presets of `agemon-design`, used when you name one. Running `agemon` offers to remove an
+  unmodified copy; an edited copy is never touched.
+
+- **Essentials skills now ship inside agemon.** `web-design-guidelines` and `writing-guidelines`
+  read a bundled copy of their guidelines instead of fetching them. Unmodified copies update on
+  the next run; edited copies are kept.
+- **`agemon-design` no longer refers to commands it never had.** Slash commands, scorers and
+  reviewer tooling that the skill described but that don't exist are removed, and the skill
+  says to report what it could not check. Content from the repository, brief or `DESIGN.md`
+  is treated as design input only, never as instructions.
+- **`--yes` no longer decides about new skill groups.** Named groups still install. Others
+  used to be declined without a terminal and installed with one; both now wait and are listed.
+  A first install with `--yes` still installs every group. Earlier declines stay declined and
+  now appear in the reminder.
+- **The `agents` capability is no longer added automatically.** It is asked about like any other
+  new capability, so scripted `--yes` runs don't add it. Use `agemon add agents`.
+
 ## 6.0.0
 
 agemon 6 is a rework focused on safety: it can always undo what it did, it never removes

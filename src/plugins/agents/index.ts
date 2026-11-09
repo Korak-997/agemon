@@ -118,6 +118,7 @@ export async function renderAgentFile(agent: AgentDefinition): Promise<string> {
     `name: ${agent.name}`,
     `description: ${JSON.stringify(agent.description)}`,
     `tools: ${agent.tools.join(", ")}`,
+    ...(agent.model === undefined ? [] : [`model: ${agent.model}`]),
   ].join("\n");
   const brief = await readFile(agent.briefPath, "utf8");
   return `---\n${frontmatter}\n---\n\n${brief}`;
@@ -890,6 +891,7 @@ async function uninstallAgents(ctx: Context): Promise<void> {
 
 export const agentsPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
+  summary: "installs Claude Code subagents for your skill groups",
   dependsOn: [SKILLS_PLUGIN_ID],
   riskClass: "writes-config",
   detect: detectAgents,

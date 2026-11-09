@@ -13,18 +13,16 @@ Outcome recipe for marketing landing pages — composition, section grammar, and
 | Input | Options | Default |
 |---|---|---|
 | What exists to show | live product (screenshots possible) / pre-launch (no product yet) / sales-led service | live product |
-| Theme | a preset from [themes.md](themes.md) or existing brand tokens | brand tokens if present, else **Graphite** |
+| Theme | a preset from [themes.md](themes.md) or existing brand tokens | brand tokens if present, else derive from the brief |
 | One conversion action | trial signup / demo request / waitlist / purchase | trial signup |
 | Variance | DESIGN_VARIANCE 1-10 | 7 (6 if pre-launch / waitlist only) |
-| Signature bet | one from [craft-intent.md](craft-intent.md) §3 marketing list | hero crop or floating proof card |
+| Signature bet | one from [craft-intent.md](craft-intent.md) §3 marketing list | derived from the brief: the product's own artifact, cropped or enlarged, or the one thing only this subject has |
 
 The first answer selects the composition. One page, ONE conversion action — every section either advances it or gets cut.
 
-## Step 1 — Decide what the fold argues, then draw its geometry
+## Step 1 — Decide what the fold argues, then pick its geometry
 
-Two decisions, in this order, and they are not the same decision. **What the fold argues** is yours to choose from the brief. **How it is laid out** is drawn, not chosen.
-
-Until 2026-08-13 this section shipped three ASCII diagrams, one per strategy, and the first was labelled *default*. Its geometry was text one side and a visual the other — which is the `split` composition class, the one `fold_candidates` deliberately draws last because *"it is the fold every generator reaches for unprompted."* Measured across seven landing builds, every fold that got built was one of the three geometries those diagrams prescribed, and none was the class the draw had offered. A drawn class cannot introduce variety while this file ships the answer with a picture, so the pictures are gone and the content grammar stayed.
+Two decisions, in this order, and they are not the same decision. **What the fold argues** is yours to choose from the brief. **How it is laid out** is picked by exclusion, not taste.
 
 ### 1a — What it argues
 
@@ -38,7 +36,7 @@ No strategy is a default. A brief with a live product picks product-forward; a b
 
 ### 1b — What it looks like
 
-Call **`fold_candidates`** and commit to one of the classes it returns. Do not pick by taste: asking a model for a composition returns its default every time, which is how eight builds in a row produced the same hero. The draw is seeded per project, so two projects start somewhere different and one project stays reproducible.
+Pick a class the project's brief has not used yet (see `## Fold classes used` in the brief), and put `split` last. Do not pick by taste: asking a model for a composition returns its default every time, which is how eight builds in a row produced the same hero.
 
 The six classes are geometric and orthogonal to 1a — `type-only`, `full-bleed-overlay`, `split`, `stacked`, `product-dominant`, `band`. Most strategies can be built as most classes. The exclusions are the ones where the geometry cannot carry the argument:
 
@@ -46,15 +44,15 @@ The six classes are geometric and orthogonal to 1a — `type-only`, `full-bleed-
 - **message-forward** cannot be `product-dominant` — nothing to dominate with
 - **proof-forward** cannot be `full-bleed-overlay` — one dominating image cannot hold three metrics and a case block
 
-Anything else the draw offers is legitimate. If it draws a class that fights the brief for a reason not listed above, say which reason in the Craft Read and draw again — do not silently substitute the shape you had in mind.
+Any other unused class is legitimate. If the class you pick fights the brief for a reason not listed above, say which reason in the Craft Read and pick again — do not silently substitute the shape you had in mind.
 
 ### 1c — Verify what you actually built
 
-Render it and call **`check_fold` with `expected_class`** set to the class you committed to. Without that argument it reports what the fold *is* and cannot tell you whether it is what you intended — and it will say so rather than imply agreement.
+If you can run a browser, render the page and compare the fold you see with the class you committed to. If you cannot, say the check was not verified.
 
-If it reports drift, the geometry moved while you were writing. Fix the build to match the class, or record in the brief that the class changed and why. A declared class the code does not honour is worse than no declaration: it reads as compliance to anyone auditing the transcript.
+If they differ, the geometry drifted while you were writing. Fix the build to match the class, or record in the brief that the class changed and why. A declared class the code does not honour is worse than no declaration: it reads as compliance to anyone auditing the transcript.
 
-Record the class in the brief's spent list ([brief.md](brief.md)) so the next landing in this project draws something else.
+Record the class in the brief's spent list ([brief.md](brief.md)) so the next landing in this project picks something else.
 
 ### Hero discipline (all compositions)
 

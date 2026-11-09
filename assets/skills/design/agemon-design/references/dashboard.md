@@ -127,5 +127,5 @@ Before building, answer these:
 ### Cross-references
 
 - `dataviz.md` — chart selection by data shape; Cleveland-McGill perceptual hierarchy (position-on-common-scale is most accurate — use it for the hero).
-- `heuristics.md` — Cleveland-McGill PASS/FAIL, Hick's Law for filter/nav choices.
+- `heuristics.md` — Cleveland-McGill and Hick's Law checks for filter/nav choices.
 - `personas.md` — concrete user archetypes to ground "who's the user" in reality, not abstraction.

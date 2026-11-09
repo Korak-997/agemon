@@ -373,6 +373,18 @@ describe("runUpgrade version selection", () => {
     expect(childProcess.execFileSync).not.toHaveBeenCalled();
   });
 
+  it("after upgrading, links the release notes and says repositories need a run", async () => {
+    const installDir = await defaultInstallDirectory();
+
+    await upgrade({ kind: "install-script", installDir });
+
+    const printed = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(printed).toContain(
+      `https://github.com/Korak-997/agemon/releases/tag/v${TARGET_VERSION}`,
+    );
+    expect(printed).toContain("Run 'agemon' in each repository");
+  });
+
   it("runs the newest installer for a downgrade, with the older version as target", async () => {
     const installDir = await defaultInstallDirectory();
     publishRelease("4.6.0", { installer: "#!/bin/sh\necho old installer\n" });

@@ -19,6 +19,7 @@ export class SkillTreeRefusal extends Error {}
 export interface SkillTreeEntry {
   relativePath: string;
   contents: Buffer | null;
+  mode: number;
 }
 
 type SkipEntry = (name: string, stats: Stats) => boolean;
@@ -103,7 +104,7 @@ export async function readSkillTree(
         );
       }
       if (stats.isDirectory()) {
-        entries.push({ relativePath, contents: null });
+        entries.push({ relativePath, contents: null, mode: stats.mode });
         await walk(relativePath, depth + 1);
         continue;
       }
@@ -122,7 +123,7 @@ export async function readSkillTree(
       if (totalBytes > MAX_SKILL_BYTES) {
         throw new SkillTreeRefusal("it is larger than 8 MiB");
       }
-      entries.push({ relativePath, contents });
+      entries.push({ relativePath, contents, mode: stats.mode });
     }
   };
 
@@ -147,10 +148,14 @@ export async function fingerprintSkillSource(
   );
 }
 
+export function readInstalledSkill(
+  directory: string,
+): Promise<SkillTreeEntry[]> {
+  return readSkillTree(directory, isFinderMetadataFile);
+}
+
 export async function fingerprintInstalledSkill(
   directory: string,
 ): Promise<string> {
-  return fingerprintSkillTree(
-    await readSkillTree(directory, isFinderMetadataFile),
-  );
+  return fingerprintSkillTree(await readInstalledSkill(directory));
 }

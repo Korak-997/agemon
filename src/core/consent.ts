@@ -19,6 +19,8 @@ export type ConsentGateId =
   | "trust-repository-git-config"
   | "install-custom-skills"
   | "install-tooling"
+  | "copy-skills-to-agents-directory"
+  | "remove-retired-skills"
   | "install-subagents"
   | "register-service"
   | "write-config"
@@ -65,7 +67,10 @@ type OperationGateId = Exclude<ConsentGateId, "workspace-isolation">;
 
 export const CUSTOM_SKILL_GROUP_RESOURCE_PREFIX = "custom-skill-group:";
 export const AGENT_FILE_RESOURCE_PREFIX = "agent-file:";
+export const RETIRED_SKILL_RESOURCE_PREFIX = "retired-skill:";
 
+const AGENTS_DIRECTORY_COPY_EXPLANATION =
+  "Copy skills into .agents/skills for agents that do not read .claude/skills. agemon records each copy by hash; nuke removes only unchanged copies, and a copy agemon did not write is never touched.";
 const TRUST_GATE_EXPLANATION =
   "code-review-graph and its daemon will run git here with these repository settings, which agemon does not trust by default:";
 const DIFF_HEADER_LINE_COUNT = 2;
@@ -77,6 +82,8 @@ const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
   "trust-repository-git-config",
   "install-custom-skills",
   "install-tooling",
+  "copy-skills-to-agents-directory",
+  "remove-retired-skills",
   "install-subagents",
   "register-service",
   "write-config",
@@ -137,19 +144,29 @@ export function buildConsentGates(
             operations,
             forcesDiff:
               gateId === "install-custom-skills" ||
+              gateId === "write-config" ||
               operations.some(
                 (operation) => operation.riskClass === "credential-adjacent",
               ),
             announcementWithYes:
               gateId === "install-subagents"
                 ? `Installing ${describeSubagents(operations)}.`
-                : null,
+                : gateId === "copy-skills-to-agents-directory"
+                  ? AGENTS_DIRECTORY_COPY_EXPLANATION
+                  : gateId === "write-config"
+                    ? describeConfigMerge(operations)
+                    : null,
             satisfiableWithYes: gateId !== "resolve-conflict",
           },
     );
   }
 
   return gates;
+}
+
+function describeConfigMerge(operations: ProposedOperation[]): string {
+  const diffs = operations.map(({ preview }) => printable(preview.text));
+  return `Merging config keys into ${describeTargets(operations)}:\n${diffs.join("\n")}`;
 }
 
 function untrustedPairsOf(operations: ProposedOperation[]): string[] {
@@ -231,6 +248,12 @@ function gateForOperation(
   }
   if (operation.action === "install-package") {
     return "install-tooling";
+  }
+  if (operation.action === "copy-skills") {
+    return "copy-skills-to-agents-directory";
+  }
+  if (operation.action === "remove-skill") {
+    return "remove-retired-skills";
   }
   if (operation.action === "register-service") {
     return "register-service";
@@ -339,6 +362,10 @@ function operationGateSummary(
       return `Install skills from ${operations.length} skill group(s) defined in this repository's agemon.toml (${targets}). They come from the repository's own sources, not from agemon — review every source shown. Proceed?`;
     case "install-tooling":
       return installToolingSummary(operations);
+    case "copy-skills-to-agents-directory":
+      return `${AGENTS_DIRECTORY_COPY_EXPLANATION} Proceed?`;
+    case "remove-retired-skills":
+      return `Remove ${operations.length} skill(s) agemon no longer ships (${operations.map(({ resourceId }) => resourceId.slice(RETIRED_SKILL_RESOURCE_PREFIX.length)).join(", ")}). Each matches a version agemon installed. Proceed?`;
     case "install-subagents":
       return `Install ${describeSubagents(operations)}. Proceed?`;
     case "register-service":

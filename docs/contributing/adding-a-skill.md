@@ -11,10 +11,7 @@ group. To use your own skills in one repository, you don't need to change agemon
 - **Third-party skill**: a bundled skill copied from another project at a pinned commit.
   Most bundled skills are third-party.
 - **First-party skill**: a bundled skill written for agemon. These are listed in
-  `FIRST_PARTY_SKILLS` in `scripts/lint-skills/rules.ts`.
-
-The `essentials` group is different: its skills are not bundled. agemon installs them from
-a pinned commit of their upstream repository (`src/plugins/pins.ts`).
+  `FIRST_PARTY_SKILLS` in `scripts/skill-provenance.ts`.
 
 ## 1. Check the skill can be bundled
 
@@ -62,7 +59,8 @@ installed skill reads as agemon's own and does not collide with upstream's copy.
 that is `agemon-<upstream-name>`; pick a clearer name when upstream's is vague or would
 collide with a built-in Claude Code skill (`security-review` became `agemon-security`). Record the
 original name in `NOTICE.md`. The `geo-seo` group is the exception: it keeps upstream's
-`geo-*` names so `/geo audit` matches upstream's documentation.
+`geo-*` names so `/geo audit` matches upstream's documentation. The `essentials` group also keeps
+upstream's names, so installs made before it was vendored are recognised and can be updated.
 
 ## 3. Write `SKILL.md` frontmatter
 
@@ -78,9 +76,20 @@ description: Use when … — one or two sentences that tell the agent when to l
 - `name` appears exactly once and equals the directory name.
 - `description` is not empty. It can be a plain value, a quoted value, or a `>`/`|` block.
 - Only these keys are allowed: `name`, `description`, `version`, `author`, `tags`,
-  `triggers`, `argument-hint`. In particular `allowed-tools` (which pre-approves tools) and
+  `triggers`, `argument-hint`, `disable-model-invocation`. In particular `allowed-tools` (which pre-approves tools) and
   `hooks` are not allowed: every tool use in a bundled skill goes through the user's normal
   permission prompt. If upstream has `allowed-tools`, remove it and say so in `NOTICE.md`.
+
+These keys are not all portable, so write the body so it still works without them. The copy
+agemon writes to `.agents/skills/` for agents such as Codex keeps `name` and `description` as they
+are and moves `version`, `author`, `tags`, `triggers` and `argument-hint` into `metadata` as
+strings. Devin reads `triggers` as `user` or `model`, and Codex's validator rejects keys outside
+the standard.
+
+`disable-model-invocation` is not universal either. Claude Code and Cursor document it; Codex and
+Devin use their own controls; other agents' docs do not mention it. So a skill that sets it is
+**not copied** to `.agents/skills/`, and those agents will not have it. See the
+[agent matrix](../../evals/design/agent-matrix.md).
 
 ## 4. Guard skills that read web content
 
@@ -143,14 +152,19 @@ group, add a `SkillGroup` object with a new `id`, `label`, `description` and
 `defaultSelected: false`; its `id` is what users pass to `--skill-groups`.
 
 A first-party skill is also added, by `<group-folder>/<skill-name>`, to `FIRST_PARTY_SKILLS`
-in `scripts/lint-skills/rules.ts`. Third-party skills are not.
+in `scripts/skill-provenance.ts`. Third-party skills are not.
 
-## 7. Update the README
+## 7. Update the README and the marketplace
+
+- **Plugin marketplace**: if you added a group or changed a group's description, run
+  `npm run marketplace` and commit `.claude-plugin/marketplace.json`. Adding a skill to an
+  existing group needs no change, because each plugin reads its group's whole folder.
 
 - **Skill Groups** table: add the skill to its group's row (or add a row for a new group),
   and update the row's description if the group now covers more. The group's
   `description` in `catalog.ts` is what users see when they choose groups; keep the two in
-  step.
+  step. `lint-skills` fails if a group has no row or its row misses one of its skills; it
+  does not compare the descriptions.
 - **Vendored Skills & Attribution** table: add the new name, the original name and a link
   to the source repository. If the license is not MIT, also fix the sentence above the table
   that says all sources are MIT-licensed.
@@ -159,11 +173,28 @@ User-facing changes reach the CHANGELOG through the commit subject (see
 [CONTRIBUTING.md](../../CONTRIBUTING.md)), so commit with a subject such as
 `feat(skills): add agemon-example to the security group`.
 
-## 8. Check it
+## 8. Record the fingerprint
+
+```bash
+npm run skills:fingerprints
+```
+
+This records the skill's content hash in `src/plugins/skills/bundle-fingerprints.ts`, which
+is how agemon later recognises an unchanged older copy it can update. Commit the result. CI
+fails without it (`skills:fingerprints -- --check`), and so does the
+`every vendored skill's current fingerprint is in bundle history` test in
+`test/unit/plugins/skill-tree.test.ts`.
+
+Editing any file in a bundled skill changes its hash, so run this again after your last edit.
+The script keeps every hash it has recorded: to drop the hashes of drafts that never shipped,
+restore `bundle-fingerprints.ts` from your base branch and run it once more.
+
+## 9. Check it
 
 ```bash
 npm run lint          # formatting and code lint, as in CI
-npm run lint-skills   # the rules above, plus "every skill folder is in the catalog"
+npm run lint-skills   # the rules above, "every skill folder is in the catalog", the README group table, the marketplace
+npm run skills:fingerprints -- --check
 npm run typecheck
 npm test
 npm run sandbox -- run clean-repo --dry-run --skill-groups <group-id>
@@ -175,8 +206,8 @@ in CI. Its own tests are in `test/unit/scripts/lint-skills.test.ts`.
 A few tests pin the exact skills of a group and fail until you update them with your new
 skill:
 
-- `test/unit/plugins/skills-plan-apply.test.ts` ("lists each group with its skills and
-  pinned sources") pins the plan preview of the `essentials` and `security` groups;
+- `test/unit/plugins/skills-plan-apply.test.ts` ("lists each group with its skills")
+  pins the plan preview of the `essentials` and `security` groups;
 - `test/unit/plugins/geo-seo-skill-group.test.ts` pins the `geo-seo` skill list.
 
 A new group whose skills need specific behavior checked (as `geo-seo` does) gets its own
@@ -187,7 +218,11 @@ In the sandbox output, look for your skill under `skill-group:<group-id>`, liste
 
 ## What happens to existing installs
 
-The `skills` capability compares installed skills by name, not by content. A new skill in a
-group reaches repositories that already have that group on their next `agemon` run. A change
-to an existing skill's files reaches only new installs, or a repository that runs
-`agemon nuke` and then `agemon` again.
+A new skill in a group reaches repositories that already have that group on their next
+`agemon` run.
+
+A change to an existing skill's files reaches a repository on its next `agemon` run if its
+installed copy is identical to a version agemon shipped; the preview marks it
+"update (bundled content changed)". A copy that differs from every shipped version, such as
+one the user edited, is never replaced: `agemon status` reports it, and the user gets the new
+version by deleting `.claude/skills/<skill-name>` and running `agemon`.

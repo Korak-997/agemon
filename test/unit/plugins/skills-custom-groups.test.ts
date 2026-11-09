@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
   rm,
   symlink,
   writeFile,
@@ -18,7 +20,10 @@ import {
   type LedgerEntry,
   StateManifest,
 } from "../../../src/core/state-manifest.js";
-import { resolveStateRoot } from "../../../src/core/state-root.js";
+import {
+  resolveStateRoot,
+  withAgemonStateLock,
+} from "../../../src/core/state-root.js";
 import { runSubprocess } from "../../../src/core/subprocess-runner.js";
 import type { ServiceManager } from "../../../src/platform/service-manager/index.js";
 import { buildCustomSkillGroups } from "../../../src/plugins/skills/catalog.js";
@@ -426,6 +431,96 @@ describe("custom skill groups: local sources", () => {
     expect((await skillsPlugin.verify(ctx)).ok).toBe(false);
   });
 
+  describe("after the source changes", () => {
+    async function installHouseRules(): Promise<Context> {
+      const ctx = await createTestContext();
+      await writeLocalSkill(ctx.cwd);
+      await applySkills(ctx, await planSkills(ctx));
+      return ctx;
+    }
+
+    async function houseStyleRow(ctx: Context) {
+      const rows = await (
+        skillsPlugin.describeState as NonNullable<
+          typeof skillsPlugin.describeState
+        >
+      )(ctx);
+      return rows.find(
+        (row) => row.resourceId === "custom-skill-group:house-style",
+      );
+    }
+
+    it("an unchanged source needs no attention", async () => {
+      const ctx = await installHouseRules();
+
+      expect((await skillsPlugin.verify(ctx)).attention).toBeUndefined();
+      expect((await houseStyleRow(ctx))?.state).toBe("present-managed");
+    });
+
+    it("an edited source is reported, and the installed copy is kept", async () => {
+      const ctx = await installHouseRules();
+      const manifestPath = join(ctx.cwd, "tools/skills/house-rules/SKILL.md");
+      await appendFile(manifestPath, "- a new rule\n");
+
+      const verification = await skillsPlugin.verify(ctx);
+
+      expect(verification.ok).toBe(true);
+      expect(verification.attention).toContain("house-rules");
+      expect(verification.attention).toContain("./tools/skills/house-rules");
+      expect(verification.attention).toContain(".claude/skills/house-rules");
+      expect((await houseStyleRow(ctx))?.state).toBe("present-modified");
+      expect(
+        await readFile(
+          join(ctx.cwd, ".claude/skills/house-rules/SKILL.md"),
+          "utf8",
+        ),
+      ).not.toContain("a new rule");
+    });
+
+    it("a source renamed to a mismatched name is reported instead of failing status", async () => {
+      const ctx = await installHouseRules();
+      await writeFile(
+        join(ctx.cwd, "tools/skills/house-rules/SKILL.md"),
+        "---\nname: wrong-name\ndescription: Our rules.\n---\n",
+      );
+
+      const verification = await skillsPlugin.verify(ctx);
+
+      expect(verification.attention).toContain("wrong-name");
+      expect((await houseStyleRow(ctx))?.state).toBe("present-modified");
+    });
+
+    it("a deleted source is reported", async () => {
+      const ctx = await installHouseRules();
+      await rm(join(ctx.cwd, "tools/skills/house-rules"), { recursive: true });
+
+      const verification = await skillsPlugin.verify(ctx);
+
+      expect(verification.attention).toContain("does not exist");
+    });
+
+    it("following the advice installs the edited source", async () => {
+      const ctx = await installHouseRules();
+      await appendFile(
+        join(ctx.cwd, "tools/skills/house-rules/SKILL.md"),
+        "- a new rule\n",
+      );
+      await rm(join(ctx.cwd, ".claude/skills/house-rules"), {
+        recursive: true,
+      });
+
+      await applySkills(ctx, await planSkills(ctx));
+
+      expect(
+        await readFile(
+          join(ctx.cwd, ".claude/skills/house-rules/SKILL.md"),
+          "utf8",
+        ),
+      ).toContain("a new rule");
+      expect((await skillsPlugin.verify(ctx)).attention).toBeUndefined();
+    });
+  });
+
   it("refuses to apply when the skill changed after planning", async () => {
     const ctx = await createTestContext();
     const directory = await writeLocalSkill(ctx.cwd);
@@ -619,6 +714,35 @@ describe("custom skill groups: GitHub sources", () => {
         "lint-rules",
       ),
     );
+  });
+
+  it("waits for another run's pinned-source install before fetching", async () => {
+    const ctx = await createTestContext([REMOTE], "acme");
+    const gitCalls = fakeGitCheckout(ctx, "lint-rules");
+    let releaseOtherRun: () => void = () => {};
+    let signalHeld: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      signalHeld = resolve;
+    });
+    const otherRun = withAgemonStateLock(
+      "skills-src.lock",
+      () =>
+        new Promise<void>((resolve) => {
+          releaseOtherRun = resolve;
+          signalHeld();
+        }),
+      1_000,
+    );
+    await held;
+
+    const install = applySkills(ctx, await planSkills(ctx));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(gitCalls).toEqual([]);
+    releaseOtherRun();
+    await otherRun;
+    await install;
+
+    expect(gitCalls.length).toBeGreaterThan(0);
   });
 
   function withCheckoutStatus(ctx: Context, porcelainStatus: string): void {

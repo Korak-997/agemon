@@ -1,0 +1,4 @@
+{
+  "name": "stale-config-app",
+  "dependencies": { "tailwindcss": "^4.1.0" }
+}

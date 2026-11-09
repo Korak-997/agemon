@@ -87,8 +87,9 @@ Registered core plugin order (`src/plugins/index.ts`):
 2. `daemon` (depends on `crg`)
 3. `skills`
 4. `agents` (depends on `skills`)
-5. `cli-tool`
-6. `master-prompt`
+5. `subagent-default`
+6. `cli-tool`
+7. `master-prompt`
 
 `buildPlan` passes each plugin's `plan` the operations planned before it, so `agents` sees
 the skill groups this run installs.
@@ -290,28 +291,51 @@ the skill groups this run installs.
 - Every `skills add` passes `--agent claude-code`; with one agent the pinned CLI copies into
   `.claude/skills/<name>` and never writes `.agents/skills/`. Before it runs,
   `.claude/skills` must be a real directory (created if missing), `.agents/skills` and
-  `.agents/skills/<name>` must not be symlinks (never created), and `skills-lock.json` must
-  be absent or a regular file. agemon never runs `skills remove`: that command also deletes
+  `.agents/skills/<name>` must not be symlinks, and `skills-lock.json` must be absent or a
+  regular file. agemon never runs `skills remove`: that command also deletes
   `.agents/skills/<name>` when no other detected agent uses it, which can be another tool's
   or a team's committed copy.
+- **Copies in `.agents/skills`** (`src/plugins/skills/agents-copies.ts`). agemon itself, not the
+  skills CLI, writes these. It plans one `copy-skills` operation, behind its own consent gate,
+  when an agent whose docs list no `.claude/skills` path is found: `codex`, `gemini`, `antigravity`,
+  `agy` or `devin` on `PATH` (looked up, never run), or a `.codex`, `.gemini` or `.devin` folder.
+  First-time copies are a decision: an interactive run asks and a no is recorded as
+  `declined-agents-skill-copies`; `--yes` agrees unless a no is recorded; naming a group with
+  `--skill-groups` plans them regardless and clears the no on approval; an unattended run without
+  `--yes` plans nothing, so it stays at exit 0, and `status` reports copies as available. Once a
+  confirmed copy exists, the operation keeps being planned for updates even if that agent has gone,
+  including in the same run as a bundled update of the skill. A skill is copied only from a `.claude/skills/<name>` agemon installed unchanged, so an
+  edited or pre-existing skill never spreads. A copy gets portable frontmatter
+  (`portable-manifest.ts`: keys outside the Agent Skills standard move into `metadata` as strings;
+  a manifest it cannot convert safely is not copied). A skill with
+  `disable-model-invocation: true` is not copied. Each copy is staged inside `.agents/skills` from the
+  entries agemon already read, so a swapped source cannot redirect a write, then renamed into place,
+  and an `installed-agents-skill-copy` ledger entry
+  records its fingerprint. Rules:
+  - absent: written, and the `.agents` and `.agents/skills` directories agemon created are recorded;
+  - confirmed record, same fingerprint, older content: replaced, keeping one record;
+  - no confirmed record, a symlink or a non-directory: kept and reported, never written;
+  - confirmed record, different fingerprint: kept and reported as changed.
+  `skills list` also reads `.agents/skills`, but a copy there does not give Claude Code the skill,
+  so agemon counts a skill as installed only if `.claude/skills/<name>` exists.
 - Custom local skills are read without following symlinks, copied into a private
   `<state>/agemon/skills-stage/run-*` directory, and installed from there; the content hash
-  of the copy must equal the one in the plan. Custom GitHub skills use the same pinned
-  fetch as Essentials, with `credential.helper=`, `GIT_CONFIG_GLOBAL=/dev/null` and
+  of the copy must equal the one in the plan. Custom GitHub skills are fetched from a
+  pinned commit, with `credential.helper=`, `GIT_CONFIG_GLOBAL=/dev/null` and
   `GIT_CONFIG_NOSYSTEM=1`.
 - `agemon apply --plan <id>` rebuilds the plan (dry run, no `--yes`, no prompt) from the
   run's own options and applies the rebuilt operations only if their canonical content
   equals the stored plan's; otherwise it names the option that differs and stops.
 - Installs skill bundle entries via `skills add <source> ...`. Vendored groups install
-  from `assets/skills/`. Essentials installs from `<state>/agemon/skills-src/<commit>/`:
-  agemon fetches that directory fresh before each install (`git fetch --depth 1 <url>
-  <commit>`), requires `HEAD` to equal the pinned commit, and refuses any skill that
-  contains a symlink.
+  from `assets/skills/`. Custom GitHub groups install from
+  `<state>/agemon/skills-src/<commit>/`: agemon fetches that directory fresh before each
+  install (`git fetch --depth 1 <url> <commit>`), requires `HEAD` to equal the pinned
+  commit, and refuses any skill that contains a symlink.
 - **Uninstall and rollback run no skills-CLI command** (no `list`, `remove` or `npm ci`).
   For each skill a confirmed `installed-skill` entry names, agemon looks at
   `.claude/skills/<name>` itself: a symlink is unlinked (its target is never touched); a
   real directory is removed only if its content fingerprint is one agemon installed — the
-  current bundled version, a shipped one, the pinned Essentials version or, for a custom
+  current bundled version, a shipped one or, for a custom
   group, the fingerprint recorded on its `installed-skill` entry; anything else is kept
   with `Keeping .claude/skills/<name>: it differs from every version agemon installed;
   delete it if you no longer need it.` Before deleting, agemon re-checks that
@@ -327,9 +351,13 @@ the skill groups this run installs.
   `git status --porcelain --ignored`. A custom-group skill with no recorded fingerprint is
   kept; nuke itself runs no git. A removal that fails
   keeps the skill and fails nuke after the others are done. `.agents/skills/<name>` is
-  never deleted; when its content matches a shipped version nuke prints `Left
-  .agents/skills/<name>: agemon's skills CLI no longer writes it; remove it if you no
-  longer need it.`
+  deleted only when a confirmed `installed-agents-skill-copy` entry names it and its
+  fingerprint equals that entry's, using the same re-check and quarantine; a symlink there is
+  never unlinked. A changed copy is kept with `Keeping .agents/skills/<name>: it differs from
+  what agemon wrote; delete it if you no longer need it.` An entry this machine cannot confirm
+  keeps the copy too. A copy with no entry is never deleted; when its content matches a shipped
+  version nuke prints `Left .agents/skills/<name>: agemon's skills CLI no longer writes it;
+  remove it if you no longer need it.`
 - **`skills-lock.json`** follows the CLI's own rule: agemon deletes the keys of the skills
   it removed (or found already gone) from any lock with `version: 1` and an object
   `skills`, keeping every other field, and writes it back in the CLI's format. It deletes
@@ -358,8 +386,8 @@ the skill groups this run installs.
   out (`metadata.json`, `.git`, `__pycache__`, `__pypackages__`); installed copies ignore
   only `.DS_Store` files. "Every version agemon shipped" is
   `src/plugins/skills/bundle-fingerprints.ts`, generated by `npm run skills:fingerprints`
-  from every release tag, the v6 development commits that changed skills, the working tree
-  and the pinned Essentials commit; CI runs `npm run skills:fingerprints -- --check`. Ledger
+  from every release tag, the v6 development commits that changed skills and the working tree,
+  plus every earlier entry it already lists; CI runs `npm run skills:fingerprints -- --check`. Ledger
   entries play no part in this decision beyond eligibility, so an unconfirmed entry can
   only point at content that is byte-identical to something agemon shipped.
   - **Plan:** a recorded built-in group with an outdated skill gets the group's
@@ -393,7 +421,7 @@ Current bundle (`src/plugins/skills/catalog.ts`):
   operation each. Desired agents = groups in this plan's skills `install-package`
   operations ∪ groups recorded in the skills ledger (`skills/ledger-view.ts`, declined and
   custom groups excluded).
-- An agent file is rendered from its catalog entry (`name`, `description`, `tools`) and the
+- An agent file is rendered from its catalog entry (`name`, `description`, `tools`, `model`) and the
   brief it names in agemon's own `assets/skills/` (never the repository's installed copy).
 - States: absent → `create`; equal → nothing (or `adopt` when unrecorded); untouched since
   recorded → `replace`; changed or unrecorded and different → `conflict`; symlink, special
@@ -425,6 +453,36 @@ Current bundle (`src/plugins/skills/catalog.ts`):
   case folding, skips files it can't read, never follows symlinks, and shows unsafe
   characters in file names as `\uXXXX`. YAML forms it does not parse (block scalars,
   flow mappings, anchors) are not detected. A user-changed agent is not attention.
+
+### `subagent-default`
+
+- Owns one key, `env.CLAUDE_CODE_SUBAGENT_MODEL` in `.claude/settings.json`, as the resource
+  `settings-key:env.CLAUDE_CODE_SUBAGENT_MODEL`. One `merge-key` operation and a `json` staged
+  file. Gate `write-config` always shows the diff, and `--yes` prints it.
+- `src/patchers/json-settings-key.ts` edits the file's text rather than re-serializing it, so a
+  write adds only the key, in the layout around it, and removal undoes that exactly. The exception
+  is an `env` or a whole file that was an empty object: filling it adds lines removal can't
+  distinguish, so a pre-existing `"env": {}` is deleted with the key.
+- States: key absent on a supported CLI → `merge-key`; any value present → nothing. There is no
+  `conflict` operation, because resolving one could offer `replace`, and agemon must never
+  overwrite a user's value or a file it can't parse.
+- Version gate: `probeAgentInstallation` must report at least 2.1.251. Before that release the
+  variable outranked per-call and frontmatter models. An older or unreadable version plans nothing
+  and prints why (except under `agemon plan`). The gate runs only on the machine running agemon, though the file is shared.
+- Plans nothing and prints why (except under `agemon plan`, which runs silent) when the file is
+  invalid JSON, isn't clean UTF-8 (reads decode bad bytes to U+FFFD, so a write would replace them), has a non-object top level or `env`,
+  is a symlink or special file, is over the read cap, or sits under a symlinked directory.
+- Ledger: `managed-settings-key`, `ownershipMode: "recorded-key"`, the value in `desiredRevision`,
+  and `preExisting` meaning the file existed. A repeat write replaces the entry. `.claude` goes in
+  the workspace footprint when agemon created it.
+- Revert and nuke act only on confirmed entries, and remove the key only if its value is still the
+  recorded one, otherwise printing that it was kept. The file is deleted only when agemon created
+  it and it ends up empty. Invalid JSON or a refused file prints `manual cleanup needed`.
+- `status` rows: `present-managed`; `present-adopted` (agemon's value, not written by agemon on this
+  machine; nuke leaves it); `present-modified` (another value, the user's); `absent`, with the
+  version reason if there is one; `unknown` (file unusable).
+- Verify reports as `attention` a recorded key that is missing, or a file that became unusable. A
+  changed value is not attention.
 
 ### `cli-tool`
 
@@ -505,19 +563,37 @@ Current bundle (`src/plugins/cli-tool/catalog.ts`):
   unshowable, unreadable) are moved to the skip list before any gate. A carrying
   `use-shared` operation follows the gate too. Unapproved operations end the run in drift
   (exit 2).
-- **Adding a capability to an existing `agemon.toml`** (`src/core/capability-migration.ts`):
-  a capability on `AUTO_ADDED_TO_EXISTING_CONFIGS` (only `agents`) that the file's
-  `known_capabilities` (or, without that key, the pre-`agents` list) does not name is added
-  to the run when all its dependencies are listed; `--only` is never widened, and exclusions
-  apply afterwards. After an interactive or `--yes` run that ends `applied`,
-  `nothing-to-do`, `partial` or `declined` (never a dry run, `plan` or a rollback), the CLI
-  rewrites the file once: it rereads it and refuses if the bytes changed, keeps every value,
-  sets `capabilities` and `known_capabilities`, checks the output round-trips and validates,
-  and saves the original under `.agemon/backups/` when comments or layout would be lost. Each
-  auto-add keeps its own backup, named after the added ids and a hash of the original, and
-  never overwrites an earlier one; if that backup path already holds different content, the
-  file is left unchanged and the run says where. It skips the rewrite while `/.agemon/` is
-  not git-ignored (unless `--allow-unignored-state`).
+- **What a repository can still take** (`src/core/offers.ts`): `findOffers` merges
+  `findCapabilityOffers` (`src/core/capability-migration.ts`) with each listed plugin's
+  `listOffers`, and returns nothing without an `agemon.toml`. An offer is `new` or `declined`.
+  A capability not in `capabilities` whose dependencies are listed is `new` unless the file's
+  `known_capabilities` (or, without that key, the pre-`agents` list) names it. A skill group is
+  `new` until it has been offered and `declined` once the ledger records that. Runs print the
+  offers after the summary and `status` lists them under "Available"; neither changes the exit
+  code. `--quiet` prints nothing, and a first run (no `agemon.toml` when it started) skips the
+  reminder.
+- **Asking about a new capability:** an interactive run without `--yes`, `--dry-run`, `--only` or
+  `--plan` asks in `chooseNewCapabilities` before the plan and adds the chosen ids to that run's
+  `only`. `--only` is never widened, and exclusions apply first. After a run that ends
+  `applied`, `nothing-to-do`, `partial` or `declined`, the CLI rewrites the file once: it rereads
+  it and refuses if the bytes changed, keeps every value, sets `capabilities` and
+  `known_capabilities` (so what was not picked is `declined` from then on), checks the output
+  round-trips and validates, and saves the original under `.agemon/backups/` when comments or
+  layout would be lost. Each rewrite keeps its own backup, named after the added ids and a hash of
+  the original, and never overwrites an earlier one; if that backup path already holds different
+  content, the file is left unchanged and the run says where. It skips the rewrite while
+  `/.agemon/` is not git-ignored (unless `--allow-unignored-state`).
+- **`--yes` and new skill groups:** `selectNewlyOfferedGroups` leaves unnamed groups waiting under
+  `--yes` and without a terminal; it records nothing, so they stay `new`. Only a person answering
+  the prompt declines a group.
+- **`agemon add`** (`runAdd`, `src/cli/index.ts`) resolves each name against the offers and runs
+  `reconcile` with `only` narrowed to the named capabilities, plus `skills` and any listed
+  capability that depends on it when a group is named. Requested groups reach the skills plugin as
+  `ctx.requestedSkillGroupIds`, deliberately separate from `skillGroupsOption`: that option merges
+  the flag with the committed `skill_groups`, so honoring it would let a cloned repository undo a
+  decline. `applySkills` removes the decline only after the install succeeds, and a rollback
+  restores the ledger. The capability is written to `agemon.toml` only after `applied`,
+  `nothing-to-do` or `partial` in a run that could approve it, never after `declined`.
 - Install path, per plugin:
   - `detect`
   - not present: fresh install — `install` then `verify` (throws on failure)
@@ -738,7 +814,7 @@ Rules:
 - Locks, all under `<stateRoot>/agemon`: `runs/<repo key>.lock` is held for a whole
   non-dry-run `agemon`, `apply`, `nuke` or `recover`, taken before the ledger is loaded,
   and a second run in the same repository fails at once. `skills-src.lock` is held while
-  the pinned Essentials source is fetched and copied, `tools.lock` while the skills CLI is
+  a custom group's pinned source is fetched and copied, `tools.lock` while the skills CLI is
   installed or repaired, and `machine.lock` while `machine.json` changes. The order is
   always run lock → `skills-src.lock` → `tools.lock`. `machine.lock` is never held while
   another lock is taken.
@@ -905,10 +981,7 @@ sorted format), `list` reads `SKILL.md` files under `.agents/skills` and `.claud
 and `remove` follows the real rule: it deletes `.claude/skills/<name>`, then
 `.agents/skills/<name>` (no other agent is detected), and drops the skill's lock key.
 agemon never calls `remove`; the fake keeps the rule so a regression shows. Tests seed installed
-skills by writing those files (`test/unit/installed-skills.ts`). The fake `git checkout`
-of the pinned Essentials commit writes stand-in skills, and while both
-`AGEMON_FAKE_SUBPROCESS=1` and `AGEMON_DEV=1` are set, agemon treats their fingerprints as
-the pinned version.
+skills by writing those files (`test/unit/installed-skills.ts`).
 
 Dev mode (`isDevMode` in `src/core/dev-mode.ts`) needs `AGEMON_DEV=1` **and** a source
 checkout (the package root has `.git` or `src/`). A published package ignores
@@ -930,6 +1003,9 @@ agemon
 
 # uninstall/reverse
 agemon nuke
+
+# estimate what subagent model choices saved (reads saved Claude Code sessions)
+agemon usage --since 30d
 ```
 
 Local development:

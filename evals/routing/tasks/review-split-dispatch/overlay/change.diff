@@ -1,0 +1,169 @@
+diff --git src/dispatch/assign.js src/dispatch/assign.js
+index 648f733..44b7c5d 100644
+--- src/dispatch/assign.js
++++ src/dispatch/assign.js
+@@ -1,29 +1,38 @@
+ import { sumCents } from "../util/money.js";
+ import { newVan, vanFits } from "./capacity.js";
+ 
+-function orderWeightKg(order) {
+-  return sumCents(order.parcels.map((parcel) => parcel.weightKg));
++function parcelsThatFit(van, parcels) {
++  const fitted = [];
++  for (const parcel of parcels) {
++    if (vanFits(van, parcel)) fitted.push(parcel);
++  }
++  return fitted;
++}
++
++function loadParcels(van, order, parcels) {
++  van.loadKg += sumCents(parcels.map((parcel) => parcel.weightKg));
++  van.orders.push({ ...order, parcels });
+ }
+ 
+-function orderFits(van, order) {
+-  return vanFits(van, {
+-    weightKg: orderWeightKg(order),
+-    lengthCm: Math.max(...order.parcels.map((parcel) => parcel.lengthCm)),
+-    widthCm: 0,
+-    heightCm: 0,
+-  });
++function openVan(vans) {
++  const van = newVan(`van-${vans.length + 1}`);
++  vans.push(van);
++  return van;
+ }
+ 
+ export function assignToVans(orders) {
+   const vans = [];
+   for (const order of orders) {
+-    let van = vans.find((candidate) => orderFits(candidate, order));
+-    if (!van) {
+-      van = newVan(`van-${vans.length + 1}`);
+-      vans.push(van);
++    let remaining = order.parcels;
++    while (remaining.length > 0) {
++      const van =
++        vans.find((candidate) => parcelsThatFit(candidate, remaining).length > 0) ??
++        openVan(vans);
++      const fitted = parcelsThatFit(van, remaining);
++      const loaded = fitted.length > 0 ? fitted : remaining.slice(0, 1);
++      loadParcels(van, order, loaded);
++      remaining = remaining.filter((parcel) => !loaded.includes(parcel));
+     }
+-    van.loadKg += orderWeightKg(order);
+-    van.orders.push(order);
+   }
+   return vans;
+ }
+diff --git src/dispatch/capacity.js src/dispatch/capacity.js
+deleted file mode 100644
+index 388d75c..0000000
+--- src/dispatch/capacity.js
++++ /dev/null
+@@ -1,16 +0,0 @@
+-import { VAN_CAPACITY_KG, VAN_LONGEST_SIDE_LIMIT_CM } from "../config.js";
+-
+-export function isOversize(parcel) {
+-  return (
+-    Math.max(parcel.lengthCm, parcel.widthCm, parcel.heightCm) >
+-    VAN_LONGEST_SIDE_LIMIT_CM
+-  );
+-}
+-
+-export function newVan(id) {
+-  return { id, capacityKg: VAN_CAPACITY_KG, loadKg: 0, orders: [] };
+-}
+-
+-export function vanFits(van, parcel) {
+-  return !isOversize(parcel) && van.loadKg + parcel.weightKg <= van.capacityKg;
+-}
+diff --git src/dispatch/manifest.js src/dispatch/manifest.js
+index d0379dd..91158a5 100644
+--- src/dispatch/manifest.js
++++ src/dispatch/manifest.js
+@@ -1,3 +1,4 @@
++import { sumCents } from "../util/money.js";
+ import { routeForZone } from "./routes.js";
+ 
+ export function buildManifest(van) {
+@@ -9,6 +10,18 @@ export function buildManifest(van) {
+       customer: order.customerRef,
+       route: routeForZone(order.zone),
+       parcelCount: order.parcels.length,
++      weightKg: sumCents(order.parcels.map((parcel) => parcel.weightKg)),
+     })),
+   };
+ }
++
++export function ordersSplitAcrossVans(vans) {
++  const vanIdsByOrder = new Map();
++  for (const van of vans) {
++    for (const order of van.orders) {
++      const vanIds = vanIdsByOrder.get(order.id) ?? [];
++      vanIdsByOrder.set(order.id, [...vanIds, van.id]);
++    }
++  }
++  return [...vanIdsByOrder].filter(([, vanIds]) => vanIds.length > 1);
++}
+diff --git src/dispatch/routes.js src/dispatch/routes.js
+deleted file mode 100644
+index 2d57b3a..0000000
+--- src/dispatch/routes.js
++++ /dev/null
+@@ -1,19 +0,0 @@
+-const ROUTE_BY_ZONE = {
+-  A: "city-loop",
+-  B: "north-ring",
+-  C: "south-ring",
+-  D: "long-haul",
+-};
+-
+-export function routeForZone(zone) {
+-  return ROUTE_BY_ZONE[zone];
+-}
+-
+-export function groupByRoute(orders) {
+-  const groups = new Map();
+-  for (const order of orders) {
+-    const route = routeForZone(order.zone);
+-    groups.set(route, [...(groups.get(route) ?? []), order]);
+-  }
+-  return groups;
+-}
+diff --git test/dispatch.js test/dispatch.js
+index 5ccdba6..f6e5e99 100644
+--- test/dispatch.js
++++ test/dispatch.js
+@@ -1,7 +1,7 @@
+ import assert from "node:assert/strict";
+ import { test } from "node:test";
+ import { assignToVans } from "../src/dispatch/assign.js";
+-import { buildManifest } from "../src/dispatch/manifest.js";
++import { buildManifest, ordersSplitAcrossVans } from "../src/dispatch/manifest.js";
+ import { createOrder } from "../src/orders/create.js";
+ import { smallParcel } from "./helpers.js";
+ 
+@@ -17,6 +17,21 @@ test("the manifest lists each order on its route", () => {
+   const order = createOrder("cust-1", [smallParcel()], "40210");
+   const [van] = assignToVans([order]);
+   assert.deepEqual(buildManifest(van).lines, [
+-    { orderId: order.id, customer: "cust-1", route: "north-ring", parcelCount: 1 },
++    {
++      orderId: order.id,
++      customer: "cust-1",
++      route: "north-ring",
++      parcelCount: 1,
++      weightKg: 2,
++    },
+   ]);
+ });
++
++test("a parcel that no longer fits goes on the next van", () => {
++  const nearlyFull = Array.from({ length: 11 }, () => smallParcel({ weightKg: 70 }));
++  const first = createOrder("cust-1", nearlyFull, "10115");
++  const second = createOrder("cust-2", [smallParcel({ weightKg: 60 })], "10115");
++  const vans = assignToVans([first, second]);
++  assert.equal(vans.length, 2);
++  assert.deepEqual(ordersSplitAcrossVans(vans), []);
++});

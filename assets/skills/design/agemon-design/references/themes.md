@@ -1,6 +1,8 @@
 # Theme Presets
 
-Four named, production-ready token stacks. Each is a complete primitive layer for the 3-layer contract in [tokens.md](tokens.md) — map these into your semantic tokens, don't reference them raw from components. Pick one when the project has no token system; if the project has tokens, those win ([SKILL.md](../SKILL.md) Discovery).
+Four named, production-ready token stacks. Each is a complete primitive layer for the 3-layer contract in [tokens.md](tokens.md) — map these into your semantic tokens, don't reference them raw from components. If the project has tokens, those win ([stage-assets.md](stage-assets.md)).
+
+**Presets are opt-in starting points.** Use one only when the user asks for it, or when there is no brand and no direction at all. Rotate each preset's accent for the brief (see Accent rotation below); the accents shown are placeholders, not recommendations. Several presets sit close to the looks in [tells-2026-11.md](tells-2026-11.md), and a near-black page with one bright accent is a current tell in its own right.
 
 These are not "styles to sprinkle". A preset is all-or-nothing: mixing Porcelain's radii with Carbon's shadows produces incoherence that reads as generated.
 
@@ -12,9 +14,9 @@ These are not "styles to sprinkle". A preset is all-or-nothing: mixing Porcelain
 
 ---
 
-## Graphite — minimal clean (default)
+## Graphite — minimal clean
 
-Cool neutrals, one deep accent, hairline borders, tight type. The safe choice for SaaS tools, admin surfaces, and the Command/Overview dashboard compositions. Disappears behind the data — which is the point.
+Cool neutrals, one deep accent, hairline borders, tight type. Suits SaaS tools, admin surfaces, and the Command/Overview dashboard compositions when the brief asks for quiet. It is close to the SaaS card kit, so vary radii by rank and do not repeat one shadow on every card. Disappears behind the data — which is the point.
 
 ```css
 :root {
@@ -39,7 +41,7 @@ Cool neutrals, one deep accent, hairline borders, tight type. The safe choice fo
   --danger:  oklch(52% 0.18 25);
 
   /* type — one grotesque sans for everything */
-  --font-body: var(--font-sans);       /* Inter-class; system-ui acceptable */
+  --font-body: var(--font-sans);       /* the project's font, else chosen from the brief; system-ui acceptable */
   --text-body: 14px / 1.5;
   --text-display: 28px;                 /* metrics; 36px for hero */
   --tracking-display: -0.02em;
@@ -61,7 +63,7 @@ Cool neutrals, one deep accent, hairline borders, tight type. The safe choice fo
 
 ## Porcelain — soft modern
 
-Warm neutrals, terracotta accent, generous radius, soft layered shadows. For products that want approachable over technical: consumer SaaS, onboarding-heavy tools, health/finance for humans. Pairs with VISUAL_DENSITY ≤ 5.
+Warm neutrals, a deep teal accent (moved off terracotta, which with cream and a serif is a tell), generous radius, soft layered shadows. Do not add a high-contrast serif display and cream ground on top of this unless the brief asks. For products that want approachable over technical: consumer SaaS, onboarding-heavy tools, health/finance for humans. Pairs with VISUAL_DENSITY ≤ 5.
 
 ```css
 :root {
@@ -72,9 +74,9 @@ Warm neutrals, terracotta accent, generous radius, soft layered shadows. For pro
   --gray-6:   oklch(54% 0.015 70);
   --gray-9:   oklch(22% 0.015 60);
 
-  --accent:        oklch(60% 0.13 40);
-  --accent-hover:  oklch(55% 0.13 40);
-  --accent-tint:   oklch(60% 0.13 40 / 0.09);
+  --accent:        oklch(50% 0.10 205);
+  --accent-hover:  oklch(45% 0.10 205);
+  --accent-tint:   oklch(50% 0.10 205 / 0.09);
   --on-accent:     oklch(98.5% 0.004 80);
 
   --success: oklch(56% 0.12 150);
@@ -95,13 +97,13 @@ Warm neutrals, terracotta accent, generous radius, soft layered shadows. For pro
 }
 ```
 
-**Dark mapping:** keep the warm hue — page `oklch(17% 0.012 70)`, raised `oklch(21% 0.012 70)`; accent lifts to `oklch(70% 0.12 45)`. Warm dark is this preset's signature; switching to cool dark breaks it.
+**Dark mapping:** keep the warm hue — page `oklch(17% 0.012 70)`, raised `oklch(21% 0.012 70)`; accent lifts to `oklch(70% 0.10 205)`. Warm dark is this preset's signature; switching to cool dark breaks it.
 
 ---
 
 ## Carbon — dark premium
 
-Dark-first. Deep cool neutrals, elevation by surface tint (not shadow), one restrained luminous accent. For developer tools, monitoring, pro audio/video — products used for hours in the dark. Light mode exists but dark is primary.
+Dark-first. Deep cool neutrals, elevation by surface tint (not shadow), one restrained luminous accent. A near-black page with a single bright accent is a current tell, so use Carbon only when the brief asks for dark or the product really is used for hours in the dark (developer tools, monitoring, pro audio/video), and rotate the accent. Not because the category is technical. Light mode exists but dark is primary.
 
 ```css
 :root {  /* dark IS the root */
@@ -114,9 +116,9 @@ Dark-first. Deep cool neutrals, elevation by surface tint (not shadow), one rest
   --text-2:    oklch(70% 0.01 260);
   --text-3:    oklch(52% 0.012 260);
 
-  --accent:        oklch(78% 0.12 170);  /* luminous mint — reads as light, not paint */
-  --accent-hover:  oklch(84% 0.12 170);
-  --accent-tint:   oklch(78% 0.12 170 / 0.10);
+  --accent:        oklch(76% 0.10 235);  /* luminous sky blue — reads as light, not paint */
+  --accent-hover:  oklch(82% 0.10 235);
+  --accent-tint:   oklch(76% 0.10 235 / 0.10);
   --on-accent:     oklch(8% 0.008 260);  /* near-true black — the 14% surface tone fails Lc 60 here */
 
   --success: oklch(74% 0.12 155);
@@ -137,13 +139,13 @@ Dark-first. Deep cool neutrals, elevation by surface tint (not shadow), one rest
 }
 ```
 
-**Light mapping (secondary):** invert the surface ladder onto Graphite's neutrals; accent darkens to `oklch(50% 0.13 170)`. Don't ship light-Carbon as default — if light is the primary need, pick Graphite.
+**Light mapping (secondary):** invert the surface ladder onto Graphite's neutrals; accent darkens to `oklch(50% 0.13 235)`. Don't ship light-Carbon as default — if light is the primary need, pick Graphite.
 
 ---
 
 ## Signal — sharp geometric
 
-High-contrast, near-mono neutrals, semantic color doing real work, minimal radius, zero decorative depth. For dense data products — the Analytics composition, trading-adjacent surfaces, ops consoles at VISUAL_DENSITY ≥ 8.
+High-contrast, near-mono neutrals, semantic color doing real work, minimal radius, zero decorative depth. It sits near the broadsheet look (hairlines, small radius, dense columns), so use it when density is the actual need. For dense data products — the Analytics composition, trading-adjacent surfaces, ops consoles at VISUAL_DENSITY ≥ 8.
 
 ```css
 :root {
@@ -186,12 +188,12 @@ High-contrast, near-mono neutrals, semantic color doing real work, minimal radiu
 
 | Signal in the brief | Preset |
 |---|---|
-| "clean", "professional", internal tool, no strong brand | **Graphite** |
+| "clean", "professional", internal tool, quiet is wanted | **Graphite** |
 | "friendly", "approachable", consumer-facing, onboarding matters | **Porcelain** |
 | "developer tool", "pro", users live in it at night | **Carbon** |
 | "dense", "fast", data is the product, power users | **Signal** |
 
-Brand color exists? Replace `--accent` with the brand hue at the preset's lightness/chroma discipline — the preset survives an accent swap; it does not survive a radius or shadow swap.
+No row fits? Do not pick one to have a default; derive tokens from the brief's subject. Brand color exists? Replace `--accent` with the brand hue at the preset's lightness/chroma discipline — the preset survives an accent swap; it does not survive a radius or shadow swap.
 
 ---
 
@@ -201,11 +203,13 @@ When the brief has no brand color, **rotate one accent family per build** so out
 
 | Family | Light `--accent` (OKLCH) | Best on preset | Avoid pairing with |
 |---|---|---|---|
-| **Indigo** | `oklch(46% 0.17 275)` | Graphite, Signal | — (default; rotate away often) |
-| **Teal** | `oklch(48% 0.12 195)` | Graphite, Carbon | Porcelain terracotta clash |
+| **Indigo** | `oklch(46% 0.17 275)` | Graphite, Signal | — (over-used; rotate away often) |
+| **Teal** | `oklch(48% 0.12 195)` | Graphite, Carbon | Porcelain's own teal |
 | **Rose** | `oklch(52% 0.14 15)` | Porcelain, Graphite | Signal high-contrast grids |
-| **Amber** | `oklch(58% 0.14 75)` | Porcelain, Graphite | Carbon mint accent |
+| **Amber** | `oklch(58% 0.14 75)` | Porcelain, Graphite, Carbon (lift lightness on dark) | Signal's warning color |
 | **Forest** | `oklch(46% 0.11 155)` | Porcelain, Graphite | Signal blue-violet default |
+
+Three of the four presets ship a cool placeholder accent (indigo, blue, blue-violet) and Porcelain ships teal, which is cool too; that is an accident of the examples, not a lean. Rotate to a warm or green family whenever the brief allows.
 
 **Hover / tint discipline:** `--accent-hover` ≈ 5% darker on the same hue; `--accent-tint` ≈ 8–10% alpha of accent; `--on-accent` must clear APCA Lc ≥ 60 against the filled button.
 

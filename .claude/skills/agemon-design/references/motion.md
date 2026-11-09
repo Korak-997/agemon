@@ -421,7 +421,7 @@ Map the project's animation library to the token names, not raw values — when 
 
 ## Cross-Refs
 
-- `stack.md` — Motion / GSAP / Three.js library specifics (opt-in during Discovery).
+- `stack.md` — Motion / GSAP / Three.js library specifics (opt-in during intake).
 - `modern-css.md` — `@starting-style` for enter-on-mount, View Transitions API.
 - `accessibility.md` — reduced-motion + full interaction rules (keyboard, focus, touch).
 - `../examples/animation-storyboard.md` — multi-stage sequenced animations pattern.

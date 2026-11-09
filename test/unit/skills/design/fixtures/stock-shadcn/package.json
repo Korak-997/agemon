@@ -1,0 +1,4 @@
+{
+  "name": "stock-app",
+  "dependencies": { "next": "^16.0.0", "tailwindcss": "^4.1.0" }
+}

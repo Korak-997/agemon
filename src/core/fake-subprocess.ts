@@ -18,10 +18,7 @@ import {
   AGNIX_VERSION,
   CODE_REVIEW_GRAPH_PACKAGE_SPEC,
   CODE_REVIEW_GRAPH_VERSION,
-  ESSENTIALS_SKILLS_COMMIT,
 } from "../plugins/pins.js";
-import { SKILL_GROUPS } from "../plugins/skills/catalog.js";
-import { skillPathInRepository } from "../plugins/skills/pinned-source.js";
 import { isLeftOutBySkillsCli } from "../plugins/skills/skill-tree.js";
 import { SKILLS_CLI_PATH_IN_TOOLS_DIR } from "../plugins/skills/skills-cli.js";
 import {
@@ -30,10 +27,6 @@ import {
   SKILLS_LOCK_FILE,
 } from "../plugins/skills/skills-cli-targets.js";
 import { isPlainSkillName } from "./config.js";
-import {
-  FAKE_PINNED_SKILL_MANIFEST_FILE,
-  fakePinnedSkillManifest,
-} from "./fake-pinned-skills.js";
 import { sha256Hex } from "./fingerprint.js";
 import { resolveStateRoot } from "./state-root.js";
 import type { SubprocessResult } from "./subprocess-runner.js";
@@ -376,25 +369,6 @@ function buildFakeSkillsCliResponse(
     stdout: `[fake subprocess] skills ${args.join(" ")}\n`,
     stderr: "",
   };
-}
-
-function writeFakePinnedSkills(sourceDirectory: string): void {
-  const commit = basename(sourceDirectory);
-  for (const entry of SKILL_GROUPS.flatMap((group) => group.skills)) {
-    if (entry.pinnedRepository?.commit !== commit) {
-      continue;
-    }
-    const skillDirectory = join(
-      sourceDirectory,
-      skillPathInRepository(entry.skillName),
-    );
-    mkdirSync(skillDirectory, { recursive: true });
-    writeFileSync(
-      join(skillDirectory, FAKE_PINNED_SKILL_MANIFEST_FILE),
-      fakePinnedSkillManifest(entry.skillName),
-      "utf8",
-    );
-  }
 }
 
 export function fakePipxHome(): string {
@@ -745,22 +719,6 @@ export function runFakeSubprocess(
 
   if (args[0]?.endsWith(PINNED_SKILLS_CLI_SUFFIX)) {
     return buildFakeSkillsCliResponse(args.slice(1), options.cwd);
-  }
-
-  if (
-    command === "git" &&
-    args.at(-2) === "rev-parse" &&
-    args.at(-1) === "HEAD"
-  ) {
-    return { code: 0, stdout: `${ESSENTIALS_SKILLS_COMMIT}\n`, stderr: "" };
-  }
-
-  if (
-    command === "git" &&
-    args.slice(-3).join(" ") === "checkout -q FETCH_HEAD" &&
-    options.cwd !== undefined
-  ) {
-    writeFakePinnedSkills(options.cwd);
   }
 
   if (basename(command) === "npm") {

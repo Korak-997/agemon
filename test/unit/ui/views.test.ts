@@ -213,6 +213,7 @@ describe("renderStatusReport", () => {
       },
     ],
     sharedResources: [],
+    offers: [],
     duplication: [],
     trackedAgemonPaths: [],
     trackingCheckError: null,
@@ -284,6 +285,26 @@ describe("renderStatusReport", () => {
     expect(rendered).toContain("d?]0;x");
   });
 
+  it("status lists new and declined items with how to get each, and stays quiet with none", () => {
+    expect(renderStatusReport(base)).not.toContain("Available");
+
+    const rendered = renderStatusReport({
+      ...base,
+      offers: [
+        { kind: "skill-group", id: "security", state: "new" },
+        { kind: "capability", id: "cli-tool", state: "declined" },
+      ],
+    });
+
+    expect(rendered).toContain("Available");
+    expect(rendered).toContain(
+      "New: skill group 'security'. Run 'agemon' to choose.",
+    );
+    expect(rendered).toContain(
+      "Declined: capability 'cli-tool'. Run 'agemon add <name>' to install.",
+    );
+  });
+
   it('status renders present-modified as "present · changed"', () => {
     const rendered = renderStatusReport({
       ...base,
@@ -308,6 +329,7 @@ describe("renderStatusReport — shared tools", () => {
   const report: StatusReport = {
     managedResources: [],
     capabilities: [],
+    offers: [],
     sharedResources: [
       {
         tool: "code-review-graph",
@@ -385,7 +407,42 @@ describe("renderInspectReport", () => {
     binaries: [{ name: "code-review-graph", present: false }],
     duplication: { overlaps: [] },
     agents: [],
+    cloud: {
+      uncommittedPaths: [],
+      ignoredPaths: [],
+      unpushedCommits: 0,
+      gitCheckError: null,
+      toolsToInstall: [],
+      setupScript: null,
+    },
   };
+
+  it("says nothing blocks the web when the repo is ready, and how to add the marketplace", () => {
+    const rendered = renderInspectReport(base);
+    expect(rendered).toContain(
+      "nothing here stops Claude Code on the web from using this repo",
+    );
+    expect(rendered).toContain("Add marketplace > Korak-997/agemon");
+  });
+
+  it("lists what a cloud session would miss, with the setup script", () => {
+    const rendered = renderInspectReport({
+      ...base,
+      cloud: {
+        uncommittedPaths: [".claude/skills/"],
+        ignoredPaths: [".claude/agents/"],
+        unpushedCommits: 2,
+        gitCheckError: null,
+        toolsToInstall: ["code-review-graph"],
+        setupScript: "#!/bin/bash\nuv tool install code-review-graph\n",
+      },
+    });
+    expect(rendered).toContain(".claude/skills/");
+    expect(rendered).toContain(".claude/agents/");
+    expect(rendered).toContain("2 commit(s) changing agent config");
+    expect(rendered).toContain("    uv tool install code-review-graph");
+    expect(rendered).not.toContain("nothing here stops");
+  });
 
   it("renders an empty repo with no capability rows and no duplication", () => {
     const rendered = renderInspectReport(base);

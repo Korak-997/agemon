@@ -1,6 +1,8 @@
 import type { AgentDetectionRow } from "../adapters/types.js";
+import { GITHUB_REPOSITORY } from "../core/github-release.js";
 import { printable } from "../core/untrusted-text.js";
 import type { ClassifiedResource, ResourceState } from "../inspect/classify.js";
+import type { CloudReadiness } from "../inspect/cloud.js";
 import { describeOverlap } from "../inspect/duplication.js";
 import type { InspectReport } from "../inspect/index.js";
 import type { CapabilityState } from "../plugins/types.js";
@@ -88,6 +90,49 @@ function agentRow(row: AgentDetectionRow): string[] {
   ];
 }
 
+function cloudReadinessLines(cloud: CloudReadiness): string[] {
+  const lines: string[] = [];
+  if (cloud.gitCheckError !== null) {
+    lines.push(`  ${theme.warn(cloud.gitCheckError)}`);
+  }
+  if (cloud.uncommittedPaths.length > 0) {
+    lines.push(
+      `  ${theme.warn("not committed, so Claude Code on the web won't see it:")}`,
+      ...cloud.uncommittedPaths.map((path) => `    ${printable(path)}`),
+    );
+  }
+  if (cloud.ignoredPaths.length > 0) {
+    lines.push(
+      `  ${theme.warn("gitignored, so Claude Code on the web won't see it:")}`,
+      ...cloud.ignoredPaths.map((path) => `    ${printable(path)}`),
+    );
+  }
+  if (cloud.unpushedCommits !== null && cloud.unpushedCommits > 0) {
+    lines.push(
+      `  ${theme.warn(`${cloud.unpushedCommits} commit(s) changing agent config aren't pushed yet`)}`,
+    );
+  }
+  if (cloud.setupScript !== null) {
+    lines.push(
+      `  ${theme.warn(`this config runs ${cloud.toolsToInstall.join(", ")}, which a cloud session doesn't have`)}`,
+      "  paste this into the cloud environment's Setup script:",
+      ...cloud.setupScript
+        .trimEnd()
+        .split("\n")
+        .map((line) => `    ${line}`),
+    );
+  }
+  if (lines.length === 0) {
+    lines.push(
+      "  nothing here stops Claude Code on the web from using this repo",
+    );
+  }
+  lines.push(
+    `  claude.ai chat: Customize > Plugins > Add > Add marketplace > ${GITHUB_REPOSITORY}`,
+  );
+  return lines;
+}
+
 export function renderInspectReport(report: InspectReport): string {
   const blocks: string[] = [];
 
@@ -162,6 +207,9 @@ export function renderInspectReport(report: InspectReport): string {
   blocks.push(
     renderTable([["AGENT", "STATE", "DETAIL"], ...report.agents.map(agentRow)]),
   );
+
+  blocks.push(section("Claude on the web"));
+  blocks.push(...cloudReadinessLines(report.cloud));
 
   blocks.push(section("Duplication"));
   if (report.duplication.overlaps.length === 0) {

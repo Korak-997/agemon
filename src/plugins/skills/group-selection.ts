@@ -135,20 +135,9 @@ export async function selectNewlyOfferedGroups(
   );
   const named = unofferedGroups.filter((group) => namedIds.has(group.id));
   const remaining = unofferedGroups.filter((group) => !namedIds.has(group.id));
-  const remainingBuiltIn = remaining.filter(
-    (group) => !customGroups.includes(group),
-  );
 
-  if (remaining.length === 0 || ctx.dryRun) {
+  if (remaining.length === 0 || ctx.dryRun || ctx.yes || !ctx.interactive) {
     return { chosen: named, offered: [] };
-  }
-
-  if (!ctx.interactive) {
-    return { chosen: named, offered: ctx.yes ? remainingBuiltIn : [] };
-  }
-
-  if (ctx.yes) {
-    return { chosen: [...named, ...remainingBuiltIn], offered: [] };
   }
 
   const selected = await promptForOptionalGroups(

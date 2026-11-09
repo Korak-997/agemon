@@ -10,9 +10,9 @@ Outcome recipe for authentication surfaces. Small surface, zero tolerance: auth 
 |---|---|---|
 | Brand surface | product has marketing presence worth showing / pure utility app | marketing presence |
 | Auth methods | SSO-first (Google/GitHub/SAML) / email-first / both | both, SSO on top |
-| Theme | preset from [themes.md](themes.md) or existing brand tokens | brand tokens if present, else **Graphite** |
+| Theme | preset from [themes.md](themes.md) or existing brand tokens | brand tokens if present, else derive from the brief |
 | Variance | DESIGN_VARIANCE 1-10 | 4 |
-| Signature bet | one from [craft-intent.md](craft-intent.md) §3 auth list | panel proof asset (metric + sparkline) or trust footer line |
+| Signature bet | one from [craft-intent.md](craft-intent.md) §3 auth list | trust footer line or a domain-specific welcome line |
 
 ## Step 1 — Pick the composition
 
@@ -23,7 +23,7 @@ Outcome recipe for authentication surfaces. Small surface, zero tolerance: auth 
 │ logo                     │                    │
 │                          │  Welcome back      │
 │  ONE proof asset:        │  sub, one line     │
-│  metric + sparkline      │  [SSO] [SSO]       │
+│  figure or detail from   │  [SSO] [SSO]       │
 │  OR attributed quote     │  ── or with email ─│
 │  (pick one, not a deck)  │  Email             │
 │                          │  Password  Forgot? │

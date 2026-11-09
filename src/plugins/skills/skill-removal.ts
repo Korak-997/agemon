@@ -19,8 +19,6 @@ import {
   SKILLS_LOCK_FILE,
 } from "./skills-cli-targets.js";
 
-const DIFFERS_FROM_INSTALLED =
-  "it differs from every version agemon installed; delete it if you no longer need it.";
 const CHANGED_DURING_REMOVAL = "it changed while agemon was removing it.";
 const QUARANTINE_PREFIX = ".agemon-removing-";
 const QUARANTINE_SUFFIX_BYTES = 8;
@@ -34,6 +32,30 @@ export type SkillRemoval =
 
 type IsAgemonContent = (fingerprint: string) => boolean;
 
+export interface SkillCopyLocation {
+  directory: string;
+  differsReason: string;
+  unlinksSymlinks: boolean;
+  describeWouldRemove: (skillName: string) => string;
+}
+
+export const CLAUDE_COPY_LOCATION: SkillCopyLocation = {
+  directory: CLAUDE_SKILLS_DIRECTORY,
+  differsReason:
+    "it differs from every version agemon installed; delete it if you no longer need it.",
+  unlinksSymlinks: true,
+  describeWouldRemove: (skillName) => `Would remove skill ${skillName}`,
+};
+
+export const AGENTS_COPY_LOCATION: SkillCopyLocation = {
+  directory: CANONICAL_SKILLS_DIRECTORY,
+  differsReason:
+    "it differs from what agemon wrote; delete it if you no longer need it.",
+  unlinksSymlinks: false,
+  describeWouldRemove: (skillName) =>
+    `Would remove ${CANONICAL_SKILLS_DIRECTORY}/${skillName}`,
+};
+
 async function lstatIfPresent(path: string) {
   try {
     return await lstat(path);
@@ -45,16 +67,25 @@ async function lstatIfPresent(path: string) {
   }
 }
 
-function keep(ctx: Context, skillName: string, reason: string): SkillRemoval {
+function keep(
+  ctx: Context,
+  location: SkillCopyLocation,
+  skillName: string,
+  reason: string,
+): SkillRemoval {
   ctx.ui.info(
-    `${ctx.dryRun ? "Would keep" : "Keeping"} ${CLAUDE_SKILLS_DIRECTORY}/${printable(skillName)}: ${reason}`,
+    `${ctx.dryRun ? "Would keep" : "Keeping"} ${location.directory}/${printable(skillName)}: ${reason}`,
   );
   return { kind: "kept" };
 }
 
-function removed(ctx: Context, skillName: string): SkillRemoval {
+function removed(
+  ctx: Context,
+  location: SkillCopyLocation,
+  skillName: string,
+): SkillRemoval {
   if (ctx.dryRun) {
-    ctx.ui.info(`Would remove skill ${printable(skillName)}`);
+    ctx.ui.info(location.describeWouldRemove(printable(skillName)));
   }
   return { kind: "removed" };
 }
@@ -83,9 +114,12 @@ async function fingerprintIfReadable(
   }
 }
 
-async function verifiedSkillsDirectory(ctx: Context): Promise<string | null> {
-  const expected = join(await realpath(ctx.cwd), CLAUDE_SKILLS_DIRECTORY);
-  const resolved = await resolveSkillsDirectory(ctx, CLAUDE_SKILLS_DIRECTORY);
+async function verifiedSkillsDirectory(
+  ctx: Context,
+  location: SkillCopyLocation,
+): Promise<string | null> {
+  const expected = join(await realpath(ctx.cwd), location.directory);
+  const resolved = await resolveSkillsDirectory(ctx, location.directory);
   if (resolved === null || resolved === "refused") {
     return null;
   }
@@ -106,18 +140,19 @@ function quarantineName(skillName: string): string {
 
 async function unlinkSymlinkedCopy(
   ctx: Context,
+  location: SkillCopyLocation,
   skillName: string,
   linkStats: Stats,
 ): Promise<SkillRemoval> {
   if (!ctx.dryRun) {
-    const skillsDirectory = await verifiedSkillsDirectory(ctx);
+    const skillsDirectory = await verifiedSkillsDirectory(ctx, location);
     const linkPath =
       skillsDirectory === null ? null : join(skillsDirectory, skillName);
     if (
       linkPath === null ||
       !isSameEntry(linkStats, await lstatIfPresent(linkPath))
     ) {
-      return keep(ctx, skillName, CHANGED_DURING_REMOVAL);
+      return keep(ctx, location, skillName, CHANGED_DURING_REMOVAL);
     }
     await unlink(linkPath);
   }
@@ -131,6 +166,7 @@ async function unlinkSymlinkedCopy(
 
 async function removeDirectoryCopy(
   ctx: Context,
+  location: SkillCopyLocation,
   skillName: string,
   copyPath: string,
   copyStats: Stats,
@@ -138,14 +174,14 @@ async function removeDirectoryCopy(
 ): Promise<SkillRemoval> {
   const fingerprint = await fingerprintIfReadable(copyPath);
   if (fingerprint === null || !isAgemonContent(fingerprint)) {
-    return keep(ctx, skillName, DIFFERS_FROM_INSTALLED);
+    return keep(ctx, location, skillName, location.differsReason);
   }
   if (ctx.dryRun) {
-    return removed(ctx, skillName);
+    return removed(ctx, location, skillName);
   }
-  const skillsDirectory = await verifiedSkillsDirectory(ctx);
+  const skillsDirectory = await verifiedSkillsDirectory(ctx, location);
   if (skillsDirectory === null) {
-    return keep(ctx, skillName, CHANGED_DURING_REMOVAL);
+    return keep(ctx, location, skillName, CHANGED_DURING_REMOVAL);
   }
   const verifiedCopyPath = join(skillsDirectory, skillName);
   const quarantine = quarantineName(skillName);
@@ -160,10 +196,10 @@ async function removeDirectoryCopy(
       (await fingerprintIfReadable(quarantinePath)) === fingerprint;
     if (
       !stillTheClassifiedCopy ||
-      (await verifiedSkillsDirectory(ctx)) !== skillsDirectory
+      (await verifiedSkillsDirectory(ctx, location)) !== skillsDirectory
     ) {
       await restoreCopy();
-      return keep(ctx, skillName, CHANGED_DURING_REMOVAL);
+      return keep(ctx, location, skillName, CHANGED_DURING_REMOVAL);
     }
     await rm(quarantinePath, { recursive: true, force: true });
   } catch (error) {
@@ -175,27 +211,29 @@ async function removeDirectoryCopy(
     throw new Error(
       restored
         ? message
-        : `${message}; agemon left the copy at ${CLAUDE_SKILLS_DIRECTORY}/${quarantine}`,
+        : `${message}; agemon left the copy at ${location.directory}/${quarantine}`,
     );
   }
-  return removed(ctx, skillName);
+  return removed(ctx, location, skillName);
 }
 
 export async function removeAgemonSkillCopy(
   ctx: Context,
   skillName: string,
   isAgemonContent: IsAgemonContent,
+  location: SkillCopyLocation = CLAUDE_COPY_LOCATION,
 ): Promise<SkillRemoval> {
   try {
     const skillsDirectory = await resolveSkillsDirectory(
       ctx,
-      CLAUDE_SKILLS_DIRECTORY,
+      location.directory,
     );
     if (skillsDirectory === "refused") {
       return keep(
         ctx,
+        location,
         skillName,
-        `${CLAUDE_SKILLS_DIRECTORY} is a symlink or not a real directory; agemon leaves it alone.`,
+        `${location.directory} is a symlink or not a real directory; agemon leaves it alone.`,
       );
     }
     if (skillsDirectory === null) {
@@ -206,18 +244,20 @@ export async function removeAgemonSkillCopy(
     if (stats === null) {
       return { kind: "gone" };
     }
-    if (stats.isSymbolicLink()) {
-      return await unlinkSymlinkedCopy(ctx, skillName, stats);
+    if (stats.isSymbolicLink() && location.unlinksSymlinks) {
+      return await unlinkSymlinkedCopy(ctx, location, skillName, stats);
     }
     if (!stats.isDirectory()) {
       return keep(
         ctx,
+        location,
         skillName,
         "it is not a directory; agemon leaves it alone.",
       );
     }
     return await removeDirectoryCopy(
       ctx,
+      location,
       skillName,
       copyPath,
       stats,
@@ -226,7 +266,7 @@ export async function removeAgemonSkillCopy(
   } catch (error) {
     return {
       kind: "failed",
-      detail: `${CLAUDE_SKILLS_DIRECTORY}/${printable(skillName)}: ${printable(error instanceof Error ? error.message : String(error))}`,
+      detail: `${location.directory}/${printable(skillName)}: ${printable(error instanceof Error ? error.message : String(error))}`,
     };
   }
 }

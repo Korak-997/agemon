@@ -229,21 +229,18 @@ If any check fails, the release is blocked and no GitHub Release is created.
 
 `src/plugins/skills/bundle-fingerprints.ts` lists the content fingerprint of every version
 of a bundled skill agemon has shipped, so `status` can tell an unmodified older copy from a
-user's edit. After changing a skill under `assets/skills/` or bumping the Essentials pin,
+user's edit. After changing a skill under `assets/skills/`,
 run `npm run skills:fingerprints` and commit the result in the same pull request:
 
-- a unit test fails while a vendored skill's current fingerprint, or the pinned Essentials
-  fingerprints, are missing;
+- a unit test fails while a vendored skill's current fingerprint is missing;
 - the `sandbox` CI job runs `npm run skills:fingerprints -- --check`, which recomputes the
   fingerprints of `assets/skills` at every `v*` tag and fails if any is missing.
 
 The script only adds fingerprints; never remove one by hand, or users with that version
-stop getting updates. Bumping the Essentials pin needs network access: the script uses the
-cached `skills-src/<commit>` checkout only when its `HEAD` is exactly the pinned commit and
-`git status --porcelain --ignored` is empty, and otherwise fetches the commit into a fresh
-temporary directory. The pinned fingerprints are trusted as they are at generation time
-(CI cannot re-check them without the network); the real-mode Docker check compares a real
-Essentials install with them.
+stop getting updates. That includes the fingerprints of the `web-design-guidelines` and
+`writing-guidelines` copies agemon installed from a pinned upstream commit before it
+bundled them: they are what lets agemon update an unmodified old install. The script needs no
+network access.
 
 ## What gets published where
 

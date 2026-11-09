@@ -221,10 +221,10 @@ describe("findUntrustedGitConfig — the allowlist", () => {
 
   it("puts a top-level core.worktree outside even when it names the repository itself", async () => {
     const repository = await createRepository();
-    git(repository, "config", "core.worktree", repository);
+    git(repository, "config", "core.worktree", "..");
 
     expect(await pairsOf(repository)).toEqual([
-      `.git/config: core.worktree=${repository}`,
+      ".git/config: core.worktree=..",
     ]);
   });
 

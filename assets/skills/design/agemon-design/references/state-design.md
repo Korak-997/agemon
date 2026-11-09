@@ -169,7 +169,7 @@ Before any interactive surface ships, every item on this list is designed (not n
 - [ ] Conflict state exists if the resource is collaborative
 - [ ] Offline state exists if the user-journey is likely on mobile / flaky networks
 
-**Knob gating (used by `/ui-craft:unhappy`):**
+**Knob gating (used by `/agemon-design harden`):**
 
 | CRAFT_LEVEL | Required states |
 |-------------|----------------|

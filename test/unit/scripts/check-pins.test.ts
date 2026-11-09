@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGNIX_VERSION,
   CODE_REVIEW_GRAPH_VERSION,
-  ESSENTIALS_SKILLS_COMMIT,
 } from "../../../src/plugins/pins.js";
 
 const LONG_AGO = "2020-01-01T00:00:00Z";
@@ -37,15 +36,6 @@ function stubRegistries(): void {
         time: { [AGNIX_VERSION]: LONG_AGO },
         versions: { [AGNIX_VERSION]: { dependencies } },
       });
-    }
-    if (url.includes(`/commits/${ESSENTIALS_SKILLS_COMMIT}`)) {
-      return jsonResponse({
-        sha: ESSENTIALS_SKILLS_COMMIT,
-        commit: { committer: { date: LONG_AGO } },
-      });
-    }
-    if (url.includes("/commits?")) {
-      return jsonResponse([]);
     }
     return new Response("not found", { status: 404 });
   });

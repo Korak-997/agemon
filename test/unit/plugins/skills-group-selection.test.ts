@@ -232,14 +232,31 @@ describe("selectNewlyOfferedGroups", () => {
     expect(selection).toEqual({ chosen: [], offered: [] });
   });
 
-  it("records new built-in groups as offered under non-interactive --yes, but leaves custom groups pending", async () => {
+  it.each([
+    ["without a terminal", false],
+    ["in a terminal", true],
+  ])(
+    "leaves new groups waiting under --yes %s",
+    async (_label, interactive) => {
+      const selection = await selectNewlyOfferedGroups(
+        createFakeContext({ yes: true, interactive }),
+        [HOUSE_STYLE],
+        [design, HOUSE_STYLE],
+      );
+
+      expect(selection).toEqual({ chosen: [], offered: [] });
+      expect(clack.multiselect).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still installs a group the skill groups option names under --yes", async () => {
     const selection = await selectNewlyOfferedGroups(
-      createFakeContext({ yes: true }),
-      [HOUSE_STYLE],
-      [design, HOUSE_STYLE],
+      createFakeContext({ yes: true, skillGroupsOption: "design" }),
+      [],
+      [design],
     );
 
-    expect(selection).toEqual({ chosen: [], offered: [design] });
+    expect(selection).toEqual({ chosen: [design], offered: [] });
   });
 
   it("chooses an unoffered group that the skill groups option names, even without a terminal", async () => {

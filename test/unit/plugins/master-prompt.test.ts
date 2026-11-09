@@ -130,6 +130,65 @@ async function planFor(context: Context): Promise<ProposedOperation[]> {
   return (await masterPromptPlugin.plan?.(context)) ?? [];
 }
 
+describe("master-prompt plugin — subagent model routing rule", () => {
+  const SUBAGENT_MODELS_HEADING = "## Subagent Models";
+  const MAX_ROUTING_RULE_WORDS = 100;
+
+  function routingSection(agentsFile: string): string {
+    const section = agentsFile.slice(
+      agentsFile.indexOf(SUBAGENT_MODELS_HEADING),
+    );
+    return section.slice(0, section.indexOf("\n## "));
+  }
+
+  async function installedAgentsFile(context: Context): Promise<string> {
+    await applyAllPlanned(masterPromptPlugin, context);
+    return readFile(join(context.cwd, "AGENTS.md"), "utf8");
+  }
+
+  it("carries every tier in the agent-rules block, in under 100 words", async () => {
+    const section = routingSection(
+      await installedAgentsFile(await createTestContext()),
+    );
+
+    for (const rule of [
+      "A few tool calls: do them yourself.",
+      "Cheapest tier:",
+      "Mid tier:",
+      "Top tier:",
+      "Failed twice on one task: go one tier up.",
+    ]) {
+      expect(section).toContain(rule);
+    }
+    expect(section.split(/\s+/u).length).toBeLessThan(MAX_ROUTING_RULE_WORDS);
+  });
+
+  it("names tiers rather than models, because the block reaches every agent", async () => {
+    const section = routingSection(
+      await installedAgentsFile(await createTestContext()),
+    );
+
+    expect(section).not.toMatch(/haiku|sonnet|opus|fable/iu);
+  });
+
+  it("updates an existing block in place and leaves the user's content alone", async () => {
+    const context = await createTestContext();
+    const userContentBefore = "# Team heading\n\nOur own rule.\n\n";
+    const userContentAfter = "\n## Our footer\n\nStill ours.\n";
+    await writeFile(
+      join(context.cwd, "AGENTS.md"),
+      `${userContentBefore}<!-- agemon:start:agent-rules -->\n# AI Agent Rules\n<!-- agemon:end:agent-rules -->\n${userContentAfter}`,
+      "utf8",
+    );
+
+    const agentsFile = await installedAgentsFile(context);
+
+    expect(agentsFile).toContain(SUBAGENT_MODELS_HEADING);
+    expect(agentsFile.startsWith(userContentBefore)).toBe(true);
+    expect(agentsFile.endsWith(userContentAfter)).toBe(true);
+  });
+});
+
 describe("master-prompt plugin — dedup-safe reconciliation", () => {
   it("inserts a delimited block into hand-written AGENTS.md and restores it on uninstall", async () => {
     const context = await createTestContext();

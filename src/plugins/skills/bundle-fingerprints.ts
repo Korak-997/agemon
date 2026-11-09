@@ -2,13 +2,18 @@
 
 export interface BundleFingerprints {
   history: Readonly<Record<string, readonly string[]>>;
-  pinned: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
 export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
   history: {
+    "agemon-adhd": [
+      "ee698635e74f115da61ff884ed3d88cb1d055921551fdbb1e7e959c11569c816",
+    ],
     "agemon-architecture": [
       "8e1ddcdd2151bdade02e05d777ee72dd0caf6faaa1179b1ce5e50eb3a502fccc",
+    ],
+    "agemon-brainstorming": [
+      "6a34fd7379d7312c59f84d980c302326122c309ff4d57d12dc17d74060ce18ba",
     ],
     "agemon-clean-code": [
       "55bec196d836688e9b7902808b925bcbf78c68ff840e44dcf67eff45679d6db8",
@@ -19,11 +24,20 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
       "c2d556dfcf60f81b2f7638717b436e99d5c77df15f668c05f9604c4187dd07ae",
     ],
     "agemon-design": [
+      "1775ab661da86fdee13b74b0e76a2ce47994e7a0608a1e7df43e7a2a40018c38",
+      "3401c4c074987666ad5e41ababa58752d67de5725708a76c9cbcd0c6a3851395",
       "3581e052b7effcfe82b98c788dbed81023a6d59b5806e69d74270049458a1d5b",
       "5e565bfdd50ec5bf4dc1480fea3f5f6cea0b9ff0f3e98ccad5fcdaefdc09ab99",
+      "a7e453034da8bccf513c72f59aedca951642f4ff7046ad4c9a4a0c25fbcb5009",
+      "b8bc96d4c9e6d11f298a218096012616a486f4dc385d12136f53fad889fac5eb",
+      "ca2db4034532ef31ba2a8680bfed29a3ef3ab399a0b52d44db9ddc1c7a31b3d0",
+      "d6e1165f73e14c13a0321947f5771a48f66212443005acf9d1580116530d4fab",
+      "e1d0211a2fd87dcbbaf5854e0b8209472fa1c52cf8dfe86a2866297412b85727",
+      "e9cf85b0a2ebfa9fb84a31d7af0feae54ded04d2761fb60679fe71ea60d34300",
     ],
     "agemon-design-dashboard": [
       "2aa150cda2ef3c89f49f94c6968c0c40e5a1e8fa4c484ea22946c88ece88dee7",
+      "78bde4711bdd801c8fd2333ad7cac7db0a0f0e03138253dadceee00a2d81afc9",
       "7bcad52ed8be11ff4a997fe116ddc887d82f6362ed90a8bc5f3491d5b4bc8a94",
     ],
     "agemon-design-editorial": [
@@ -32,7 +46,50 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     ],
     "agemon-design-minimal": [
       "8beab51f4b504308a3ce6b892698633f4f193ee62909ff5be8abf35c489519ce",
+      "bc60b436c20820353daf9f2fa190bd0d8d2f614854d2bdb64c2ab7282234ac31",
       "bdca09c04f653546d9fb786f7cf7a662e6ebb68454e61f85962dddfdb5b6ae4f",
+    ],
+    "agemon-dispatching-parallel-agents": [
+      "df50770a2011593387aa6745f6d0a56983d5b7f83fc630da2f1347062bdd101c",
+    ],
+    "agemon-executing-plans": [
+      "75032038cb5ce4a7b44bc0550a909817a72e1d89d26882a02ab5e02020a1fd2d",
+    ],
+    "agemon-finishing-a-development-branch": [
+      "34010f68d4941cc88e35d12eea77411a5a4998782cfa4478577f6c9dab3c36e2",
+    ],
+    "agemon-founder-board": [
+      "cb869b445b08c990e4d262339a37cb694fc4881a90ca2d4cb398354a4f4c1975",
+    ],
+    "agemon-founder-brand": [
+      "82ea7bc8433288703cda6be9fa620670f80e0321fa22216402ffae47b2204b4d",
+    ],
+    "agemon-founder-cfo": [
+      "cc925a05760ab59b9fefd95fea116fd50e96ea9a4e367a50d1ff91953ca4ebb0",
+    ],
+    "agemon-founder-competitors": [
+      "5b7de079209ead1125d3f731d6fa87cc951e57ad36c80ba904899624ecc2b238",
+    ],
+    "agemon-founder-consumer": [
+      "e36a0c83f578a15d626ad90edbe7781a406a475c03d826cea7476aae343ade50",
+    ],
+    "agemon-founder-launch": [
+      "b2301714166b1c357e62dcf38a77599b746dce60aedd1310d6dc9a9871d3369e",
+    ],
+    "agemon-founder-marketing": [
+      "965c301be08d8297b6110e8ff81aef85dc64b28c1290fca591e2b9e2e6484743",
+    ],
+    "agemon-founder-offer": [
+      "8fa2811c96bdd1b0734828c0364642c2826a3ed6f4bbb55c72b85512c9a22d13",
+    ],
+    "agemon-founder-ops": [
+      "57746714252125317dafaa2a78257165f995fdcc9a574f78272adabc3bfd9562",
+    ],
+    "agemon-founder-plan": [
+      "7822d7e2e0f7cbe2e2a401f88e400178fab7bf8e1a1b4f23bc207b70497c792b",
+    ],
+    "agemon-founder-pricing": [
+      "9d29272ae76b0213064dc93b45fce2efa236e6ae41ce346925635ad77decfa0e",
     ],
     "agemon-house-rules": [
       "380dc8813cc2c06b767d79d0216a42e965a48fff01de8dfabe8976aca0f22721",
@@ -58,8 +115,24 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     "agemon-security": [
       "141926995a259f6747f01b2dfd0962bcab6f53ba23f7d77a2518a80abae27754",
     ],
+    "agemon-security-audit": [
+      "1541e0bca39acc7276819027d6c73e78e36659269b33b678053b57123ed87bed",
+    ],
+    "agemon-subagent-driven-development": [
+      "1bf57d8ec11957be1a596f94bd04a963523421a43f137ea8dac5dbd9f77b6122",
+      "e6ef12508b751a014e002515f040d1646d28954a980c49bb5108373a8e335416",
+    ],
+    "agemon-test-driven-development": [
+      "4b3d22947664025ad8ac5cea203d1b4bce7bd9f5cf54390fe6fc3f351f04e729",
+    ],
+    "agemon-using-git-worktrees": [
+      "1f0bd621aa8cbbe5aaa60101ad3a389cf84d08d3b3be5a7bc7b2dd0b4cb86b69",
+    ],
     "agemon-verify-before-done": [
       "dde468e926ec0e96cbeb45ce5b854e964980da8f1329a3743bd7f789bc576903",
+    ],
+    "agemon-writing-plans": [
+      "2bec0bb492e14735f9e24d8aa6d4a0970949e701d611a198568a36a7f7c7616f",
     ],
     geo: ["3a5a25124529e97f9a195e40df3f735e358c548a8907f88f9675d5690a7781d5"],
     "geo-audit": [
@@ -129,18 +202,12 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
       "383c8c3314f8f284f23675fb8aaf874d0808f1dcce2b87b0bfc4637af0a55ee1",
     ],
     "web-design-guidelines": [
+      "6ac5c1f7088b56c892dc63e37b7fe19c3c1a0f74ebccddd40395207fbd6cc1da",
       "704b816d2449e11d04327b17b4bdebce8a8787e59b4a7a05e6ee8ba48fec2237",
     ],
     "writing-guidelines": [
+      "2167548753d56d1c34d6615212c14b816553a90f541dd9135b21944f86b7bdd4",
       "8c753b9c3106e707440525798a6185d2807ced7ff35bdd0b9a544a120871cb9d",
     ],
-  },
-  pinned: {
-    "063bee94c3f4df8453406c830b0a7df0f2860278": {
-      "web-design-guidelines":
-        "704b816d2449e11d04327b17b4bdebce8a8787e59b4a7a05e6ee8ba48fec2237",
-      "writing-guidelines":
-        "8c753b9c3106e707440525798a6185d2807ced7ff35bdd0b9a544a120871cb9d",
-    },
   },
 };

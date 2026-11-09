@@ -31,6 +31,7 @@ import {
   renderAgentFile,
 } from "../../../src/plugins/agents/index.js";
 import {
+  type AgentDefinition,
   findSkillGroup,
   RETIRED_AGENT_NAMES,
   SKILL_GROUPS,
@@ -52,7 +53,11 @@ const GEO_AGENT_NAMES = [
   "geo-audit-content",
   "geo-audit-schema",
 ];
-const AGENT_NAMES_EVER_SHIPPED: readonly string[] = [...GEO_AGENT_NAMES];
+const ROLE_AGENT_NAMES = ["agemon-scout", "agemon-worker"];
+const AGENT_NAMES_EVER_SHIPPED: readonly string[] = [
+  ...GEO_AGENT_NAMES,
+  ...ROLE_AGENT_NAMES,
+];
 const BRIEF_FILE_BY_AGENT: Record<string, string> = {
   "geo-audit-ai-visibility": "ai-visibility.md",
   "geo-audit-platform": "platform-analysis.md",
@@ -1342,6 +1347,79 @@ describe("agents plugin — consent gate", () => {
   });
 });
 
+describe("agent model pins", () => {
+  async function agentWithBrief(model?: AgentDefinition["model"]) {
+    const directory = await createTempDirectory("agemon-agents-brief-");
+    const briefPath = join(directory, "brief.md");
+    await writeFile(briefPath, "the brief\n", "utf8");
+    return {
+      name: "pinned-agent",
+      description: "An agent.",
+      tools: ["Read"],
+      briefPath,
+      ...(model === undefined ? {} : { model }),
+    };
+  }
+
+  it("writes the model line straight after tools", async () => {
+    expect(await renderAgentFile(await agentWithBrief("sonnet"))).toBe(
+      '---\nname: pinned-agent\ndescription: "An agent."\ntools: Read\nmodel: sonnet\n---\n\nthe brief\n',
+    );
+  });
+
+  it("renders an agent with no model without a model line", async () => {
+    expect(await renderAgentFile(await agentWithBrief())).toBe(
+      '---\nname: pinned-agent\ndescription: "An agent."\ntools: Read\n---\n\nthe brief\n',
+    );
+  });
+
+  it("every agent agemon ships names its model", () => {
+    const agents = SKILL_GROUPS.flatMap((group) => group.agents ?? []);
+
+    expect(agents.filter((agent) => agent.model === undefined)).toEqual([]);
+  });
+
+  it("offers an unedited agent from before model pins as a replace", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await applyAllPlanned(agentsPlugin, context);
+    const withoutModelLine = (
+      await readText(context, TECHNICAL_TARGET)
+    ).replace("model: sonnet\n", "");
+    await writeText(context, TECHNICAL_TARGET, withoutModelLine);
+    await context.manifest.updateResourceEntry(
+      "agent-file:geo-audit-technical",
+      { fingerprintAfter: fingerprintContent(withoutModelLine) },
+    );
+
+    const [operation] = await planFor(context);
+
+    expect(operation).toMatchObject({
+      action: "replace",
+      targetPath: TECHNICAL_TARGET,
+    });
+    expect(operation.preview.text).toContain("+model: sonnet");
+  });
+
+  it("keeps an edited agent from before model pins as a conflict", async () => {
+    const context = await createTestContext();
+    await recordGeoSeoGroup(context);
+    await applyAllPlanned(agentsPlugin, context);
+    const edited = (await readText(context, TECHNICAL_TARGET)).replace(
+      "model: sonnet\n",
+      "",
+    );
+    await writeText(context, TECHNICAL_TARGET, `${edited}my own note\n`);
+
+    const [operation] = await planFor(context);
+
+    expect(operation).toMatchObject({
+      action: "conflict",
+      targetPath: TECHNICAL_TARGET,
+    });
+  });
+});
+
 describe("GEO agent catalog", () => {
   const agents = findSkillGroup("geo-seo")?.agents ?? [];
 
@@ -1363,7 +1441,7 @@ describe("GEO agent catalog", () => {
   });
 
   it.each(GEO_AGENT_NAMES)(
-    "renders %s with exactly name, description and tools",
+    "renders %s with exactly name, description, tools and model",
     async (name) => {
       const agent = agents.find((candidate) => candidate.name === name);
       if (agent === undefined) {
@@ -1378,7 +1456,9 @@ describe("GEO agent catalog", () => {
         "name",
         "description",
         "tools",
+        "model",
       ]);
+      expect(frontmatter.model).toBe("sonnet");
       expect(frontmatter.name).toBe(name);
       expect(name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/u);
       expect(typeof frontmatter.tools).toBe("string");
@@ -1393,7 +1473,7 @@ describe("GEO agent catalog", () => {
         /Used by the geo-audit skill; do not use it for other tasks\.$/u,
       );
       const frontmatterLines = frontmatterText.trimEnd().split("\n");
-      expect(frontmatterLines).toHaveLength(3);
+      expect(frontmatterLines).toHaveLength(4);
       expect(body.startsWith(UNTRUSTED_CONTENT_HEADING)).toBe(true);
       expect(body).toBe(
         await readFile(
@@ -1407,6 +1487,61 @@ describe("GEO agent catalog", () => {
       );
     },
   );
+});
+
+describe("workflow role agents", () => {
+  const agents = findSkillGroup("workflow")?.agents ?? [];
+  const agentNamed = (name: string) =>
+    agents.find((agent) => agent.name === name);
+
+  it("ships the scout and the worker with the workflow group", () => {
+    expect(agents.map((agent) => agent.name)).toEqual(ROLE_AGENT_NAMES);
+    expect(findSkillGroup("workflow")?.defaultSelected).toBe(false);
+  });
+
+  it("pins the scout to the cheapest tier with read-only tools", () => {
+    expect(agentNamed("agemon-scout")).toMatchObject({
+      model: "haiku",
+      tools: ["Read", "Grep", "Glob"],
+    });
+  });
+
+  it("pins the worker to the mid tier with the tools to implement", () => {
+    expect(agentNamed("agemon-worker")).toMatchObject({
+      model: "sonnet",
+      tools: ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+    });
+  });
+
+  it.each(ROLE_AGENT_NAMES)(
+    "the %s brief says what the role is for and when to hand back",
+    async (name) => {
+      const agent = agentNamed(name);
+      if (agent === undefined) {
+        throw new Error(`${name} missing`);
+      }
+
+      const rendered = await renderAgentFile(agent);
+
+      expect(rendered).toContain(`# ${name}`);
+      expect(rendered).toContain("## Hand back when");
+    },
+  );
+
+  it("plans the role agents when the workflow group is installed by the same plan", async () => {
+    const context = await createTestContext();
+    const groupOperation = {
+      capabilityId: "skills",
+      resourceId: "skill-group:workflow",
+      action: "install-package",
+    } as ProposedOperation;
+
+    const plan = await planFor(context, [groupOperation]);
+
+    expect(plan.map((operation) => operation.targetPath)).toEqual(
+      ROLE_AGENT_NAMES.map((name) => `.claude/agents/${name}.md`),
+    );
+  });
 });
 
 describe("geo-audit launches the installed agents", () => {

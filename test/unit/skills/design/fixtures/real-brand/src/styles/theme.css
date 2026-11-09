@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/* --color-retired: #123456; */
+
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/newsreader.woff2") format("woff2");
+}
+
+@theme {
+  --color-moss: #2f4d2a;
+  --color-paper: #f4efe3;
+  --radius-card: 6px;
+  --font-display: "Newsreader", serif;
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.1);
+}
+
+.dark {
+  --color-paper: #1b1a16;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: #1b1a16;
+  }
+}
+
+.note {
+  border-radius: 6px;
+  color: #3f5d3a;
+  font-family: "Newsreader", serif;
+}

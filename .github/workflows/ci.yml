@@ -34,6 +34,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -67,11 +69,11 @@ jobs:
 
       - name: Smoke-test the packaged bundle
         run: npm run smoke
-
       - name: Dry-run the npm publish
         run: |
+          npm pkg set version="$(node -p 'require("./package.json").version')-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           sh scripts/pack-release.sh "$RUNNER_TEMP/agemon.tgz"
-          npm publish --dry-run "$RUNNER_TEMP/agemon.tgz"
+          npm publish --dry-run --tag ci "$RUNNER_TEMP/agemon.tgz"
 
   sandbox:
     name: sandbox checks
@@ -140,6 +142,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
