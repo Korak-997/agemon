@@ -379,7 +379,7 @@ describe("installArm", () => {
   });
 
   it("arm B installs the design skills plus a realistic companion subset", () => {
-    installArm(workDirectory, "B");
+    installArm(workDirectory, "B", "HEAD");
     const installed = readdirSync(join(workDirectory, ".claude", "skills"));
     expect(installed).toContain(DESIGN_SKILL);
     expect(installed).toContain("agemon-commit");
@@ -387,7 +387,7 @@ describe("installArm", () => {
   });
 
   it("arm A installs the same companions without any design skill", () => {
-    installArm(workDirectory, "A");
+    installArm(workDirectory, "A", "HEAD");
     const installed = readdirSync(join(workDirectory, ".claude", "skills"));
     expect(installed).toContain("agemon-commit");
     expect(installed.some((name) => name.startsWith(DESIGN_SKILL))).toBe(false);
@@ -517,6 +517,7 @@ describe("runActivation", () => {
     runsPerCase: 2,
     arm: "B" as const,
     workRoot: workDirectory,
+    skillRef: "HEAD",
   });
 
   it("runs each case the requested number of times and cleans up its temp directories", async () => {
@@ -829,6 +830,7 @@ describe("runOutputBuild", () => {
       brief,
       runner,
       workRoot: workDirectory,
+      skillRef: "HEAD",
       transcriptDirectory: join(workDirectory, "transcripts"),
       maxBudgetUsd: 2,
     });
@@ -858,6 +860,7 @@ describe("runOutputBuild", () => {
         brief: "nope",
         runner,
         workRoot: workDirectory,
+        skillRef: "HEAD",
         transcriptDirectory: join(workDirectory, "t"),
       }),
     ).rejects.toThrow(/unknown brief/u);
@@ -911,12 +914,14 @@ describe("tool restriction", () => {
       arm: "B",
       runner,
       workRoot: workDirectory,
+      skillRef: "HEAD",
     });
     await runOutputBuild({
       arm: "A",
       brief: briefNames()[0] as string,
       runner,
       workRoot: workDirectory,
+      skillRef: "HEAD",
       transcriptDirectory: join(workDirectory, "t"),
     });
     expect(seen).toEqual([ACTIVATION_TOOLS, BUILD_TOOLS]);
@@ -1138,6 +1143,7 @@ describe("writes outside the project", () => {
       arm: "B",
       runner,
       workRoot: workDirectory,
+      skillRef: "HEAD",
     });
     expect(calls).toBe(1);
     expect(result.runs[0]).toMatchObject({
@@ -1184,6 +1190,7 @@ describe("usage reporting", () => {
       arm: "B",
       runner,
       workRoot: workDirectory,
+      skillRef: "HEAD",
     });
     expect(runs[0]).toMatchObject({
       costUsd: 0.25,
