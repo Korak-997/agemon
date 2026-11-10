@@ -1,5 +1,10 @@
 # agemon
 
+## 6.2.0
+
+- ci(release): retry the release merge until GitHub allows it
+- test(design-eval): read skills from HEAD, not the pinned ref (#71)
+
 ## 6.1.0
 
 agemon now shows or asks about everything a repository could use but does not have yet, and a
