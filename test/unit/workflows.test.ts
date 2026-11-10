@@ -213,18 +213,20 @@ describe(".github/workflows", () => {
 
   it("lands the release commit as a squash merge and tags only the merged commit", () => {
     const pushJob = workflows.get("cut-release.yml")?.jobs.push as WorkflowJob;
-    const merge = stepRunning(pushJob, /gh pr merge/)?.run ?? "";
+    const merge = stepRunning(pushJob, /gh pr create/)?.run ?? "";
+    const mergeRequest = `gh api -X PUT "repos/\${GITHUB_REPOSITORY}/pulls/\${PR_URL##*/}/merge"`;
 
     expect(pushJob.permissions).toEqual({
       contents: "write",
       "pull-requests": "write",
     });
     expect(merge).not.toContain("refs/heads/master");
-    expect(merge).toMatch(/gh pr merge .*--squash/);
+    expect(merge).toContain(`${mergeRequest} -f merge_method=squash`);
+    expect(merge).toContain(`-f sha="$(git rev-parse release)"`);
     expect(merge.indexOf("git ls-remote --exit-code --tags")).toBeLessThan(
       merge.indexOf("gh pr create"),
     );
-    expect(merge.indexOf("gh pr merge")).toBeLessThan(
+    expect(merge.indexOf(mergeRequest)).toBeLessThan(
       merge.indexOf(`git push --quiet "$REPO_URL" "refs/tags/`),
     );
   });
