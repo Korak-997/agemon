@@ -157,8 +157,16 @@ jobs:
           git push --quiet "$REPO_URL" "release:refs/heads/${RELEASE_BRANCH}"
           PR_URL="$(gh pr create --base master --head "$RELEASE_BRANCH" --title "$RELEASE_TITLE" \
             --body "Version bump and changelog for ${RELEASE_TAG}, opened by the Cut release workflow.")"
-          gh pr merge "$PR_URL" --squash --subject "$RELEASE_TITLE" --body "" \
-            --match-head-commit "$(git rev-parse release)"
+          # GitHub decides whether a new pull request can merge in the background and refuses the merge until it has.
+          MERGE_ATTEMPTS=10
+          for attempt in $(seq "$MERGE_ATTEMPTS"); do
+            if gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/${PR_URL##*/}/merge" -f merge_method=squash \
+              -f commit_title="$RELEASE_TITLE" -f commit_message="" -f sha="$(git rev-parse release)" >/dev/null; then
+              break
+            fi
+            (( attempt < MERGE_ATTEMPTS )) || fail "GitHub refused to merge ${PR_URL} after ${MERGE_ATTEMPTS} attempts."
+            sleep 3
+          done
 
           MERGE_SHA="$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)"
           [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "${PR_URL} did not report a merge commit."
