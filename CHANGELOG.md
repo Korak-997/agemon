@@ -1,5 +1,9 @@
 # agemon
 
+## 6.3.0
+
+- ci(release): unblock publish and lint on release PRs (#74)
+
 ## 6.2.0
 
 - ci(release): retry the release merge until GitHub allows it
