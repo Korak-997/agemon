@@ -121,6 +121,25 @@ describe("agents with the skills capability", () => {
       "agents",
       "agents",
       "agents",
+      "agents",
+    ]);
+  });
+
+  it("plans the Explore override when no skill group is installed", async () => {
+    const context = await createTestContext();
+    const skillsWithoutGroups: AgemonPlugin = {
+      ...standInSkillsPlugin([]),
+      async plan() {
+        return [];
+      },
+    };
+
+    const plan = await buildPlan(context, [skillsWithoutGroups, agentsPlugin], {
+      agemonVersion: "9.9.9",
+    });
+
+    expect(plan.operations.map((operation) => operation.targetPath)).toEqual([
+      ".claude/agents/explore.md",
     ]);
   });
 

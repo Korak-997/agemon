@@ -371,7 +371,7 @@ async function uninstallSubagentDefault(ctx: Context): Promise<void> {
 
 export const subagentDefaultPlugin: AgemonPlugin = {
   id: PLUGIN_ID,
-  summary: `sets ${DEFAULT_SUBAGENT_MODEL} as the default model for Claude Code subagents that name none, in the team's ${SETTINGS_PATH}`,
+  summary: `sets ${DEFAULT_SUBAGENT_MODEL} as the fallback model for Claude Code subagents, used only when Claude passes no model and the agent file names none, in the team's ${SETTINGS_PATH}`,
   riskClass: "writes-config",
   detect: detectSubagentDefault,
   describeState: describeSubagentDefaultState,

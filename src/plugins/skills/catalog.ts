@@ -18,11 +18,16 @@ export interface SkillBundleEntry {
 
 export type AgentModel = "haiku" | "sonnet" | "opus";
 
+export type AgentEffort = "low" | "medium" | "high";
+
 export interface AgentDefinition {
   name: string;
+  fileStem?: string;
   description: string;
   tools: readonly string[];
   model?: AgentModel;
+  effort?: AgentEffort;
+  maxTurns?: number;
   readonly briefPath: string;
 }
 
@@ -87,18 +92,35 @@ function geoAuditAgent(
   };
 }
 
+type RoleAgentOptions = Pick<
+  AgentDefinition,
+  "fileStem" | "effort" | "maxTurns"
+>;
+
+const READ_ONLY_TOOLS: readonly string[] = ["Read", "Grep", "Glob"];
+const SEARCH_AGENT_LIMITS: RoleAgentOptions = {
+  effort: "medium",
+  maxTurns: 30,
+};
+const WORKER_AGENT_LIMITS: RoleAgentOptions = {
+  effort: "medium",
+  maxTurns: 50,
+};
+
 function workflowRoleAgent(
   name: string,
   briefFileName: string,
   description: string,
   tools: readonly string[],
   model: AgentModel,
+  options: RoleAgentOptions,
 ): AgentDefinition {
   return {
     name,
     description,
     tools,
     model,
+    ...options,
     get briefPath() {
       return join(
         resolveVendoredSkillPath(
@@ -283,16 +305,18 @@ export const SKILL_GROUPS: SkillGroup[] = [
       workflowRoleAgent(
         "agemon-scout",
         "role-scout.md",
-        "Cheap read-only search: finds code, traces usages and digests logs, then reports paths and lines. Changes nothing.",
-        ["Read", "Grep", "Glob"],
+        "Use proactively for read-only searches that would pull many files or long logs into the conversation: finding code, tracing usages, digesting logs. Runs on the cheapest model and reports paths and lines; changes nothing.",
+        READ_ONLY_TOOLS,
         "haiku",
+        SEARCH_AGENT_LIMITS,
       ),
       workflowRoleAgent(
         "agemon-worker",
         "role-worker.md",
-        "Mid-tier implementer for one well-defined task: routine code changes and routine reviews. Hands back anything needing a design decision.",
-        ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+        "Use for one well-defined implementation task or routine review whose spec is already written. Runs on the mid-tier model and hands back anything that needs a design decision.",
+        [...READ_ONLY_TOOLS, "Edit", "Write", "Bash"],
         "sonnet",
+        WORKER_AGENT_LIMITS,
       ),
     ],
   },
@@ -324,6 +348,17 @@ export const SKILL_GROUPS: SkillGroup[] = [
       vendoredSkill("founder", "agemon-founder-plan"),
     ],
   },
+];
+
+export const CORE_AGENTS: readonly AgentDefinition[] = [
+  workflowRoleAgent(
+    "Explore",
+    "role-scout.md",
+    "Fast read-only codebase exploration: finds files, traces usages and answers where/how questions. Reports paths and lines with a short summary; changes nothing.",
+    READ_ONLY_TOOLS,
+    "haiku",
+    { ...SEARCH_AGENT_LIMITS, fileStem: "explore" },
+  ),
 ];
 
 export const RETIRED_AGENT_NAMES: readonly string[] = [];

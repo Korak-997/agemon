@@ -134,6 +134,12 @@ function asPlan(operations: ProposedOperation[]): Plan {
 }
 
 describe("subagent-default plan", () => {
+  it("describes the model as a fallback for subagents nobody pinned", () => {
+    expect(subagentDefaultPlugin.summary).toBe(
+      `sets sonnet as the fallback model for Claude Code subagents, used only when Claude passes no model and the agent file names none, in the team's ${SETTINGS}`,
+    );
+  });
+
   it("proposes one merge that needs consent and shows the diff", async () => {
     const ctx = await createTestContext();
     await writeSettings(ctx, '{\n  "hooks": {}\n}\n');
