@@ -27,6 +27,7 @@ const FIRST_PARTY_SOURCE = "first-party (agemon)";
 const NO_PINNED_COMMIT = "—";
 const DIFFERS_PER_SKILL = "per skill, see the table";
 const UPSTREAM_DESCRIPTION = "see upstream";
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a skill description must stay one plain line, so newlines, tabs and escape bytes are rejected
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
 
 interface SkillProvenance {
