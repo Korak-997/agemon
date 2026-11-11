@@ -1063,7 +1063,7 @@ export function createProgram(recordExitCode: (code: number) => void): Command {
   program
     .command("usage")
     .description(
-      "Estimate what subagent model choices saved, from saved Claude Code sessions",
+      "Show what the main session and each subagent type cost, and what subagent model choices saved, from saved Claude Code sessions",
     )
     .option(
       "--since <days>",

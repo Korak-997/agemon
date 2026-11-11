@@ -56,6 +56,7 @@ export interface AgentTypeSummary {
   calls: number;
   costUsd: number;
   savingUsd: number;
+  models: Record<string, number>;
 }
 
 export interface UsageSummary {
@@ -64,7 +65,10 @@ export interface UsageSummary {
   sessionsWithSubagents: number;
   subagentCalls: number;
   cheaperCalls: number;
+  topTierExploreCalls: number;
   costUsd: number;
+  mainCostUsd: number;
+  subagentCostUsd: number;
   costAtSessionModelUsd: number;
   estimatedSavingUsd: number;
   savingPercent: number;
@@ -126,6 +130,9 @@ const TRANSCRIPT_EXTENSION = ".jsonl";
 const ASSISTANT_LINE_MARKER = '"assistant"';
 const NON_API_MODEL_PREFIX = "<";
 const UNKNOWN_AGENT_TYPE = "unknown";
+const EXPLORE_AGENT_TYPE = "Explore";
+const TOP_TIER_MODEL_PREFIXES = ["claude-opus-", "claude-fable-"];
+const MODEL_FAMILY_PATTERN = /^claude-([a-z]+)-/u;
 const SINCE_PATTERN = /^([1-9]\d*)d$/u;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const HISTORY_VERSION = 1;
@@ -326,6 +333,10 @@ export function summarizeSessions(
         );
   const subagents = included.flatMap((session) => session.subagents);
   const costUsd = included.reduce((sum, { costUsd: cost }) => sum + cost, 0);
+  const subagentCostUsd = subagents.reduce(
+    (sum, { costUsd: cost }) => sum + cost,
+    0,
+  );
   const estimatedSavingUsd = subagents.reduce(
     (sum, subagent) => sum + subagent.costAtSessionModelUsd - subagent.costUsd,
     0,
@@ -338,10 +349,12 @@ export function summarizeSessions(
       calls: 0,
       costUsd: 0,
       savingUsd: 0,
+      models: {},
     };
     summary.calls += 1;
     summary.costUsd += subagent.costUsd;
     summary.savingUsd += subagent.costAtSessionModelUsd - subagent.costUsd;
+    summary.models[subagent.model] = (summary.models[subagent.model] ?? 0) + 1;
     byAgentType.set(subagent.agentType, summary);
   }
   return {
@@ -354,7 +367,14 @@ export function summarizeSessions(
     cheaperCalls: subagents.filter(
       (subagent) => subagent.costUsd < subagent.costAtSessionModelUsd,
     ).length,
+    topTierExploreCalls: subagents.filter(
+      ({ agentType, model }) =>
+        agentType === EXPLORE_AGENT_TYPE &&
+        TOP_TIER_MODEL_PREFIXES.some((prefix) => model.startsWith(prefix)),
+    ).length,
     costUsd,
+    mainCostUsd: costUsd - subagentCostUsd,
+    subagentCostUsd,
     costAtSessionModelUsd,
     estimatedSavingUsd,
     savingPercent:
@@ -376,6 +396,20 @@ function dollars(amount: number): string {
   return `${amount < 0 ? "-" : ""}$${Math.abs(amount).toFixed(2)}`;
 }
 
+function shareOf(part: number, total: number): string {
+  return `${(total > 0 ? (part / total) * 100 : 0).toFixed(1)}%`;
+}
+
+function modelCounts(models: Record<string, number>): string {
+  return Object.entries(models)
+    .sort((first, second) => second[1] - first[1])
+    .map(
+      ([model, calls]) =>
+        `${printable(MODEL_FAMILY_PATTERN.exec(model)?.[1] ?? model)} ×${calls}`,
+    )
+    .join(", ");
+}
+
 export function renderUsageReport(summary: UsageSummary): string {
   const period =
     summary.sinceDays === undefined
@@ -385,10 +419,11 @@ export function renderUsageReport(summary: UsageSummary): string {
     `Claude Code sessions in this repo, ${period}`,
     "",
     `Sessions: ${summary.sessions}, of which ${summary.sessionsWithSubagents} used subagents`,
+    `Main session ${dollars(summary.mainCostUsd)} (${shareOf(summary.mainCostUsd, summary.costUsd)}) · subagents ${dollars(summary.subagentCostUsd)} (${shareOf(summary.subagentCostUsd, summary.costUsd)})`,
     `Subagent calls: ${summary.subagentCalls}, of which ${summary.cheaperCalls} ran cheaper than the session's model`,
     ...summary.byAgentType.map(
-      ({ agentType, calls, costUsd, savingUsd }) =>
-        `  ${printable(agentType)}: ${calls} calls, cost ${dollars(costUsd)}, saving ${dollars(savingUsd)}`,
+      ({ agentType, calls, models, costUsd, savingUsd }) =>
+        `  ${printable(agentType)}: ${calls} calls (${modelCounts(models)}), cost ${dollars(costUsd)}, saving ${dollars(savingUsd)}`,
     ),
     "",
     `Actual cost:                               ${dollars(summary.costUsd)}`,
@@ -399,6 +434,16 @@ export function renderUsageReport(summary: UsageSummary): string {
     "same subagent tokens, so it does not show what doing the work inline would have cost, or",
     "whether the cheaper work was good enough.",
   ];
+  if (summary.topTierExploreCalls > 0) {
+    const calls =
+      summary.topTierExploreCalls === 1
+        ? "1 Explore call"
+        : `${summary.topTierExploreCalls} Explore calls`;
+    lines.push(
+      "",
+      `${calls} ran on a top-tier model; run agemon to install the Haiku Explore override.`,
+    );
+  }
   if (summary.unpricedMessages > 0) {
     lines.push(
       "",
