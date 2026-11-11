@@ -22,8 +22,8 @@ Documentation, the skill library and the installer: <https://agemon.korak-kurani
   writes, and rolls back the whole run if any step fails.
 - **Fully reversible.** Every change is recorded, and `agemon nuke` removes exactly what
   agemon added, leaving your own files alone.
-- **Works on the web too.** Add agemon's skill groups to claude.ai as plugins, and check a
-  repository is ready for Claude Code on the web. See [Claude on the web](#claude-on-the-web).
+- **Works with Claude.** Add agemon's skill groups to claude.ai or Claude Code as plugins, and
+  check a repository is ready for Claude Code on the web. See [Use with Claude](#use-with-claude).
 
 Want to help? Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -325,68 +325,6 @@ on its own. Only Claude Code has been measured, and only Claude Code has been ru
 and OpenCode read both folders, so they may list a skill twice once copies exist. See the
 [agent matrix](evals/design/agent-matrix.md), which leaves its gaps visible.
 
-## Claude on the web
-
-The `agemon` CLI runs on your machine, so it can't install into Claude on the web directly.
-There are two products to set up, and each gets agemon's work in a different way.
-
-| agemon installs | Claude Code on the web | claude.ai chat |
-|---|---|---|
-| Rules (`AGENTS.md`, `CLAUDE.md`) | Yes, once committed | No |
-| Skills | Yes, once committed | Yes, as plugins |
-| Subagents | Yes, once committed | No |
-| Hooks and `.mcp.json` | Yes, once committed; the tools they run need installing | No |
-| `code-review-graph` | Through a setup script | No |
-| Daemon and global CLI tools | No | No |
-
-### Claude Code on the web
-
-A cloud session clones your repository and reads its agent config, so run `agemon`, commit
-the result and push it. It doesn't read `~/.claude`.
-
-`agemon inspect` has a **Claude on the web** section that lists:
-
-- agent config that is uncommitted or gitignored
-- commits changing agent config that aren't pushed yet
-- a setup script, if your hooks or MCP servers run `code-review-graph` directly
-
-To use the setup script, open [claude.ai/code](https://claude.ai/code), select the
-environment under the message box, open its settings, and paste the script into **Setup
-script**. It installs the pinned version of `code-review-graph`, but unlike a local agemon
-install, its dependencies are not hash-locked.
-
-Cloud sessions in a project's threads are different: they don't use the repository's
-`.claude/skills/` or run its hooks. They use the skills enabled on your claude.ai account.
-
-### claude.ai chat
-
-agemon's repository is also a plugin marketplace with one plugin per skill group:
-
-1. In claude.ai, open **Customize** > **Plugins**.
-2. Select **Add** > **Add marketplace** > **Add from a repository**.
-3. Enter `Korak-997/agemon`.
-4. Add the groups you want, such as `agemon-security` or `agemon-design`.
-
-The same marketplace works in Claude Code:
-
-```bash
-claude plugin marketplace add Korak-997/agemon
-claude plugin install agemon-security@agemon
-```
-
-Plugins differ from an `agemon` install in these ways:
-
-- **No agemon safety net.** Claude manages plugins, so there is no agemon plan, diff, rollback
-  or `nuke`, and `agemon status` doesn't see them. Remove them where you added them.
-- **Latest skills, not pinned.** The marketplace follows this repository's default branch
-  rather than a release. Claude Code doesn't auto-update third-party marketplaces by default;
-  run `claude plugin marketplace update agemon`, or turn on auto-update under `/plugin`.
-- **Prefixed names.** A skill is named `<plugin>:<skill>`, such as
-  `agemon-security:agemon-security`. In a repository that also has an `agemon` install, you
-  would see both copies, so use one or the other there.
-- **Skills and commands only in chat.** Subagents and hooks don't run there, and local tools
-  can't. `geo-audit` expects subagents, so use it in Claude Code rather than chat.
-
 ## Requirements
 
 - To install, apply or nuke: Ubuntu, Debian, a derivative whose `/etc/os-release`
@@ -491,13 +429,74 @@ agemon
 - The CLI's self-update checks `install.sh` against `SHA256SUMS`; it verifies attestations
   only if you export `AGEMON_VERIFY_ATTESTATION=1`, which the installer it runs honours.
 
-### Upgrading and rolling back
+### Uninstalling agemon itself
+
+`agemon nuke` reverses changes `agemon` made *inside a repository* — it does not remove
+the `agemon` binary. Run `agemon nuke` in each repository first, then remove agemon
+itself:
 
 ```bash
-agemon upgrade            # install the latest release
-agemon upgrade 6.0.0      # install that release (asks before a downgrade)
-agemon upgrade --rollback # switch back to the install the last upgrade replaced
+agemon self-uninstall --dry-run   # show what would be removed
+agemon self-uninstall             # asks once; --yes skips the question
 ```
+
+For an install-script copy it removes the install dir, its `.prev` rollback copy, the
+`agemon` link that points into it, the update-check cache, and agemon's machine state
+(`${XDG_STATE_HOME:-~/.local/state}/agemon`, on macOS `~/Library/Application Support/agemon`
+unless `XDG_STATE_HOME` is set: shared-tools ledger and tool caches). It
+keeps the machine state while a repository still uses a shared tool, an interrupted
+apply can still be recovered, or agemon is running somewhere else, and says which. It
+lists the repositories it knows still have agemon-managed files; agemon only knows
+repositories that use a shared tool, so check any others yourself. It never changes
+files inside repositories. Machine state is per user: run it as the user who installed
+agemon (with `sudo` for a root install).
+
+It refuses to start while an interrupted apply can still be recovered (run
+`agemon recover` first). For an npm install it prints
+`npm uninstall --global --prefix <prefix> agemon`. A copy run through npx has nothing to
+remove, and a source checkout or an install agemon can't identify is refused.
+
+## Upgrading agemon
+
+Check which version you have:
+
+```bash
+agemon --version
+```
+
+Upgrade to the latest release:
+
+```bash
+agemon upgrade
+```
+
+Install a specific version, or go back to one. agemon asks before a downgrade:
+
+```bash
+agemon upgrade 6.0.0
+```
+
+Switch back to the install the last upgrade replaced. This works for install-script installs
+only; for an npm install, install the previous version by name as above:
+
+```bash
+agemon upgrade --rollback
+```
+
+To run one version once without installing it, use `npx agemon@6.0.0`.
+
+- **Use `agemon upgrade`, not `npm update -g`.** Once agemon has upgraded itself, npm records the
+  install as coming from a local file.
+- **Then run `agemon` in each repository.** Upgrading replaces the program and changes no
+  repository. The next run shows what the new version brings, as described below.
+- **To stay on a version,** set `AGEMON_NO_UPDATE_CHECK=1` to turn off the daily update prompt
+  (see [Update checks](#update-checks)).
+
+To decide whether to upgrade, read the [changelog](CHANGELOG.md): it lists what each release
+changed. For example, 6.1.0 added the Claude plugin marketplace (see [Use with Claude](#use-with-claude)),
+`agemon add` and `agemon usage`.
+
+### How each install method upgrades
 
 `agemon upgrade` works out how the running copy was installed and upgrades it the same
 way:
@@ -528,7 +527,7 @@ After an upgrade, agemon prints the link to the release notes and reminds you to
 
 ### What a new version brings to a repository
 
-The next `agemon` run in a repository shows or asks about everything it could use but does not
+Added in 6.1.0. The next `agemon` run in a repository shows or asks about everything it could use but does not
 have yet. Only skill groups and capabilities need a decision; an updated skill or subagent, or a
 new skill in a group you already installed, appears at the usual consent step.
 
@@ -570,33 +569,6 @@ it. It refuses a capability or group whose dependency is not enabled, and a repo
 Skill group declines are kept per clone in `.agemon/`, so a teammate is still asked. Capability
 choices are in the committed `agemon.toml`, so they apply to the whole team.
 
-### Uninstalling agemon itself
-
-`agemon nuke` reverses changes `agemon` made *inside a repository* — it does not remove
-the `agemon` binary. Run `agemon nuke` in each repository first, then remove agemon
-itself:
-
-```bash
-agemon self-uninstall --dry-run   # show what would be removed
-agemon self-uninstall             # asks once; --yes skips the question
-```
-
-For an install-script copy it removes the install dir, its `.prev` rollback copy, the
-`agemon` link that points into it, the update-check cache, and agemon's machine state
-(`${XDG_STATE_HOME:-~/.local/state}/agemon`, on macOS `~/Library/Application Support/agemon`
-unless `XDG_STATE_HOME` is set: shared-tools ledger and tool caches). It
-keeps the machine state while a repository still uses a shared tool, an interrupted
-apply can still be recovered, or agemon is running somewhere else, and says which. It
-lists the repositories it knows still have agemon-managed files; agemon only knows
-repositories that use a shared tool, so check any others yourself. It never changes
-files inside repositories. Machine state is per user: run it as the user who installed
-agemon (with `sudo` for a root install).
-
-It refuses to start while an interrupted apply can still be recovered (run
-`agemon recover` first). For an npm install it prints
-`npm uninstall --global --prefix <prefix> agemon`. A copy run through npx has nothing to
-remove, and a source checkout or an install agemon can't identify is refused.
-
 ### Update checks
 
 `agemon`, `agemon apply` and `agemon nuke` check once a day whether a newer GitHub Release
@@ -607,7 +579,8 @@ exists. The check never slows a command down:
   finished by then, it is cancelled and tried again on a later run;
 - in an interactive terminal (without `--yes`), for an install-script or npm install,
   agemon then asks whether to install the update. On yes, it upgrades exactly as
-  `agemon upgrade` would (see above). Nothing runs if a check fails;
+  `agemon upgrade` would (see [How each install method upgrades](#how-each-install-method-upgrades)).
+  Nothing runs if a check fails;
 - with `--yes`, without a terminal, or for any other install method, it prints a one-line
   notice with the command to run instead of asking. A release candidate is offered its
   final release; an older release is never offered.
@@ -615,6 +588,119 @@ exists. The check never slows a command down:
 There is no check at all for `inspect`, `status`, `plan` or `recover`, with `--dry-run` or
 `--quiet`, when `CI` is set (to anything other than `0` or `false`), or when
 `AGEMON_NO_UPDATE_CHECK=1` is set.
+
+## Use with Claude
+
+Yes, agemon works with Claude in three places, and each gets a different part of it:
+
+- **Claude Code** on your machine (CLI or VS Code) gets everything when you run `agemon` in a
+  repository. You can also add skill groups as plugins without running agemon.
+- **Claude Code on the web** gets what you commit: run `agemon`, commit and push.
+- **claude.ai** gets the skills, as plugins from agemon's marketplace.
+
+| agemon installs | Claude Code | Claude Code on the web | claude.ai chat |
+|---|---|---|---|
+| Rules (`AGENTS.md`, `CLAUDE.md`) | Yes | Yes, once committed | No |
+| Skills | Yes, or as plugins | Yes, once committed | Yes, as plugins |
+| Subagents | Yes | Yes, once committed | No |
+| Hooks and `.mcp.json` | Yes | Yes, once committed; the tools they run need installing | No |
+| `code-review-graph` | Yes | Through a setup script | No |
+| Daemon and global CLI tools | Yes, where systemd or launchd runs | No | No |
+
+The plugin marketplace was added in agemon 6.1.0, but it doesn't need agemon installed at all.
+See [Plugins vs. an agemon install](#plugins-vs-an-agemon-install).
+
+### claude.ai
+
+1. In claude.ai, open **Customize** > **Plugins**.
+2. Select **Add** > **Add marketplace** > **Add from a repository**.
+3. Enter `Korak-997/agemon`.
+4. Add the groups you want, such as `agemon-security` or `agemon-design`.
+
+### Claude Code
+
+Add the marketplace once:
+
+```bash
+claude plugin marketplace add Korak-997/agemon
+```
+
+Install a group by its [plugin name](#plugin-names):
+
+```bash
+claude plugin install agemon-security@agemon
+```
+
+Claude Code doesn't auto-update third-party marketplaces by default. Turn on auto-update under
+`/plugin`, or refresh the marketplace and update the plugin yourself:
+
+```bash
+claude plugin marketplace update agemon
+```
+
+```bash
+claude plugin update agemon-security@agemon
+```
+
+Remove one plugin:
+
+```bash
+claude plugin uninstall agemon-security@agemon
+```
+
+Or remove the marketplace together with every plugin you installed from it:
+
+```bash
+claude plugin marketplace remove agemon
+```
+
+### Claude Code on the web
+
+The `agemon` CLI runs on your machine, so it can't install into a cloud session directly. A
+cloud session clones your repository and reads its agent config, so run `agemon`, commit the
+result and push it. It doesn't read `~/.claude`.
+
+`agemon inspect` (6.1.0 and later) has a **Claude on the web** section that lists:
+
+- agent config that is uncommitted or gitignored
+- commits changing agent config that aren't pushed yet
+- a setup script, if your hooks or MCP servers run `code-review-graph` directly
+
+To use the setup script, open [claude.ai/code](https://claude.ai/code), select the
+environment under the message box, open its settings, and paste the script into **Setup
+script**. It installs the pinned version of `code-review-graph`, but unlike a local agemon
+install, its dependencies are not hash-locked.
+
+Cloud sessions in a project's threads are different: they don't use the repository's
+`.claude/skills/` or run its hooks. They use the skills enabled on your claude.ai account.
+
+### Plugin names
+
+Each skill group is a plugin named `agemon-<group id>`, listed in
+[`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). Install one in Claude
+Code with `claude plugin install agemon-<group id>@agemon`.
+
+### Plugins vs. an agemon install
+
+- **Any agemon version works, or none.** The marketplace doesn't depend on the agemon you have
+  installed. You can stay on 6.0.0 and still add the plugins: they follow this repository's
+  default branch, not your CLI or a release.
+- **No agemon safety net.** Claude manages plugins, so there is no agemon plan, diff, rollback
+  or `nuke`, and `agemon status` doesn't see them. Remove them where you added them.
+- **Prefixed names.** A skill is named `<plugin>:<skill>`, such as
+  `agemon-security:agemon-security`. In a repository that also has an `agemon` install, you
+  would see both copies, so use one or the other there.
+- **Skills and commands only in chat.** Subagents and hooks don't run there, and local tools
+  can't. `geo-audit` expects subagents, so use it in Claude Code rather than chat.
+
+### Troubleshooting the plugins
+
+- **I don't see the plugins.** Check that you added the `Korak-997/agemon` marketplace and the
+  group's plugin.
+- **Claude doesn't use a skill on its own.** Claude picks a skill from its description, and that
+  isn't guaranteed. Name it instead, such as `/agemon-security:agemon-security`.
+- **I see every skill twice.** The repository has an `agemon` install and you added the plugin
+  too. Use one of them in that repository.
 
 ## CLI Usage
 
@@ -897,7 +983,7 @@ agemon inspect --json
 its usual health/drift output.
 
 `agemon inspect` also reports what stops a repository working with Claude Code on the web,
-under `cloud` in the JSON report. See [Claude on the web](#claude-on-the-web).
+under `cloud` in the JSON report. See [Use with Claude](#use-with-claude).
 
 ## Reversibility Guarantees
 

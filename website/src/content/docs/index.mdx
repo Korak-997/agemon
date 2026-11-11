@@ -16,8 +16,10 @@ import TetractysIndex from "../../components/TetractysIndex.astro";
 import TerminalFrame from "../../components/TerminalFrame.astro";
 import TrustRow from "../../components/TrustRow.astro";
 import siteData from "../../generated/site-data.json";
-import { NPM_INSTALL_COMMAND } from "../../install-commands";
+import { claudeMarketplaceCommand, NPM_INSTALL_COMMAND } from "../../install-commands";
 import { FAILURE_AND_ROLLBACK, PLAN_AND_CONSENT, ROUNDTRIP } from "../../recordings";
+
+export const CLAUDE_MARKETPLACE_COMMAND = claudeMarketplaceCommand(siteData.repository);
 
 <section class="home-section" aria-labelledby="run">
   <div class="ag-divider" aria-hidden="true"><i></i><b></b></div>
@@ -77,6 +79,20 @@ import { FAILURE_AND_ROLLBACK, PLAN_AND_CONSENT, ROUNDTRIP } from "../../recordi
   <TetractysIndex />
 </section>
 
+<section class="home-section" id="claude" aria-labelledby="claude-heading">
+  <div class="ag-divider" aria-hidden="true"><i></i><b></b></div>
+  <p class="ag-label">Use it with Claude</p>
+  <h2 id="claude-heading">Every skill group is also a Claude plugin</h2>
+  <p>Add the <code>{siteData.repository}</code> marketplace in claude.ai or Claude Code and turn on the groups you want. It works with any agemon version, or none.</p>
+  <div class="ag-card cta-command">
+    <code><span aria-hidden="true">$ </span>{CLAUDE_MARKETPLACE_COMMAND}</code>
+    <CopyButton text={CLAUDE_MARKETPLACE_COMMAND} label="Copy the Claude plugin marketplace command" />
+  </div>
+  <div class="cta-actions">
+    <a class="ag-button" href={siteData.routes.claude}>Set it up in claude.ai, Claude Code or the web</a>
+  </div>
+</section>
+
 <section class="home-section" aria-labelledby="cta">
   <div class="ag-divider" aria-hidden="true"><i></i><b></b></div>
   <h2 id="cta" class="ag-display cta-title">Install once. Review everything.</h2>
@@ -87,5 +103,6 @@ import { FAILURE_AND_ROLLBACK, PLAN_AND_CONSENT, ROUNDTRIP } from "../../recordi
   <div class="cta-actions">
     <a class="ag-button primary" href={siteData.routes.gettingStarted}>Get started</a>
     <a class="ag-button" href="#safety">Read the safety model</a>
+    <a class="ag-button" href={siteData.routes.upgrading}>Already installed? Upgrade</a>
   </div>
 </section>

@@ -3,14 +3,20 @@ import { relative, sep } from "node:path";
 import type { PhrasingContent, RootContent } from "mdast";
 import { parse } from "yaml";
 import { errorMessage } from "../../src/core/error-message.js";
+import { GITHUB_REPOSITORY } from "../../src/core/github-release.js";
 import type {
   SkillBundleEntry,
   SkillGroup,
 } from "../../src/plugins/skills/catalog.js";
 import { skillFrontmatter } from "../../src/plugins/skills/skill-manifest.js";
+import {
+  marketplacePluginGroups,
+  marketplacePluginName,
+} from "../marketplace/manifest.js";
 import { FIRST_PARTY_SKILLS, parseNotice } from "../skill-provenance.js";
+import { CLAUDE_ROUTE, pluginInstallCommand } from "./claude.js";
 import { SiteContentError } from "./error.js";
-import { code, heading, paragraph, table, text } from "./markdown.js";
+import { code, heading, link, paragraph, table, text } from "./markdown.js";
 import type { GeneratedPage, ProvenanceChip } from "./page.js";
 
 const SHORT_COMMIT_LENGTH = 12;
@@ -21,7 +27,6 @@ const FIRST_PARTY_SOURCE = "first-party (agemon)";
 const NO_PINNED_COMMIT = "—";
 const DIFFERS_PER_SKILL = "per skill, see the table";
 const UPSTREAM_DESCRIPTION = "see upstream";
-// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters in a skill description must not reach the page
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
 
 interface SkillProvenance {
@@ -33,11 +38,7 @@ interface SkillProvenance {
   notice?: string;
 }
 
-const link = (url: string, label: string): PhrasingContent => ({
-  type: "link",
-  url,
-  children: [text(label)],
-});
+const CLAUDE_PAGE_LINK = link(CLAUDE_ROUTE, "Use agemon with Claude");
 export const SKILL_LIBRARY_ROUTE = `/${SKILLS_DIRECTORY}/`;
 
 export function skillGroupRoute(group: SkillGroup): string {
@@ -150,10 +151,32 @@ function commitCell(provenance: SkillProvenance): PhrasingContent[] {
     : [code(provenance.commit)];
 }
 
+function addToClaude(group: SkillGroup): RootContent[] {
+  return [
+    heading(text("Add to Claude")),
+    paragraph(
+      text("This group is also the "),
+      code(marketplacePluginName(group)),
+      text(" plugin in the "),
+      code(GITHUB_REPOSITORY),
+      text(
+        " marketplace, for claude.ai and Claude Code. In Claude Code, after adding the marketplace:",
+      ),
+    ),
+    { type: "code", lang: "bash", value: pluginInstallCommand(group) },
+    paragraph(
+      text("For claude.ai and the full steps, see "),
+      CLAUDE_PAGE_LINK,
+      text("."),
+    ),
+  ];
+}
+
 function skillGroupPage(
   group: SkillGroup,
   sidebarOrder: number,
   skillsRoot: string,
+  isPlugin: boolean,
 ): GeneratedPage {
   const skills = group.skills.map((skill) => ({
     skill,
@@ -171,6 +194,7 @@ function skillGroupPage(
           : ", or pick it in the interactive prompt.",
       ),
     ),
+    ...(isPlugin ? addToClaude(group) : []),
     heading(text("Skills")),
     table(
       ["Skill", "Description", "Source", "Commit", "License"],
@@ -235,6 +259,13 @@ function skillLibraryIndexPage(groups: readonly SkillGroup[]): GeneratedPage {
         code("--skill-groups"),
         text(" or in the interactive prompt."),
       ),
+      paragraph(
+        text(
+          "The groups are also Claude plugins for claude.ai and Claude Code. See ",
+        ),
+        CLAUDE_PAGE_LINK,
+        text("."),
+      ),
       table(
         ["Group", "Id", "Skills", "Default", "Description"],
         groups.map((group) => [
@@ -253,10 +284,11 @@ export function skillLibraryPages(
   groups: readonly SkillGroup[],
   skillsRoot: string,
 ): GeneratedPage[] {
+  const pluginGroups = new Set(marketplacePluginGroups(groups));
   return [
     skillLibraryIndexPage(groups),
     ...groups.map((group, index) =>
-      skillGroupPage(group, index + 1, skillsRoot),
+      skillGroupPage(group, index + 1, skillsRoot, pluginGroups.has(group)),
     ),
   ];
 }

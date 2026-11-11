@@ -37,6 +37,12 @@ export const code = (value: string): PhrasingContent => ({
   value,
 });
 
+export const link = (url: string, label: string): PhrasingContent => ({
+  type: "link",
+  url,
+  children: [text(label)],
+});
+
 export const paragraph = (...children: PhrasingContent[]): RootContent => ({
   type: "paragraph",
   children,

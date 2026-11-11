@@ -3,7 +3,7 @@ import type { SkillGroup } from "../../src/plugins/skills/catalog.js";
 
 export const MARKETPLACE_MANIFEST_PATH = ".claude-plugin/marketplace.json";
 
-const MARKETPLACE_NAME = "agemon";
+export const MARKETPLACE_NAME = "agemon";
 const MARKETPLACE_OWNER = "Korak-997";
 const MARKETPLACE_DESCRIPTION =
   "agemon's skill groups for Claude: pick the groups you want, in claude.ai or Claude Code.";
@@ -33,6 +33,16 @@ function groupFolder(group: SkillGroup): string {
   return basename(dirname(group.skills[0].source));
 }
 
+export function marketplacePluginGroups(
+  groups: readonly SkillGroup[],
+): SkillGroup[] {
+  return groups.filter(isFullyVendored);
+}
+
+export function marketplacePluginName(group: SkillGroup): string {
+  return `${PLUGIN_NAME_PREFIX}${group.id}`;
+}
+
 export function buildMarketplaceManifest(
   groups: readonly SkillGroup[],
 ): MarketplaceManifest {
@@ -40,8 +50,8 @@ export function buildMarketplaceManifest(
     name: MARKETPLACE_NAME,
     owner: { name: MARKETPLACE_OWNER },
     description: MARKETPLACE_DESCRIPTION,
-    plugins: groups.filter(isFullyVendored).map((group) => ({
-      name: `${PLUGIN_NAME_PREFIX}${group.id}`,
+    plugins: marketplacePluginGroups(groups).map((group) => ({
+      name: marketplacePluginName(group),
       description: group.description,
       source: `./assets/skills/${groupFolder(group)}`,
       strict: false,

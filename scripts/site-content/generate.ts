@@ -7,10 +7,11 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
-import type { RootContent } from "mdast";
+import type { Heading, RootContent } from "mdast";
 import { GITHUB_REPOSITORY } from "../../src/core/github-release.js";
 import type { SkillGroup } from "../../src/plugins/skills/catalog.js";
 import { groupChangelogReleases } from "./changelog.js";
+import { CLAUDE_ROUTE, claudePageBody } from "./claude.js";
 import { COMMANDS_ROUTE, commandsPage } from "./commands.js";
 import { configurationPageBody } from "./configuration.js";
 import { SiteContentError } from "./error.js";
@@ -20,11 +21,14 @@ import {
   extractSection,
   headingSlugs,
   type LinkTargets,
+  link,
+  paragraph,
   parseMarkdown,
   plainText,
   rewriteLinks,
   serializeMarkdown,
   shiftHeadingsToStartAtLevelTwo,
+  text,
   visit,
   withoutLeadingTitle,
 } from "./markdown.js";
@@ -45,10 +49,13 @@ const SITE_DATA_PATH = "src/generated/site-data.json";
 const SERVED_INSTALL_SCRIPT_PATH = "public/install.sh";
 const SAFETY_POST_ROUTE = "/posts/safety-model/";
 const INSTALL_HEADING = "Install";
+const UPGRADING_ROUTE = "/start/upgrading/";
 const SKILL_INDEX_PLACES = 10;
 
 type RouteName =
   | "gettingStarted"
+  | "claude"
+  | "upgrading"
   | "configuration"
   | "security"
   | "contributing"
@@ -64,7 +71,25 @@ interface ReadmePage {
   sidebarOrder: number;
   headings: string[];
   generatedFrom?: string;
-  compose?: (readmeBody: RootContent[]) => RootContent[];
+  compose?: (
+    readmeBody: RootContent[],
+    skillGroups: readonly SkillGroup[],
+  ) => RootContent[];
+}
+
+function withClaudeAndUpgradingPointers(
+  readmeBody: RootContent[],
+): RootContent[] {
+  return [
+    paragraph(
+      text("Using Claude? See "),
+      link(CLAUDE_ROUTE, "Use agemon with Claude"),
+      text(". Already installed? See "),
+      link(UPGRADING_ROUTE, "Upgrading agemon"),
+      text("."),
+    ),
+    ...readmeBody,
+  ];
 }
 
 const README_PAGES: ReadmePage[] = [
@@ -72,10 +97,30 @@ const README_PAGES: ReadmePage[] = [
     routeName: "gettingStarted",
     route: "/start/getting-started/",
     title: "Getting started",
-    description:
-      "Requirements, the ways to install agemon, and using it with Claude on the web.",
+    description: "Requirements and the ways to install agemon.",
     sidebarOrder: 1,
-    headings: ["Requirements", INSTALL_HEADING, "Claude on the web"],
+    headings: ["Requirements", INSTALL_HEADING],
+    compose: withClaudeAndUpgradingPointers,
+  },
+  {
+    routeName: "claude",
+    route: CLAUDE_ROUTE,
+    title: "Use agemon with Claude",
+    description:
+      "agemon in Claude Code, Claude Code on the web and claude.ai, and the plugin name for each skill group.",
+    sidebarOrder: 2,
+    headings: ["Use with Claude"],
+    generatedFrom: "README.md and the skill catalog",
+    compose: claudePageBody,
+  },
+  {
+    routeName: "upgrading",
+    route: UPGRADING_ROUTE,
+    title: "Upgrading agemon",
+    description:
+      "Check your version, upgrade, stay on or go back to a release, and what a new version brings.",
+    sidebarOrder: 3,
+    headings: ["Upgrading agemon"],
   },
   {
     routeName: "configuration",
@@ -169,6 +214,10 @@ export interface SiteContentOptions {
   repositoryRef: string;
 }
 
+function isWholePageSection(page: ReadmePage): boolean {
+  return page.headings.length === 1;
+}
+
 function readmePages(
   options: SiteContentOptions,
   routeForFile: ReadonlyMap<string, string>,
@@ -184,6 +233,12 @@ function readmePages(
   );
   const routeForReadmeAnchor = new Map<string, string>();
   for (const [index, page] of README_PAGES.entries()) {
+    if (isWholePageSection(page)) {
+      const [sectionHeading, ...sectionBody] = sections[index];
+      const readmeSlug = readmeSlugs.get(sectionHeading as Heading);
+      if (readmeSlug) routeForReadmeAnchor.set(readmeSlug, page.route);
+      sections[index] = sectionBody;
+    }
     for (const [heading, pageSlug] of headingSlugs(sections[index])) {
       const readmeSlug = readmeSlugs.get(heading);
       if (readmeSlug)
@@ -206,7 +261,7 @@ function readmePages(
       description: page.description,
       sidebarOrder: page.sidebarOrder,
       provenance: { generatedFrom: page.generatedFrom ?? "README.md" },
-      body: page.compose?.(body) ?? body,
+      body: page.compose?.(body, options.skillGroups) ?? body,
     };
   });
 }
