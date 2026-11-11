@@ -92,7 +92,7 @@ function catalogAgents(): CatalogAgent[] {
   ];
 }
 
-function agentFileStem(agent: AgentDefinition): string {
+export function agentFileStem(agent: AgentDefinition): string {
   return agent.fileStem ?? agent.name;
 }
 

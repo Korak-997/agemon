@@ -1,0 +1,52 @@
+{
+  "label": "n-vs-a",
+  "confidence": "Indicative: a few runs per task can catch only large effects, and a null result means no large effect.",
+  "arms": [
+    "N",
+    "A"
+  ],
+  "sessionModel": "claude-opus-5-5",
+  "effort": "default",
+  "cliVersion": "2.1.318 (Claude Code)",
+  "agemonCommit": "5cc11eab863b74500c60f532fbef14be6f508c2c",
+  "maxBudgetUsd": 5,
+  "isolationNote": "Runs use only project and local settings, with no MCP servers or web tools. Account-synced skills stay listed, but the Skill tool is off.",
+  "summary": {
+    "A": {
+      "runs": 1,
+      "passed": 1,
+      "costUsd": 0.153525,
+      "costPerSolvedTask": 0.153525,
+      "turns": 10,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001314,
+        "claude-opus-5-5": 0.1533936
+      },
+      "agentCalls": 0,
+      "agentCallsByModel": {},
+      "shareNamingModel": null,
+      "shareToRoleAgents": null,
+      "mostExpensiveTaskShare": 1,
+      "costPerSolvedTaskDifference": null,
+      "passes": null
+    }
+  },
+  "runs": [
+    {
+      "task": "bug-invoice-total",
+      "arm": "A",
+      "repeat": 1,
+      "passed": true,
+      "turns": 10,
+      "costUsd": 0.153525,
+      "costByModel": {
+        "claude-haiku-5-5": 0.0001314,
+        "claude-opus-5-5": 0.1533936
+      },
+      "agentCalls": 0,
+      "agentCallsWithModel": 0,
+      "agentCallsToRoleAgents": 0,
+      "agentCallsByModel": {}
+    }
+  ]
+}
