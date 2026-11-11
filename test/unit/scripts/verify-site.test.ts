@@ -35,7 +35,7 @@ const HASHED_POLICY = POLICY.replace(
   "'wasm-unsafe-eval'",
   "'wasm-unsafe-eval' 'sha256-AbC+/12='",
 );
-const HOME_BODY = `<section data-install-sha256="${INSTALL_SHA256}"><button data-copy="npm install --global agemon"></button><button data-copy="${CURL_COMMAND}"></button></section>`;
+const HOME_BODY = `<section data-install-sha256="${INSTALL_SHA256}"><button data-copy="npm install --global agemon"></button><button data-copy="${CURL_COMMAND}"></button><button data-copy="claude plugin marketplace add Korak-997/agemon"></button></section>`;
 
 function writeSite(files: Record<string, string>): void {
   for (const [path, contents] of Object.entries(files)) {
@@ -119,7 +119,7 @@ describe("verify-site.sh", () => {
         HOME_BODY.replace(ORIGIN, "https://evil.example"),
       ),
     });
-    expect(verify().stderr).toMatch(/does not offer the install command/u);
+    expect(verify().stderr).toMatch(/does not offer the command/u);
   });
 
   it("fails when a page has no Content-Security-Policy", () => {
@@ -255,7 +255,7 @@ describe("verify-site.sh", () => {
         "index.html": pageWithPolicy(HASHED_POLICY, `${HOME_BODY}${button}`),
       });
       expect(verify().stderr).toMatch(
-        /every copy button on the home page must offer one of the two install commands/u,
+        /every copy button on the home page must offer one of the commands checked here/u,
       );
     },
   );

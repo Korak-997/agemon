@@ -84,14 +84,15 @@ grep -a -qF "data-install-sha256=\"$expected_sha256\"" "$home_page" ||
 verified_copy_buttons=0
 for command in \
   "npm install --global agemon" \
-  "curl --proto '=https' --tlsv1.2 -fsSL $site_origin/install.sh | sh"; do
+  "curl --proto '=https' --tlsv1.2 -fsSL $site_origin/install.sh | sh" \
+  "claude plugin marketplace add Korak-997/agemon"; do
   offered="$(occurrences -F "data-copy=\"$command\"" "$home_page")"
   [ "$offered" -ge 1 ] ||
-    fail "the home page does not offer the install command: $command"
+    fail "the home page does not offer the command: $command"
   verified_copy_buttons=$((verified_copy_buttons + offered))
 done
 [ "$(occurrences -i 'data-copy' "$home_page")" -eq "$verified_copy_buttons" ] ||
-  fail "every copy button on the home page must offer one of the two install commands"
+  fail "every copy button on the home page must offer one of the commands checked here"
 
 policy="$(cat "$policy_file")"
 csp_prefix='<head><meta http-equiv="content-security-policy" content="'

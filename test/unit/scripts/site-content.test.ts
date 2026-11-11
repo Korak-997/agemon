@@ -10,9 +10,12 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command, Option } from "commander";
+import type { Root, Table } from "mdast";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { buildMarketplaceManifest } from "../../../scripts/marketplace/manifest.js";
 import { groupChangelogReleases } from "../../../scripts/site-content/changelog.js";
+import { claudePageBody } from "../../../scripts/site-content/claude.js";
 import {
   commandsPage,
   describeCommands,
@@ -729,6 +732,7 @@ describe("site data for the home page", () => {
     expect(Object.keys(routes).sort()).toEqual(
       [
         "changelog",
+        "claude",
         "codeOfConduct",
         "commands",
         "configuration",
@@ -739,6 +743,7 @@ describe("site data for the home page", () => {
         "safetyPost",
         "security",
         "skills",
+        "upgrading",
       ].sort(),
     );
     const { safetyPost, ...generatedRoutes } = routes;
@@ -795,6 +800,103 @@ describe("site data for the home page", () => {
   });
 });
 
+function pageBody(path: string): Root {
+  return parseMarkdown(generatedPage(path).split(/^---$/mu)[2]);
+}
+
+function headingTexts(body: Root): string[] {
+  return body.children
+    .filter((node) => node.type === "heading")
+    .map((node) => plainText(node));
+}
+
+function tableRows(body: Root, header: string[]): string[][] {
+  const pluginTable = body.children.find(
+    (node): node is Table =>
+      node.type === "table" &&
+      node.children[0].children.map((cell) => plainText(cell)).join() ===
+        header.join(),
+  );
+  return (pluginTable?.children.slice(1) ?? []).map((row) =>
+    row.children.map((cell) => plainText(cell)),
+  );
+}
+
+describe("Claude and upgrading pages", () => {
+  it("lists every marketplace plugin in the Claude page's table, with the manifest's name", () => {
+    generate();
+    const rows = tableRows(pageBody("start/claude.md"), [
+      "Group",
+      "Plugin",
+      "Description",
+    ]);
+    const { plugins } = buildMarketplaceManifest(SKILL_GROUPS);
+    expect(plugins).toHaveLength(SKILL_GROUPS.length);
+    expect(rows).toEqual(
+      plugins.map((plugin, index) => [
+        SKILL_GROUPS[index].label,
+        plugin.name,
+        plugin.description,
+      ]),
+    );
+  });
+
+  it("puts the plugin table in the Plugin names section, and fails without that heading", () => {
+    generate();
+    const body = pageBody("start/claude.md").children;
+    const pluginTableIndex = body.findIndex(
+      (node) =>
+        node.type === "table" &&
+        plainText(node.children[0]) === "GroupPluginDescription",
+    );
+    const headingsBeforeTable = headingTexts({
+      type: "root",
+      children: body.slice(0, pluginTableIndex),
+    });
+    expect(headingsBeforeTable.at(-1)).toBe("Plugin names");
+    expect(() =>
+      claudePageBody(parseMarkdown("## Other\n").children, SKILL_GROUPS),
+    ).toThrow(/README\.md: has no heading "Plugin names"/u);
+  });
+
+  it("does not repeat a whole-section page's title, and routes README anchors to the new pages", () => {
+    generate();
+    const claude = pageBody("start/claude.md");
+    const upgrading = pageBody("start/upgrading.md");
+    expect(headingTexts(claude)).not.toContain("Use with Claude");
+    expect(headingTexts(upgrading)).not.toContain("Upgrading agemon");
+    expect(headingTexts(upgrading)).toEqual(
+      expect.arrayContaining([
+        "How each install method upgrades",
+        "What a new version brings to a repository",
+        "Update checks",
+      ]),
+    );
+    const upgradingPage = generatedPage("start/upgrading.md");
+    expect(upgradingPage).toContain("](/start/upgrading/#update-checks)");
+    expect(upgradingPage).toContain("](/start/claude/)");
+    expect(upgradingPage).toContain("](/project/changelog/)");
+    expect(generatedPage("start/claude.md")).toContain(
+      "](/start/claude/#plugin-names)",
+    );
+    const gettingStarted = generatedPage("start/getting-started.md");
+    expect(gettingStarted).toContain("](/start/claude/)");
+    expect(gettingStarted).toContain("](/start/upgrading/)");
+    expect(headingTexts(pageBody("start/getting-started.md"))).not.toContain(
+      "Use with Claude",
+    );
+  });
+
+  it("orders the Start pages getting started, Claude, upgrading", () => {
+    generate();
+    expect(
+      ["getting-started", "claude", "upgrading"].map(
+        (page) => frontmatterOf(generatedPage(`start/${page}.md`)).sidebar,
+      ),
+    ).toEqual([{ order: 1 }, { order: 2 }, { order: 3 }]);
+  });
+});
+
 describe("skill group template", () => {
   let skillsRoot: string;
 
@@ -804,6 +906,34 @@ describe("skill group template", () => {
 
   afterEach(() => {
     rmSync(skillsRoot, { recursive: true, force: true });
+  });
+
+  it("shows how to add a plugin group to Claude, and nothing for a group with a pinned upstream skill", () => {
+    generate();
+    const security = generatedPage("skills/security.md");
+    expect(headingTexts(pageBody("skills/security.md"))).toContain(
+      "Add to Claude",
+    );
+    expect(security).toContain(
+      "```bash\nclaude plugin install agemon-security@agemon\n```",
+    );
+    expect(security).toContain("](/start/claude/)");
+    expect(generatedPage("skills/index.md")).toContain("](/start/claude/)");
+
+    const pinnedSkill: SkillBundleEntry = {
+      id: "upstream",
+      source: join(skillsRoot, "upstream"),
+      skillName: "upstream",
+      agent: "claude-code",
+      pinnedRepository: {
+        url: "https://github.com/example/skills.git",
+        commit: "c".repeat(40),
+      },
+    };
+    generate({ skillGroups: withFixtureGroup([pinnedSkill]) });
+    expect(headingTexts(pageBody("skills/fixture.md"))).not.toContain(
+      "Add to Claude",
+    );
   });
 
   it("shows shared source, pinned commit and license as chips", () => {
@@ -917,8 +1047,10 @@ describe("skill group template", () => {
     const serialized = JSON.stringify(reparsed);
     expect(serialized).toContain("<script>alert(1)</script>");
     expect(
-      reparsed.children.filter((node) => node.type === "code"),
-    ).toHaveLength(1);
+      reparsed.children
+        .filter((node) => node.type === "code")
+        .map((node) => node.lang),
+    ).toEqual(["bash", "text"]);
   });
 
   it.each([
