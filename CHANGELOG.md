@@ -1,5 +1,10 @@
 # agemon
 
+## 6.3.1
+
+- fix(website): allow control-character regex in skill lint (#77)
+- feat(website): add "Use with Claude" and "Upgrading" pages (#76)
+
 ## 6.3.0
 
 - ci(release): unblock publish and lint on release PRs (#74)
