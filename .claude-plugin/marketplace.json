@@ -62,6 +62,13 @@
       "skills": ["./"]
     },
     {
+      "name": "agemon-nuxt-vue",
+      "description": "Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills generated from each project's docs at a pinned commit. They describe the versions current at that commit (Nuxt 5); check your project's versions.",
+      "source": "./assets/skills/nuxt-vue",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
       "name": "agemon-teamlead",
       "description": "Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync.",
       "source": "./assets/skills/team-lead",

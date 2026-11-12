@@ -213,6 +213,22 @@ export const SKILL_GROUPS: SkillGroup[] = [
     skills: [vendoredSkill("commit", "agemon-commit")],
   },
   {
+    id: "nuxt-vue",
+    label: "Nuxt / Vue",
+    description:
+      "Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills generated from each project's docs at a pinned commit. They describe the versions current at that commit (Nuxt 5); check your project's versions.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("nuxt-vue", "agemon-vue"),
+      vendoredSkill("nuxt-vue", "agemon-nuxt"),
+      vendoredSkill("nuxt-vue", "agemon-nitro"),
+      vendoredSkill("nuxt-vue", "agemon-pinia"),
+      vendoredSkill("nuxt-vue", "agemon-vite"),
+      vendoredSkill("nuxt-vue", "agemon-vitest"),
+      vendoredSkill("nuxt-vue", "agemon-unocss"),
+    ],
+  },
+  {
     id: "teamlead",
     label: "Team Lead",
     description:
