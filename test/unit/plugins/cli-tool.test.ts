@@ -36,9 +36,11 @@ import {
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
 } from "../../../src/plugins/pins.js";
+import { MAX_ROUTE_HINT_LENGTH } from "../../../src/plugins/skills/catalog.js";
 import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
+import { expectSafeRouteHint } from "../route-hint.js";
 
 const createdTempDirectories: string[] = [];
 
@@ -205,6 +207,17 @@ if (!AGNIX) {
 const AGNIX_RELEASE_URL = `https://github.com/agent-sh/agnix/releases/download/v${AGNIX_VERSION}`;
 
 describe("cli-tool plugin", () => {
+  it("gives every CLI tool a one-line route hint and index command safe inside a Markdown table", () => {
+    for (const tool of CLI_TOOL_BUNDLE) {
+      expectSafeRouteHint(tool.routeHint, MAX_ROUTE_HINT_LENGTH);
+      expect(tool.indexCommand).not.toMatch(/[|\n\r]|<!--/u);
+    }
+    expect(AGNIX.routeHint).toBe(
+      "Check agent config files (CLAUDE.md, AGENTS.md, skills, hooks) for mistakes",
+    );
+    expect(AGNIX.indexCommand).toBe("`agnix`");
+  });
+
   it("installs, verifies, and uninstalls managed CLI tools", async () => {
     const context = await createTestContext();
 

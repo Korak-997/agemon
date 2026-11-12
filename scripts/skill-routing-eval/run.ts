@@ -8,6 +8,13 @@ import {
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { upsertManagedMarkdownBlock } from "../../src/patchers/markdown-block.js";
+import { CLI_TOOL_BUNDLE } from "../../src/plugins/cli-tool/catalog.js";
+import {
+  buildCapabilityIndexBlockBody,
+  CAPABILITY_INDEX_BLOCK_ID,
+  type IndexedTool,
+} from "../../src/plugins/master-prompt/capability-index.js";
 import { renderRuleFileContents } from "../../src/plugins/master-prompt/index.js";
 import { SKILL_GROUPS } from "../../src/plugins/skills/catalog.js";
 import {
@@ -46,8 +53,10 @@ const DEFAULT_REPEATS = "2";
 const PROBE_CASE_ID = "neg-explain-code";
 const ISOLATION_NOTE =
   "Runs use only project and local settings, but account-synced skills stay listed; namespaced invocations are counted as foreign and left out of the outcome.";
-const PENDING_ARM_INSTALLERS: Partial<Record<SkillRoutingArm, string>> = {
-  I: "arm I needs the capability index renderer",
+const CODE_REVIEW_GRAPH_INDEX_TOOL: IndexedTool = {
+  routeHint: "Code relationships: callers, importers, impact of a change",
+  indexCommand:
+    "`code-review-graph` (kept current by agemon's watcher; see `code-review-graph --help`)",
 };
 
 export interface SkillRoutingOptions {
@@ -78,16 +87,34 @@ export function evaluatedSkillNames(): Set<string> {
   );
 }
 
+function renderBuiltInCapabilityIndex(): string {
+  return buildCapabilityIndexBlockBody(
+    SKILL_GROUPS.flatMap((group) =>
+      group.skills.map((skill) => ({
+        skillName: skill.skillName,
+        routeHint: skill.routeHint ?? null,
+      })),
+    ),
+    [...CLI_TOOL_BUNDLE, CODE_REVIEW_GRAPH_INDEX_TOOL],
+  );
+}
+
+function renderArmRules(arm: SkillRoutingArm): string {
+  const rules = renderRuleFileContents(AGENT_RULES_FILE, null);
+  return arm === "I"
+    ? upsertManagedMarkdownBlock(
+        rules,
+        CAPABILITY_INDEX_BLOCK_ID,
+        renderBuiltInCapabilityIndex(),
+      ).nextContent
+    : rules;
+}
+
 export function installArm(
   projectDirectory: string,
   arm: SkillRoutingArm,
 ): void {
-  const pendingInstaller = PENDING_ARM_INSTALLERS[arm];
-  if (pendingInstaller) throw new Error(pendingInstaller);
-  writeFileSync(
-    join(projectDirectory, AGENT_RULES_FILE),
-    renderRuleFileContents(AGENT_RULES_FILE, null),
-  );
+  writeFileSync(join(projectDirectory, AGENT_RULES_FILE), renderArmRules(arm));
   writeFileSync(
     join(projectDirectory, POINTER_FILE),
     renderRuleFileContents(POINTER_FILE, null),

@@ -27,6 +27,8 @@ export interface CliToolBundleEntry {
   releaseDownloadUrl: string;
   releaseArchivesByPlatform: Record<string, PinnedReleaseArchive[]>;
   sharedResource: SharedResourceDeclaration;
+  routeHint: string;
+  indexCommand: string;
 }
 
 function agnixArchive(
@@ -63,5 +65,8 @@ export const CLI_TOOL_BUNDLE: CliToolBundleEntry[] = [
       removalVerb: "uninstall",
       migratesFromRepoLedgers: true,
     },
+    routeHint:
+      "Check agent config files (CLAUDE.md, AGENTS.md, skills, hooks) for mistakes",
+    indexCommand: "`agnix`",
   },
 ];

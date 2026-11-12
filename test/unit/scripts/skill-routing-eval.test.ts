@@ -143,6 +143,21 @@ describe("skill-routing harness", () => {
     ).toBe(true);
   });
 
+  it("installs arm I with the capability index after the rules block", () => {
+    installArm(workRoot, "I");
+    const agents = readFileSync(join(workRoot, "AGENTS.md"), "utf8");
+    const rulesEnd = agents.indexOf("<!-- agemon:end:agent-rules -->");
+    const indexStart = agents.indexOf("<!-- agemon:start:capability-index -->");
+    expect(rulesEnd).toBeGreaterThan(0);
+    expect(indexStart).toBeGreaterThan(rulesEnd);
+    expect(agents).toContain("<!-- agemon:end:capability-index -->");
+    expect(agents).toContain(
+      "| A bug, failing test or unexpected behavior, before proposing a fix | `agemon-root-cause` |",
+    );
+    expect(agents).toContain("| `agnix` |");
+    expect(agents).toContain("`code-review-graph`");
+  });
+
   it("loads a corpus whose expected skills all exist", () => {
     const cases = loadCases();
     const shippedSkills = new Set(

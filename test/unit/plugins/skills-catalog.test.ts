@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { FIRST_PARTY_SKILLS } from "../../../scripts/skill-provenance.js";
+import { expectSafeRouteHint } from "../route-hint.js";
 
 vi.mock("../../../src/core/package-assets.js", () => ({
   resolveVendoredSkillPath: () => {
@@ -39,5 +40,15 @@ describe("SKILL_GROUPS", () => {
     expect(FIRST_PARTY_SKILLS).toContain(skillPath);
     expect(skillText).toContain("npx --no-install knip");
     expect(skillText).not.toMatch(/npm (i|install) .*knip|npx knip(?! --no)/u);
+  });
+
+  it("gives every built-in skill a one-line route hint safe inside a Markdown table", async () => {
+    const { MAX_ROUTE_HINT_LENGTH, SKILL_GROUPS } = await import(
+      "../../../src/plugins/skills/catalog.js"
+    );
+
+    for (const skill of SKILL_GROUPS.flatMap((group) => group.skills)) {
+      expectSafeRouteHint(skill.routeHint, MAX_ROUTE_HINT_LENGTH);
+    }
   });
 });
