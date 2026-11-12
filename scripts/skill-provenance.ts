@@ -1,5 +1,6 @@
 export const FIRST_PARTY_SKILLS: readonly string[] = [
   "code-quality/agemon-house-rules",
+  "code-quality/agemon-unused-code-check",
   "commit/agemon-commit",
   "performance/agemon-performance",
   "team-lead/agemon-plan-rfc",

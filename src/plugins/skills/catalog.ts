@@ -173,6 +173,7 @@ export const SKILL_GROUPS: SkillGroup[] = [
     skills: [
       vendoredSkill("code-quality", "agemon-clean-code"),
       vendoredSkill("code-quality", "agemon-house-rules"),
+      vendoredSkill("code-quality", "agemon-unused-code-check"),
     ],
   },
   {

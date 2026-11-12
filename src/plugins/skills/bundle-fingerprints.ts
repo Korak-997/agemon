@@ -140,6 +140,9 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     "agemon-unocss": [
       "dc8d5fc559ab550d602c7d527c6a2955ffec527a7f51378d9e0315b3dc84f50b",
     ],
+    "agemon-unused-code-check": [
+      "ff0ba9c6c6a23817d7ba1421cb120762f482608f74a32ff5301213f23622c4fc",
+    ],
     "agemon-using-git-worktrees": [
       "1f0bd621aa8cbbe5aaa60101ad3a389cf84d08d3b3be5a7bc7b2dd0b4cb86b69",
     ],
@@ -156,6 +159,7 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
       "c9702ff7d8aaf823d93e10a1add6a366a5adfad4714b30517cbf847ee7727bf1",
     ],
     "agemon-webapp-testing": [
+      "8110cfc3b463aa2db6026b3afa23ebf7d9d0534c45a2801a407d2c0be06caa43",
       "c50a039d18ff70c651391010b29b5366297d81756cd5f34276e863d71b61c0fe",
     ],
     "agemon-writing-plans": [
