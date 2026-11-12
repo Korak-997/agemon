@@ -150,6 +150,7 @@ async function createTestContext(): Promise<TestContext> {
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };

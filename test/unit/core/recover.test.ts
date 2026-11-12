@@ -119,6 +119,7 @@ async function createHarness(
       serviceManager: createNoOpServiceManager(),
       verifiedBinaryInstaller: {
         install: async () => {},
+        installLinked: async () => {},
         inspect: async () => ({ kind: "absent" }),
       },
       confirm: async () => true,

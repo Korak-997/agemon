@@ -66,6 +66,7 @@ async function createTestContext(): Promise<Context & { infoLines: string[] }> {
     serviceManager: unusedServiceManager,
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };

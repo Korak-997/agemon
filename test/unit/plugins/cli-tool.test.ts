@@ -1,19 +1,25 @@
+import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
+  readlink,
   realpath,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import {
   createFakeVerifiedBinaryInstaller,
   resetFakeSubprocessState,
 } from "../../../src/core/fake-subprocess.js";
+import {
+  inspectLinkedBinary,
+  linkedBinaryPaths,
+} from "../../../src/core/linked-binary.js";
 import { directoryIdentity } from "../../../src/core/machine-ledger.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
@@ -27,15 +33,21 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { CLI_TOOL_BUNDLE } from "../../../src/plugins/cli-tool/catalog.js";
 import {
   cliToolPlugin,
-  hasPinnedBuildFor,
   pinnedArchiveKeyFor,
   resolveVerifiedArchiveCandidates,
+  toolsWithoutPinnedBuild,
+  toolsWithPinnedBuild,
 } from "../../../src/plugins/cli-tool/index.js";
 import {
   AGNIX_NPM_TARBALL,
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
 } from "../../../src/plugins/pins.js";
+import {
+  linkedTool,
+  toolBuiltOnlyFor,
+  withOnlyTool,
+} from "../cli-tool-fixture.js";
 import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
@@ -183,6 +195,7 @@ async function createTestContext(
         installRequests.push(request);
         await fakeInstaller.install(request);
       },
+      installLinked: (request) => fakeInstaller.installLinked(request),
       inspect: (request) => fakeInstaller.inspect(request),
     },
   };
@@ -250,7 +263,6 @@ describe("cli-tool plugin", () => {
         packageName: "agnix",
         version: AGNIX_VERSION,
         binaryPathInPackage: "bin/agnix-binary",
-        archiveMemberName: "agnix",
         candidates: resolveVerifiedArchiveCandidates(AGNIX, "linux-x64"),
         packageTarball: AGNIX_NPM_TARBALL,
       },
@@ -376,6 +388,7 @@ describe("cli-tool plugin", () => {
       async install() {
         throw new Error("Downloaded archive does not match its pinned sha256");
       },
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     };
 
@@ -402,6 +415,7 @@ describe("cli-tool plugin", () => {
       async install() {
         throw new Error("install failed");
       },
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     };
 
@@ -424,6 +438,7 @@ describe("cli-tool plugin", () => {
       async install() {
         throw new Error("No pinned agnix 0.58.0 build runs on this host.");
       },
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     };
 
@@ -458,6 +473,7 @@ describe("cli-tool plugin", () => {
         url: `${AGNIX_RELEASE_URL}/agnix-x86_64-unknown-linux-gnu.tar.gz`,
         sha256:
           AGNIX_RELEASE_ARCHIVE_SHA256["agnix-x86_64-unknown-linux-gnu.tar.gz"],
+        memberName: "agnix",
       },
       {
         url: `${AGNIX_RELEASE_URL}/agnix-x86_64-unknown-linux-musl.tar.gz`,
@@ -465,6 +481,7 @@ describe("cli-tool plugin", () => {
           AGNIX_RELEASE_ARCHIVE_SHA256[
             "agnix-x86_64-unknown-linux-musl.tar.gz"
           ],
+        memberName: "agnix",
       },
     ]);
   });
@@ -477,6 +494,7 @@ describe("cli-tool plugin", () => {
           AGNIX_RELEASE_ARCHIVE_SHA256[
             "agnix-aarch64-unknown-linux-gnu.tar.gz"
           ],
+        memberName: "agnix",
       },
     ]);
   });
@@ -487,6 +505,7 @@ describe("cli-tool plugin", () => {
         url: `${AGNIX_RELEASE_URL}/agnix-aarch64-apple-darwin.tar.gz`,
         sha256:
           AGNIX_RELEASE_ARCHIVE_SHA256["agnix-aarch64-apple-darwin.tar.gz"],
+        memberName: "agnix",
       },
     ]);
   });
@@ -505,15 +524,36 @@ describe("cli-tool plugin", () => {
     } as const;
 
     expect(pinnedArchiveKeyFor(intelMac)).toBe("darwin-x64");
-    expect(hasPinnedBuildFor(intelMac)).toBe(false);
+    expect(toolsWithPinnedBuild(intelMac)).toEqual([]);
+    expect(toolsWithoutPinnedBuild(intelMac).map((tool) => tool.id)).toEqual([
+      "agnix",
+    ]);
     expect(
-      hasPinnedBuildFor({
+      toolsWithPinnedBuild({
         ...LINUX_TEST_PLATFORM,
         family: "darwin",
         arch: "arm64",
-      }),
-    ).toBe(true);
-    expect(hasPinnedBuildFor(LINUX_TEST_PLATFORM)).toBe(true);
+      }).map((tool) => tool.id),
+    ).toEqual(["agnix"]);
+    expect(toolsWithoutPinnedBuild(LINUX_TEST_PLATFORM)).toEqual([]);
+  });
+
+  it("plans only the tools with a pinned build for this platform", async () => {
+    CLI_TOOL_BUNDLE.push(toolBuiltOnlyFor("darwin-x64"));
+    try {
+      const context = await createTestContext();
+
+      expect(
+        toolsWithoutPinnedBuild(LINUX_TEST_PLATFORM).map((tool) => tool.id),
+      ).toEqual(["unbuilt-tool"]);
+      expect(
+        ((await cliToolPlugin.plan?.(context)) ?? []).map(
+          (operation) => operation.resourceId,
+        ),
+      ).toEqual(["package:agnix"]);
+    } finally {
+      CLI_TOOL_BUNDLE.pop();
+    }
   });
 
   it("leaves the ledger to the orchestrator when uninstalled directly", async () => {
@@ -785,5 +825,97 @@ describe("cli-tool plugin", () => {
       "ignoring ledger entry for typescript: cli-tool does not manage that package",
     );
     expect(context.manifest.getActions()).toEqual([]);
+  });
+});
+
+describe("cli-tool plugin with a linked-binary tool", () => {
+  const originalHome = process.env.HOME;
+  let home: string;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), "agemon-linked-home-")));
+    createdTempDirectories.push(home);
+    process.env.HOME = home;
+  });
+
+  afterEach(() => {
+    process.env.HOME = originalHome;
+  });
+
+  function linkedToolPaths() {
+    const tool = linkedTool();
+    return linkedBinaryPaths(tool.id, tool.version, tool.binaryName);
+  }
+
+  it("installs through installLinked, verifies the link, and unlinks on nuke", async () => {
+    await withOnlyTool(linkedTool(), async () => {
+      const context = await createTestContext();
+      const infos: string[] = [];
+      context.ui = { ...context.ui, info: (line: string) => infos.push(line) };
+
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      expect(operations.map((operation) => operation.targetPath)).toEqual([
+        linkedToolPaths().linkPath,
+      ]);
+      await cliToolPlugin.apply?.(context, operations);
+
+      expect(await inspectLinkedBinary(linkedToolPaths())).toBe("ours-current");
+      expect(installRequests).toEqual([]);
+      expect(infos).toContain(
+        `${join(home, ".local/bin")} is not on your PATH; add it to use linked-tool`,
+      );
+      expect((await cliToolPlugin.verify(context)).ok).toBe(true);
+      expect(await cliToolPlugin.plan?.(context)).toEqual([]);
+
+      await uninstallPlugins(
+        { ...context, yes: true, removeSharedTools: new Set(["agnix"]) },
+        [cliToolPlugin],
+        {},
+      );
+
+      expect(await inspectLinkedBinary(linkedToolPaths())).toBe("absent");
+      expect(existsSync(linkedToolPaths().toolsRoot)).toBe(false);
+      expect((await cliToolPlugin.verify(context)).ok).toBe(false);
+    });
+  });
+
+  it("refuses to replace a link path it did not create, and records nothing", async () => {
+    await withOnlyTool(linkedTool(), async () => {
+      const context = await createTestContext();
+      const { linkPath } = linkedToolPaths();
+      await mkdir(dirname(linkPath), { recursive: true });
+      await symlink("/nonexistent/linked-tool", linkPath);
+
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      await expect(cliToolPlugin.apply?.(context, operations)).rejects.toThrow(
+        `${linkPath} already exists and was not installed by agemon; remove it or keep using your own linked-tool`,
+      );
+
+      expect(await readlink(linkPath)).toBe("/nonexistent/linked-tool");
+      expect(existsSync(linkedToolPaths().toolsRoot)).toBe(false);
+      expect(context.manifest.getActions()).toEqual([]);
+    });
+  });
+
+  it("keeps a working linked tool the user installed and never removes it on nuke", async () => {
+    await withOnlyTool(linkedTool(), async () => {
+      const context = await createTestContext();
+      const { linkPath } = linkedToolPaths();
+      await mkdir(dirname(linkPath), { recursive: true });
+      await writeFile(linkPath, "#!/bin/sh\n", { mode: 0o755 });
+
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      expect(operations.map((operation) => operation.action)).toEqual([
+        "use-shared",
+      ]);
+      await cliToolPlugin.apply?.(context, operations);
+      await uninstallPlugins(
+        { ...context, yes: true, removeSharedTools: new Set(["agnix"]) },
+        [cliToolPlugin],
+        {},
+      );
+
+      expect(await inspectLinkedBinary(linkedToolPaths())).toBe("foreign");
+    });
   });
 });

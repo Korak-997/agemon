@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   chmod,
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
   realpath,
@@ -10,12 +11,17 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { findBinaryPath } from "../platform/detect.js";
 import { readBoundedBody } from "./bounded-response.js";
 import { errorMessage } from "./error-message.js";
 import { readRegularFileIfExists, sha256OfRegularFile } from "./files.js";
 import { sha256Hex } from "./fingerprint.js";
+import {
+  type LinkedBinaryPaths,
+  linkBinary,
+  removeVersionDirectory,
+} from "./linked-binary.js";
 import { resolveGlobalNpmRoot } from "./npm-global.js";
 import { resolveAgemonStateDirectory } from "./state-root.js";
 import {
@@ -38,6 +44,7 @@ const MAX_NPM_TARBALL_BYTES = 20 * 1024 * 1024;
 export interface VerifiedArchiveCandidate {
   url: string;
   sha256: string;
+  memberName: string;
 }
 
 export interface PinnedNpmTarball {
@@ -49,9 +56,14 @@ export interface VerifiedBinaryInstallRequest {
   packageName: string;
   version: string;
   binaryPathInPackage: string;
-  archiveMemberName: string;
   candidates: VerifiedArchiveCandidate[];
   packageTarball: PinnedNpmTarball;
+}
+
+export interface LinkedBinaryInstallRequest {
+  candidates: VerifiedArchiveCandidate[];
+  paths: LinkedBinaryPaths;
+  version: string;
 }
 
 export interface InstalledPackageInspectionRequest {
@@ -69,6 +81,7 @@ export type InstalledPackageInspection =
 
 export interface VerifiedBinaryInstaller {
   install(request: VerifiedBinaryInstallRequest): Promise<void>;
+  installLinked(request: LinkedBinaryInstallRequest): Promise<void>;
   inspect(
     request: InstalledPackageInspectionRequest,
   ): Promise<InstalledPackageInspection>;
@@ -360,6 +373,33 @@ async function inspectInstalledPackage(
   };
 }
 
+async function installFirstRunningCandidate(
+  input: { run: RunSubprocess; fetchArchive: typeof fetch },
+  candidates: readonly VerifiedArchiveCandidate[],
+  destination: { extractionParent: string; targetPath: string },
+  toolLabel: string,
+): Promise<void> {
+  const probeFailures: string[] = [];
+  for (const candidate of candidates) {
+    const archive = await downloadArchive(input.fetchArchive, candidate.url);
+    const outcome = await installVerifiedArchive({
+      archive,
+      expectedSha256: candidate.sha256,
+      archiveMemberName: candidate.memberName,
+      ...destination,
+      run: input.run,
+    });
+    if (outcome.binaryRuns) {
+      return;
+    }
+    probeFailures.push(outcome.probeFailure);
+  }
+
+  throw new Error(
+    `No pinned ${toolLabel} build runs on this host (${probeFailures.join("; ")}).`,
+  );
+}
+
 export interface CreateVerifiedBinaryInstallerInput {
   run: RunSubprocess;
   fetch?: typeof fetch;
@@ -389,28 +429,33 @@ export function createVerifiedBinaryInstaller(
         request,
         await readOnlyNpmCwd(),
       );
-      const targetPath = join(packageDirectory, request.binaryPathInPackage);
-
-      const probeFailures: string[] = [];
-      for (const candidate of request.candidates) {
-        const archive = await downloadArchive(fetchArchive, candidate.url);
-        const outcome = await installVerifiedArchive({
-          archive,
-          expectedSha256: candidate.sha256,
-          archiveMemberName: request.archiveMemberName,
+      await installFirstRunningCandidate(
+        { run: input.run, fetchArchive },
+        request.candidates,
+        {
           extractionParent: packageDirectory,
-          targetPath,
-          run: input.run,
-        });
-        if (outcome.binaryRuns) {
-          return;
-        }
-        probeFailures.push(outcome.probeFailure);
-      }
-
-      throw new Error(
-        `No pinned ${request.packageName} ${request.version} build runs on this host (${probeFailures.join("; ")}).`,
+          targetPath: join(packageDirectory, request.binaryPathInPackage),
+        },
+        `${request.packageName} ${request.version}`,
       );
+    },
+    async installLinked(request) {
+      await mkdir(dirname(request.paths.binaryPath), { recursive: true });
+      try {
+        await installFirstRunningCandidate(
+          { run: input.run, fetchArchive },
+          request.candidates,
+          {
+            extractionParent: dirname(request.paths.binaryPath),
+            targetPath: request.paths.binaryPath,
+          },
+          `${basename(request.paths.binaryPath)} ${request.version}`,
+        );
+        await linkBinary(request.paths);
+      } catch (error) {
+        await removeVersionDirectory(request.paths);
+        throw error;
+      }
     },
   };
 }

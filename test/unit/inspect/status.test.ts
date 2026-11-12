@@ -98,6 +98,7 @@ async function createStatusContext(): Promise<Context> {
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };

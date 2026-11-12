@@ -102,8 +102,13 @@ describe("createContext and the fake installer", () => {
       packageName: "agnix",
       version: AGNIX_VERSION,
       binaryPathInPackage: "bin/agnix-binary",
-      archiveMemberName: "agnix",
-      candidates: [{ url: "https://example.test/a", sha256: "0".repeat(64) }],
+      candidates: [
+        {
+          url: "https://example.test/a",
+          sha256: "0".repeat(64),
+          memberName: "agnix",
+        },
+      ],
       packageTarball: {
         url: "https://example.test/agnix.tgz",
         integrity: "sha512-x",

@@ -16,6 +16,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  inspectLinkedBinary,
+  linkedBinaryPaths,
+} from "../../../src/core/linked-binary.js";
+import {
   type RunSubprocessOptions,
   runSubprocess,
   type SubprocessResult,
@@ -133,7 +137,6 @@ function requestFor(
     packageName: PACKAGE_NAME,
     version: PACKAGE_VERSION,
     binaryPathInPackage: BINARY_PATH_IN_PACKAGE,
-    archiveMemberName: "agnix",
     candidates,
     packageTarball: { url: TARBALL_URL, integrity: npmIntegrity(TARBALL) },
   };
@@ -225,7 +228,11 @@ describe("createVerifiedBinaryInstaller", () => {
 
     await installer.install(
       requestFor([
-        { url: "https://example.test/gnu.tar.gz", sha256: sha256(archive) },
+        {
+          url: "https://example.test/gnu.tar.gz",
+          sha256: sha256(archive),
+          memberName: "agnix",
+        },
       ]),
     );
 
@@ -250,10 +257,12 @@ describe("createVerifiedBinaryInstaller", () => {
         {
           url: "https://example.test/gnu.tar.gz",
           sha256: sha256(gnuArchive),
+          memberName: "agnix",
         },
         {
           url: "https://example.test/musl.tar.gz",
           sha256: sha256(muslArchive),
+          memberName: "agnix",
         },
       ]),
     );
@@ -273,7 +282,11 @@ describe("createVerifiedBinaryInstaller", () => {
     await expect(
       installer.install(
         requestFor([
-          { url: "https://example.test/gnu.tar.gz", sha256: sha256(archive) },
+          {
+            url: "https://example.test/gnu.tar.gz",
+            sha256: sha256(archive),
+            memberName: "agnix",
+          },
         ]),
       ),
     ).rejects.toThrow(
@@ -291,8 +304,16 @@ describe("createVerifiedBinaryInstaller", () => {
     await expect(
       installer.install(
         requestFor([
-          { url: "https://example.test/gnu.tar.gz", sha256: sha256(archive) },
-          { url: "https://example.test/musl.tar.gz", sha256: sha256(archive) },
+          {
+            url: "https://example.test/gnu.tar.gz",
+            sha256: sha256(archive),
+            memberName: "agnix",
+          },
+          {
+            url: "https://example.test/musl.tar.gz",
+            sha256: sha256(archive),
+            memberName: "agnix",
+          },
         ]),
       ),
     ).rejects.toThrow("Downloading https://example.test/gnu.tar.gz failed");
@@ -318,7 +339,11 @@ describe("createVerifiedBinaryInstaller", () => {
     await expect(
       installer.install(
         requestFor([
-          { url: "https://example.test/huge.tar.gz", sha256: "0".repeat(64) },
+          {
+            url: "https://example.test/huge.tar.gz",
+            sha256: "0".repeat(64),
+            memberName: "agnix",
+          },
         ]),
       ),
     ).rejects.toThrow(
@@ -341,7 +366,13 @@ describe("createVerifiedBinaryInstaller", () => {
 
     await expect(
       installer.install(
-        requestFor([{ url: "https://example.test/a", sha256: "0".repeat(64) }]),
+        requestFor([
+          {
+            url: "https://example.test/a",
+            sha256: "0".repeat(64),
+            memberName: "agnix",
+          },
+        ]),
       ),
     ).rejects.toThrow("Downloading https://example.test/a failed: terminated");
   });
@@ -358,7 +389,13 @@ describe("createVerifiedBinaryInstaller", () => {
 
     await expect(
       installer.install(
-        requestFor([{ url: "https://example.test/a", sha256: "0".repeat(64) }]),
+        requestFor([
+          {
+            url: "https://example.test/a",
+            sha256: "0".repeat(64),
+            memberName: "agnix",
+          },
+        ]),
       ),
     ).rejects.toThrow("which is not a directory");
   });
@@ -372,7 +409,13 @@ describe("createVerifiedBinaryInstaller", () => {
 
     await expect(
       installer.install(
-        requestFor([{ url: "https://example.test/a", sha256: "0".repeat(64) }]),
+        requestFor([
+          {
+            url: "https://example.test/a",
+            sha256: "0".repeat(64),
+            memberName: "agnix",
+          },
+        ]),
       ),
     ).rejects.toThrow("does not hold an npm-installed package");
   });
@@ -389,7 +432,13 @@ describe("createVerifiedBinaryInstaller", () => {
 
     await expect(
       installer.install(
-        requestFor([{ url: "https://example.test/a", sha256: "0".repeat(64) }]),
+        requestFor([
+          {
+            url: "https://example.test/a",
+            sha256: "0".repeat(64),
+            memberName: "agnix",
+          },
+        ]),
       ),
     ).rejects.toThrow("npm root --global failed: npm is broken");
     expect(fetched).toBe(false);
@@ -403,7 +452,13 @@ describe("createVerifiedBinaryInstaller", () => {
 
     await expect(
       installer.install(
-        requestFor([{ url: "https://example.test/a", sha256: "0".repeat(64) }]),
+        requestFor([
+          {
+            url: "https://example.test/a",
+            sha256: "0".repeat(64),
+            memberName: "agnix",
+          },
+        ]),
       ),
     ).rejects.toThrow("not an absolute path");
   });
@@ -417,7 +472,13 @@ describe("createVerifiedBinaryInstaller", () => {
 
     await expect(
       installer.install(
-        requestFor([{ url: "https://example.test/a", sha256: "0".repeat(64) }]),
+        requestFor([
+          {
+            url: "https://example.test/a",
+            sha256: "0".repeat(64),
+            memberName: "agnix",
+          },
+        ]),
       ),
     ).rejects.toThrow("holds agnix 0.59.3, expected 0.58.0");
   });
@@ -434,7 +495,11 @@ describe("createVerifiedBinaryInstaller npm tarball", () => {
 
     await installer.install(
       requestFor([
-        { url: "https://example.test/a.tgz", sha256: sha256(archive) },
+        {
+          url: "https://example.test/a.tgz",
+          sha256: sha256(archive),
+          memberName: "agnix",
+        },
       ]),
     );
 
@@ -470,6 +535,78 @@ describe("createVerifiedBinaryInstaller npm tarball", () => {
         ([command, args]) => command === "npm" && args[0] === "install",
       ),
     ).toBe(false);
+  });
+});
+
+describe("createVerifiedBinaryInstaller installLinked", () => {
+  function linkedPaths() {
+    return linkedBinaryPaths(
+      "agnix",
+      PACKAGE_VERSION,
+      "agnix",
+      1000,
+      workDirectory,
+    );
+  }
+
+  it("installs the first verified binary that runs and links it", async () => {
+    const failing = await buildFixtureArchive(FAILING_BINARY);
+    const running = await buildFixtureArchive(RUNNING_BINARY);
+    const { run, calls } = createRunner();
+    const installer = createVerifiedBinaryInstaller({
+      run,
+      fetch: fetchServing({
+        "https://example.test/gnu.tar.gz": failing,
+        "https://example.test/musl.tar.gz": running,
+      }),
+    });
+    const paths = linkedPaths();
+
+    await installer.installLinked({
+      candidates: [
+        {
+          url: "https://example.test/gnu.tar.gz",
+          sha256: sha256(failing),
+          memberName: "agnix",
+        },
+        {
+          url: "https://example.test/musl.tar.gz",
+          sha256: sha256(running),
+          memberName: "agnix",
+        },
+      ],
+      paths,
+      version: PACKAGE_VERSION,
+    });
+
+    expect(await readFile(paths.binaryPath, "utf8")).toBe(RUNNING_BINARY);
+    expect(await inspectLinkedBinary(paths)).toBe("ours-current");
+    expect(calls.some(([command]) => command === "npm")).toBe(false);
+  });
+
+  it("leaves nothing behind when no candidate runs", async () => {
+    const failing = await buildFixtureArchive(FAILING_BINARY);
+    const installer = createVerifiedBinaryInstaller({
+      run: createRunner().run,
+      fetch: fetchServing({ "https://example.test/gnu.tar.gz": failing }),
+    });
+    const paths = linkedPaths();
+
+    await expect(
+      installer.installLinked({
+        candidates: [
+          {
+            url: "https://example.test/gnu.tar.gz",
+            sha256: sha256(failing),
+            memberName: "agnix",
+          },
+        ],
+        paths,
+        version: PACKAGE_VERSION,
+      }),
+    ).rejects.toThrow("No pinned agnix 0.58.0 build runs on this host");
+    expect(await inspectLinkedBinary(paths)).toBe("absent");
+    expect(existsSync(paths.toolsRoot)).toBe(false);
   });
 });
 

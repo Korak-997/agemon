@@ -8,7 +8,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -18,6 +18,10 @@ import {
   runFakeSubprocess,
   takeFakeVerifiedBinaryInstallRequests,
 } from "../../../src/core/fake-subprocess.js";
+import {
+  inspectLinkedBinary,
+  linkedBinaryPaths,
+} from "../../../src/core/linked-binary.js";
 import {
   AGNIX_VERSION,
   CODE_REVIEW_GRAPH_VERSION,
@@ -212,8 +216,13 @@ describe("createFakeVerifiedBinaryInstaller", () => {
       packageName: "agnix",
       version: AGNIX_VERSION,
       binaryPathInPackage: "bin/agnix-binary",
-      archiveMemberName: "agnix",
-      candidates: [{ url: "https://example.test/a", sha256: "0".repeat(64) }],
+      candidates: [
+        {
+          url: "https://example.test/a",
+          sha256: "0".repeat(64),
+          memberName: "agnix",
+        },
+      ],
       packageTarball: {
         url: "https://example.test/agnix.tgz",
         integrity: "sha512-x",
@@ -244,7 +253,6 @@ describe("createFakeVerifiedBinaryInstaller", () => {
       packageName: "agnix",
       version: AGNIX_VERSION,
       binaryPathInPackage: "bin/agnix-binary",
-      archiveMemberName: "agnix",
       candidates: [],
       packageTarball: {
         url: "https://example.test/agnix.tgz",
@@ -255,5 +263,56 @@ describe("createFakeVerifiedBinaryInstaller", () => {
       kind: "installed",
       differences: [],
     });
+  });
+
+  it("links a binary inside the throwaway HOME", async () => {
+    const paths = linkedBinaryPaths("linked-tool", "1.0.0", "linked-tool");
+
+    await createFakeVerifiedBinaryInstaller().installLinked({
+      candidates: [],
+      paths,
+      version: "1.0.0",
+    });
+
+    expect(await inspectLinkedBinary(paths)).toBe("ours-current");
+    await rm(paths.toolsRoot, { recursive: true, force: true });
+    await rm(paths.linkPath, { force: true });
+  });
+
+  it("refuses to link into the account's real home", async () => {
+    vi.stubEnv("HOME", userInfo().homedir);
+    const paths = linkedBinaryPaths("linked-tool", "1.0.0", "linked-tool");
+
+    try {
+      await expect(
+        createFakeVerifiedBinaryInstaller().installLinked({
+          candidates: [],
+          paths,
+          version: "1.0.0",
+        }),
+      ).rejects.toThrow(/throwaway HOME/u);
+      expect(existsSync(paths.linkPath)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("refuses a link path outside HOME", async () => {
+    const elsewhere = await mkdtemp(join(tmpdir(), "agemon-fake-elsewhere-"));
+    const paths = {
+      toolsRoot: join(elsewhere, "tools"),
+      binaryPath: join(elsewhere, "tools", "linked-tool"),
+      linkPath: join(elsewhere, "bin", "linked-tool"),
+    };
+
+    await expect(
+      createFakeVerifiedBinaryInstaller().installLinked({
+        candidates: [],
+        paths,
+        version: "1.0.0",
+      }),
+    ).rejects.toThrow(/throwaway HOME/u);
+    expect(existsSync(paths.binaryPath)).toBe(false);
+    await rm(elsewhere, { recursive: true, force: true });
   });
 });
