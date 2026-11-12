@@ -44,7 +44,10 @@ const { StateManifest } = await import("../../src/core/state-manifest.js");
 const { CLI_TOOL_BUNDLE } = await import(
   "../../src/plugins/cli-tool/catalog.js"
 );
-const { toolBuiltOnlyFor } = await import("../unit/cli-tool-fixture.js");
+const { toolBuiltOnlyFor, withOnlyTool } = await import(
+  "../unit/cli-tool-fixture.js"
+);
+const [AGNIX] = CLI_TOOL_BUNDLE;
 
 const fixturesRoot = join(process.cwd(), "test/fixtures");
 const NO_SERVICE_MANAGER: Partial<PlatformCapabilities> = {
@@ -206,10 +209,10 @@ describe("macOS", () => {
     );
   });
 
-  it("an Intel Mac skips cli-tool with a notice and keeps it in agemon.toml", async () => {
+  it("skips cli-tool with a notice when no tool has a pinned build, and keeps it in agemon.toml", async () => {
     platformOverride.value = INTEL_MAC;
 
-    expect(await runCli(["--yes"])).toBe(0);
+    expect(await withOnlyTool(AGNIX, () => runCli(["--yes"]))).toBe(0);
 
     expect(stderrLines).toContainEqual(
       expect.stringContaining(
@@ -225,10 +228,12 @@ describe("macOS", () => {
     ).toBe(false);
   });
 
-  it("refuses an explicit --only cli-tool on an Intel Mac", async () => {
+  it("refuses an explicit --only cli-tool when no tool has a pinned build", async () => {
     platformOverride.value = INTEL_MAC;
 
-    expect(await runCli(["--yes", "--only", "cli-tool"])).toBe(1);
+    expect(
+      await withOnlyTool(AGNIX, () => runCli(["--yes", "--only", "cli-tool"])),
+    ).toBe(1);
 
     expect(stderrText()).toContain(
       "--only cli-tool cannot run here: no pinned build for darwin-x64: agnix.",

@@ -18,6 +18,7 @@ export const MAX_SHARED_RESOURCE_HOLDERS = 1000;
 const SHARED_RESOURCE_IDS = [
   "pipx:code-review-graph",
   "npm-global:agnix",
+  "bin:gitleaks",
   "linger",
 ] as const;
 

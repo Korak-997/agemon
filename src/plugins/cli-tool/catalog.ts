@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { linkedBinaryPaths } from "../../core/linked-binary.js";
 import type {
   PinnedNpmTarball,
   VerifiedArchiveCandidate,
@@ -8,6 +10,8 @@ import {
   AGNIX_PACKAGE_FILE_SHA256,
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
+  GITLEAKS_RELEASE_ARCHIVE_SHA256,
+  GITLEAKS_VERSION,
 } from "../pins.js";
 import type { SharedResourceDeclaration } from "../types.js";
 
@@ -37,6 +41,7 @@ export interface CliToolBundleEntry {
 }
 
 const AGNIX_RELEASE_DOWNLOAD_URL = `https://github.com/agent-sh/agnix/releases/download/v${AGNIX_VERSION}`;
+const GITLEAKS_RELEASE_DOWNLOAD_URL = `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}`;
 
 function agnixArchive(
   asset: keyof typeof AGNIX_RELEASE_ARCHIVE_SHA256,
@@ -46,6 +51,29 @@ function agnixArchive(
     sha256: AGNIX_RELEASE_ARCHIVE_SHA256[asset],
     memberName: "agnix",
   };
+}
+
+function gitleaksArchive(
+  asset: keyof typeof GITLEAKS_RELEASE_ARCHIVE_SHA256,
+): PinnedReleaseArchive {
+  return {
+    url: `${GITLEAKS_RELEASE_DOWNLOAD_URL}/${asset}`,
+    sha256: GITLEAKS_RELEASE_ARCHIVE_SHA256[asset],
+    memberName: "gitleaks",
+  };
+}
+
+function linkedToolRemoveCommand(
+  toolId: string,
+  version: string,
+  binaryName: string,
+): string {
+  const { toolsRoot, linkPath } = linkedBinaryPaths(
+    toolId,
+    version,
+    binaryName,
+  );
+  return `rm ${linkPath} && rm -r ${join(toolsRoot, toolId)}`;
 }
 
 export const CLI_TOOL_BUNDLE: CliToolBundleEntry[] = [
@@ -76,6 +104,31 @@ export const CLI_TOOL_BUNDLE: CliToolBundleEntry[] = [
       manualRemoveCommand: "npm uninstall --global agnix",
       removalVerb: "uninstall",
       migratesFromRepoLedgers: true,
+    },
+  },
+  {
+    id: "gitleaks",
+    version: GITLEAKS_VERSION,
+    binaryName: "gitleaks",
+    install: { kind: "linked-binary" },
+    releaseArchivesByPlatform: {
+      "linux-x64": [gitleaksArchive("gitleaks_8.30.1_linux_x64.tar.gz")],
+      "linux-arm64": [gitleaksArchive("gitleaks_8.30.1_linux_arm64.tar.gz")],
+      "darwin-arm64": [gitleaksArchive("gitleaks_8.30.1_darwin_arm64.tar.gz")],
+      "darwin-x64": [gitleaksArchive("gitleaks_8.30.1_darwin_x64.tar.gz")],
+    },
+    sharedResource: {
+      id: "bin:gitleaks",
+      toolName: "gitleaks",
+      get manualRemoveCommand() {
+        return linkedToolRemoveCommand(
+          "gitleaks",
+          GITLEAKS_VERSION,
+          "gitleaks",
+        );
+      },
+      removalVerb: "remove",
+      migratesFromRepoLedgers: false,
     },
   },
 ];

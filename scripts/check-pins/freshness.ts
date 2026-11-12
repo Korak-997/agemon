@@ -147,3 +147,38 @@ export function pypiReleases(project: unknown): PublishedRelease[] {
   }
   return releases;
 }
+
+interface GithubRelease {
+  tag_name?: unknown;
+  published_at?: unknown;
+  draft?: unknown;
+  prerelease?: unknown;
+}
+
+export function githubReleases(releases: unknown): PublishedRelease[] {
+  if (!Array.isArray(releases)) {
+    throw unexpectedResponse("the GitHub releases response is not a list");
+  }
+  const published: PublishedRelease[] = [];
+  for (const release of releases as GithubRelease[]) {
+    if (release.draft !== false || release.prerelease !== false) {
+      continue;
+    }
+    const version =
+      typeof release.tag_name === "string"
+        ? release.tag_name.replace(/^v/u, "")
+        : "";
+    if (
+      !EXACT_VERSION_PATTERN.test(version) ||
+      typeof release.published_at !== "string"
+    ) {
+      continue;
+    }
+    published.push({
+      version,
+      publishedAt: release.published_at,
+      withdrawn: false,
+    });
+  }
+  return published;
+}

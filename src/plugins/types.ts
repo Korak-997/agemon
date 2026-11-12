@@ -105,7 +105,7 @@ export interface SharedResourceDeclaration {
   id: SharedResourceId;
   toolName: string;
   manualRemoveCommand: string;
-  removalVerb: "uninstall" | "disable";
+  removalVerb: "uninstall" | "disable" | "remove";
   migratesFromRepoLedgers: boolean;
 }
 

@@ -30,6 +30,21 @@ describe("pins", () => {
       expect(sha256, asset).toMatch(/^[0-9a-f]{64}$/u);
     }
   });
+
+  it("pins gitleaks to an exact version and every release archive by sha256", () => {
+    expect(pins.GITLEAKS_VERSION).toMatch(EXACT_VERSION_PATTERN);
+    const archiveHashes = Object.entries(pins.GITLEAKS_RELEASE_ARCHIVE_SHA256);
+    expect(archiveHashes.length).toBeGreaterThan(0);
+    for (const [asset, sha256] of archiveHashes) {
+      expect(asset).toMatch(
+        new RegExp(
+          `^gitleaks_${pins.GITLEAKS_VERSION}_[a-z0-9_]+\\.tar\\.gz$`,
+          "u",
+        ),
+      );
+      expect(sha256, asset).toMatch(/^[0-9a-f]{64}$/u);
+    }
+  });
 });
 
 describe("assets/tools lockfile", () => {

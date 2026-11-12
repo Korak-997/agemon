@@ -308,6 +308,20 @@ describe("machine ledger", () => {
     await expect(readFile(ledgerPath, "utf8")).rejects.toThrow();
   });
 
+  it("accepts a record for the linked gitleaks binary", async () => {
+    const { ledgerPath, repoA } = await createSandbox();
+    await writeLedger(
+      ledgerPath,
+      ledgerWith({
+        "bin:gitleaks": { origin: "pre-existing", holders: [repoA] },
+      }),
+    );
+
+    expect((await readMachineLedger()).resources).toEqual({
+      "bin:gitleaks": { origin: "pre-existing", holders: [repoA] },
+    });
+  });
+
   it("a null record deletes the resource", async () => {
     const { ledgerPath, repoA } = await createSandbox();
     await writeLedger(

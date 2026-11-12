@@ -100,5 +100,5 @@ export async function captureNonInteractiveRun(
   }
 
   const merged = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-  return `exit ${result.status}\n${normalize(merged, repoDirectory)}`;
+  return `exit ${result.status}\n${normalize(merged.replaceAll(homeDirectory, "<HOME>"), repoDirectory)}`;
 }

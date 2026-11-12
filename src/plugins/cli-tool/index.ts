@@ -289,7 +289,7 @@ function describeInstallOperation(
     targetPath:
       entry.install.kind === "npm-wrapped"
         ? entry.install.packageName
-        : paths.linkPath,
+        : entry.binaryName,
     action: "install-package",
     riskClass: "executes",
     requiresConsent: true,

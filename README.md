@@ -345,9 +345,11 @@ and OpenCode read both folders, so they may list a skill twice once copies exist
   On macOS, run agemon as your own user: it refuses to run as root there, because
   everything it installs belongs to one user. `inspect`, `status` and `plan` are
   read-only and run on any OS with Node.js.
-- agnix (the `cli-tool` capability) has pinned builds for Linux x64, Linux arm64 and
-  Apple Silicon Macs. On other machines (Intel Macs, x64 Node under Rosetta, other Linux
-  architectures) agemon skips `cli-tool` and says so; `agemon.toml` keeps it.
+- The `cli-tool` capability installs agnix and gitleaks. agnix has pinned builds for
+  Linux x64, Linux arm64 and Apple Silicon Macs; gitleaks also has one for Intel Macs.
+  agemon offers each tool only where it has a build and names the ones it skips (on an
+  Intel Mac, or x64 Node under Rosetta, that is agnix). Where neither has a build (other
+  Linux architectures) agemon skips `cli-tool` and says so; `agemon.toml` keeps it.
 - Without pipx, install it first: `sudo apt install pipx`, or on macOS
   `brew install pipx` with Homebrew's bin directory on `PATH`.
 - The daemon needs systemd on Linux, or launchd on macOS. Without systemd (most
@@ -764,6 +766,11 @@ uninstalling a global npm package or disabling user linger. It then asks once. N
   it tracked shared tools is kept unless you pass `--remove-shared code-review-graph,agnix`
   (or one of them); the kept line prints the manual uninstall command. See
   [Two Ledgers](docs/architecture-and-operations.md#two-ledgers).
+- gitleaks is shared the same way. agemon installs it under `~/.local/share/agemon-tools`
+  and links it as `~/.local/bin/gitleaks` (`/usr/local/lib/agemon-tools` and
+  `/usr/local/bin` as root). An existing `gitleaks` at that link path is never replaced
+  or removed: agemon uses it if it runs and refuses otherwise. `nuke` removes only the
+  link and directory agemon created.
 - skills: `nuke` removes `.claude/skills/<name>` itself, without the skills CLI and
   without network access, and only when its content is a version agemon installed; an
   edited copy is kept and named. A custom group's skill counts as installed by agemon
@@ -1087,7 +1094,8 @@ Every third-party tool is pinned to an exact version
 upstream commit it was copied from in its `NOTICE.md`. agnix is installed with
 `npm install --global --ignore-scripts agnix@<pin>`, so its own download script never runs;
 agemon then downloads the binary from the matching GitHub release itself and installs it only
-if the archive matches a sha256 pinned in `src/plugins/pins.ts`.
+if the archive matches a sha256 pinned in `src/plugins/pins.ts`. gitleaks comes straight from
+its GitHub release archive, checked against a sha256 pinned there too.
 
 Machine-level caches outside the repo, under `${XDG_STATE_HOME:-~/.local/state}/agemon/`
 (macOS: `~/Library/Application Support/agemon/`), are
@@ -1096,7 +1104,7 @@ kept by `nuke` because every repo on the machine shares them:
 - `tools/<hash>/`: the `skills` CLI, installed from `assets/tools/package-lock.json`
 - `skills-src/<commit>/`: the pinned checkout of a custom skill group's GitHub source that `skills add` installs from
 - `usage/<repo key>.json`: the numbers `agemon usage` has saved for a repository
-- `machine.json`: which repositories use code-review-graph, agnix and user linger, and who
+- `machine.json`: which repositories use code-review-graph, agnix, gitleaks and user linger, and who
   installed or enabled them
 
 ## Local Development
