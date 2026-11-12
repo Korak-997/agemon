@@ -39,13 +39,16 @@ agemon is plugin-driven and runs its plugins in this order:
    additional groups (design, security, code quality, architecture, self-review, performance,
    commit, workflow, output style, founder, team lead, GEO) are selected interactively, via `--skill-groups`, or skipped entirely in a
    non-interactive session — see [Skill Groups](#skill-groups).
-4. `agents`: installs the Claude Code subagents that come with an installed skill group into
-   `.claude/agents/` — see [Subagents](#subagents). It depends on `skills`, so `--only agents`
-   also runs `skills`.
+4. `agents`: installs a Haiku override of Claude Code's `Explore` agent, and the subagents that
+   come with an installed skill group, into `.claude/agents/` — see [Subagents](#subagents). It
+   depends on `skills`, so `--only agents` also runs `skills`.
 5. `subagent-default`: behind consent, sets a default model in `.claude/settings.json` for
    Claude Code subagents that name none — see [Default subagent model](#default-subagent-model).
-6. `cli-tool`: installs bundled global CLI tools.
-7. `master-prompt`: consolidates agent rule files and pointer files.
+6. `delegation-guard`: opt-in, never installed by default. Hooks that, in a chat where you turn
+   them on, cap searches in the main conversation and point Claude to `Explore` — see
+   [How agemon routes subagents](docs/subagent-routing.md#opt-in-the-delegation-guard).
+7. `cli-tool`: installs bundled global CLI tools.
+8. `master-prompt`: consolidates agent rule files and pointer files.
 
 Every mutating plugin action is recorded in `.agemon/state.json` and used by `nuke` for
 targeted reversal.
@@ -106,8 +109,14 @@ it. See [What a new version brings to a repository](#what-a-new-version-brings-t
 
 #### Subagents
 
-Some groups come with Claude Code subagents, which the `agents` capability installs into
-the project's `.claude/agents/` together with the group. Two groups have some:
+The `agents` capability installs Claude Code subagents into the project's `.claude/agents/`.
+One comes with every install:
+
+- `Explore` (`.claude/agents/explore.md`): a Haiku override of Claude Code's built-in search
+  agent, which otherwise runs on the Opus alias for subscription users. It needs no skill group.
+  If another agent file already declares `name: Explore`, agemon leaves it alone and says so.
+
+Two groups add their own, installed together with the group:
 
 - `geo-seo`: the five audit agents `geo-audit-ai-visibility`, `geo-audit-platform`,
   `geo-audit-technical`, `geo-audit-content` and `geo-audit-schema`, which `/geo audit`
@@ -115,10 +124,12 @@ the project's `.claude/agents/` together with the group. Two groups have some:
 - `workflow`: two role agents. `agemon-scout` runs on Haiku for read-only search, and
   `agemon-worker` runs on Sonnet for routine implementation and review.
 
+[How agemon routes subagents](docs/subagent-routing.md) shows the files and when routing helps.
+
 How they are set up:
 
-- Each agent file has only `name`, `description`, `tools` and `model`. `tools` is an
-  allowlist. The GEO agents get `WebFetch`, plus `Bash` (for one fixed, read-only `curl` you
+- Each agent file has only `name`, `description`, `tools` and `model`, plus `effort` and
+  `maxTurns` for `Explore` and the workflow role agents. `tools` is an allowlist. The GEO agents get `WebFetch`, plus `Bash` (for one fixed, read-only `curl` you
   approve per run) for the technical and schema agents. `agemon-scout` gets `Read`, `Grep` and
   `Glob`. `agemon-worker` also gets `Edit`, `Write` and `Bash`. Nothing is pre-approved, and no
   agent sets a permission mode, hooks or MCP servers.
@@ -130,7 +141,7 @@ How they are set up:
   overwritten without a decision (`[conflict_decisions] "agent-file:<name>" = "keep"`,
   `"replace"` or `"skip"`); a replaced file is backed up first; `nuke` removes the agents
   agemon created and restores the files it replaced.
-- An agent's group must be installed for the agent to be written; if you decline the group,
+- A group's agents are written only when the group is installed; if you decline the group,
   its agents are skipped.
 - `agemon status` shows one row per agent: managed, adopted (identical but not written by
   agemon on this machine), changed (your edit, kept), absent, or not a regular file. It
@@ -610,6 +621,10 @@ Yes, agemon works with Claude in three places, and each gets a different part of
 The plugin marketplace was added in agemon 6.1.0, but it doesn't need agemon installed at all.
 See [Plugins vs. an agemon install](#plugins-vs-an-agemon-install).
 
+In Claude Code, agemon also runs read-heavy subagent work on Haiku: it installs an `Explore`
+override and role agents with pinned models, and `agemon usage` shows what each subagent type
+cost and which model it ran on. See [How agemon routes subagents](docs/subagent-routing.md).
+
 ### claude.ai
 
 1. In claude.ai, open **Customize** > **Plugins**.
@@ -785,7 +800,9 @@ call any model.
 
 For each session it adds up what every response cost, then prices the subagents' same tokens at
 the session's own model. The difference is the estimated saving. It also shows how many sessions
-used subagents, and how many of those calls ran cheaper than the session's model.
+used subagents, how many subagent calls ran cheaper than the session's model, and how the cost
+splits between the main session and its subagents. For each subagent type it lists the models it
+ran on, its cost and its saving. If any `Explore` call ran on Opus or Fable, it says so and tells you to run `agemon`.
 
 - **It is an estimate, not a bill.** It uses API list prices, so on a subscription a saving means
   less of your usage limit spent, not less money paid. It assumes standard speed and global routing.
@@ -888,7 +905,9 @@ anything like that would be lost, the original is saved under `.agemon/backups/`
 names the file. Each such rewrite keeps its own saved original; a later one never overwrites an
 earlier one. It never happens with `--dry-run`, `--only` or `agemon plan`, or after a rollback. To
 opt out later, remove the capability from `capabilities`; because it is in `known_capabilities`,
-agemon does not ask again. Older agemon releases reject a file with `known_capabilities` or
+agemon does not ask again. The opt-in `delegation-guard` capability is left out of both lists
+when the file is first written, so the next interactive run offers it once; see
+[How agemon routes subagents](docs/subagent-routing.md#opt-in-the-delegation-guard). Older agemon releases reject a file with `known_capabilities` or
 `agents`, so upgrade agemon in CI before committing it. The rewrite is skipped while `/.agemon/` is
 not git-ignored, and a full `agemon nuke` deletes `.agemon/`, including that saved original.
 

@@ -970,6 +970,15 @@ Exit codes:
   2    drift found, consent missing, or applied but verification failed
   130  interrupted (143 for SIGTERM)`;
 
+const USAGE_REPORT_HELP = `
+The report shows:
+  main session vs subagents   the cost of each, and its share of the total
+  one row per subagent type   calls, the models they ran on, cost and saving
+  estimated saving            the subagents' tokens repriced at the session's model
+  top-tier Explore warning    shown when an Explore call ran on Opus or Fable
+--json emits the same summary, with mainCostUsd, subagentCostUsd, topTierExploreCalls
+and byAgentType[].models.`;
+
 export function createProgram(recordExitCode: (code: number) => void): Command {
   const program = new Command();
   const record =
@@ -1070,6 +1079,7 @@ export function createProgram(recordExitCode: (code: number) => void): Command {
       "only sessions active in this window, such as 30d",
     )
     .option("--json", "emit the summary as JSON")
+    .addHelpText("after", USAGE_REPORT_HELP)
     .action((_options: CliOptions, command: Command) =>
       record(runUsageCommand)({
         ...command.parent?.opts(),

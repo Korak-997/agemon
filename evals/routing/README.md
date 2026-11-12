@@ -16,7 +16,7 @@ and a pointer in `CLAUDE.md`. `--arms` picks the arms; the first one is the base
   `agemon-worker` in `.claude/agents/`, and `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` in the fixture's
   `.claude/settings.json`.
 - **C**: A plus code-review-graph in the scout. Not built yet (Phase 4).
-- **G**: A plus the delegation guard. Not built yet (Phase 5).
+- **G**: A plus the delegation guard, turned on with `AGEMON_GUARD=on`. Built, not run yet.
 
 The rules, agents and rules block are rendered from the current `src/`, so a results file holds what
 `agemonCommit` shipped, plus any uncommitted edits to them. The `workflow` skills that ship

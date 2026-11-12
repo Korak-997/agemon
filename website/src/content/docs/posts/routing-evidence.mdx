@@ -1,0 +1,90 @@
+---
+title: What agemon's routing eval has measured so far
+description: The method, the pre-registered pass rule and every result of agemon's subagent routing eval, including the run where no subagent was called.
+tableOfContents: false
+---
+
+<p class="post-lead">The method, the pass rule and every result of agemon's subagent routing eval. No saving is claimed yet.</p>
+
+agemon's [subagent routing](/start/subagent-routing/) is meant to make Claude Code cheaper
+without making it worse. This page records what the eval behind that claim has measured, run by
+run, including the runs that measured nothing useful. So far it supports no saving, and agemon
+claims none.
+
+## How the eval works
+
+The eval runs the same coding tasks headless in Claude Code under different routing setups,
+called arms, and grades every run without an LLM. It compares the arms on cost per solved task:
+an arm's total cost, failed runs included, divided by the runs that passed.
+
+The arms are:
+
+- **N**: no routing. agemon's rules without the subagent section, and no agent files.
+- **A**: agemon's defaults. The full rules, the Haiku `Explore` override, the workflow role
+  agents and the fallback subagent model.
+- **C**: A plus code-review-graph in the scout. Not built, because agemon doesn't register the
+  graph's MCP server yet.
+- **G**: A plus the [delegation guard](/start/subagent-routing/#opt-in-the-delegation-guard).
+  Built, but not run yet.
+
+There are 9 tasks: 6 on a small invented codebase (read, mechanical edit, bug fix and review) and
+3 read-heavy ones on a generated base of 441 modules and a 5,000-line log, where delegation is
+supposed to pay. Under the current rule, each arm runs every task 4 times.
+
+The pass rule was written on 2026-11-11, before any run under it. A candidate arm passes against
+the baseline only when it passes at most 1 fewer run on every task, and the 95% bootstrap
+interval of its cost per solved task minus the baseline's lies entirely below 0. With 4 runs per
+task, the eval can catch only large effects. The tasks, graders and rule are in
+[`evals/routing/README.md`](https://github.com/Korak-997/agemon/blob/master/evals/routing/README.md),
+and the harness is
+[`scripts/routing-eval/run.ts`](https://github.com/Korak-997/agemon/blob/master/scripts/routing-eval/run.ts).
+
+## Results
+
+Each table comes from a results file committed under `evals/routing/results/`. Costs are the
+CLI's `total_cost_usd` at API list prices, with Opus 5.5 as the session model.
+
+### 2026-11-06: no subagent was called in 36 runs
+
+`2026-11-06-full.json`, Claude Code 2.1.318, 6 small tasks, 2 runs each per arm. It used the
+earlier arms: N, R (rules and role agents) and RD (R plus the fallback model).
+
+| Arm | Passed | Cost | Cost per solved task | 95% interval | Agent calls by model |
+| --- | --- | --- | --- | --- | --- |
+| N | 12/12 | $3.29 | $0.27 | not computed | none |
+| R | 12/12 | $2.92 | $0.24 | not computed | none |
+| RD | 12/12 | $2.93 | $0.24 | not computed | none |
+
+This run didn't test routing. No arm started a subagent, so nearly all the spend was on Opus and
+no model choice took place. The tasks took 9 to 31 turns, small enough that Opus did them itself.
+The cost gap between the arms didn't come from routing either, and a smoke run of one task went
+the other way. Under the rule of that time, a cost cut of at least 20%, R and RD failed.
+
+### 2026-11-11: stopped after one run, no verdict
+
+`2026-11-11-n-vs-a.json` was the first N against A run under the new rule, at commit `5cc11ea`.
+The owner stopped it to save cost after one run: arm A passed `bug-invoice-total` for $0.15 with
+no subagent call. Arm N has no runs, so there is no verdict.
+
+## History
+
+- **2026-11-06**: the first full run. 36 runs, zero subagent calls, no routing measured.
+- **2026-11-11**: arms became data, 3 read-heavy tasks were added, and the pass rule moved to
+  cost per solved task with an interval. The paid N against A run was stopped after one run.
+- **2026-11-12**: the delegation guard was added as an opt-in capability. Its A against G run
+  hasn't been made.
+
+The next result will be added here dated, whatever it shows.
+
+## The wider evidence
+
+Most token-saving claims for coding agents haven't held up when someone else measured the bill.
+[Quesma](https://quesma.com/blog/does-rtk-make-ai-coding-cheaper/) ran an output-compression
+tool over 1,740 billed attempts: cost came out about 5% higher on one model and about 5% lower on
+another, with nearly all of that saving from one task.
+[Dasein](https://raw.githack.com/daseinlabs/code-compression-bench/master/FACT-VS-FICTION.md)
+benchmarked several such tools on cache-aware cost and states that it sells one of them.
+JetBrains found the same tool raised cost at low effort, as
+[summarised by TechTimes](https://www.techtimes.com/articles/321223/20260721/rtk-raises-claude-code-costs-low-effort-jetbrains-benchmark-debunks-6090-claim.htm).
+Those tests are why this eval reports cost per solved task, failed runs and intervals, and why
+this page claims nothing the results don't show.
