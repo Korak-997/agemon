@@ -1106,6 +1106,38 @@ describe("writes outside the project", () => {
     expect(writesOutsideProject(transcript, "/tmp/proj")).toEqual([]);
   });
 
+  it("ignores a write the session refused, but not one it carried out", () => {
+    const planFile = "/home/someone/.claude/plans/plan.md";
+    const call = (id: string) => ({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name: "Write",
+            input: { file_path: planFile },
+          },
+        ],
+      },
+    });
+    const result = (id: string, isError: boolean) => ({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: id, is_error: isError }],
+      },
+    });
+    const transcript = [
+      call("refused"),
+      result("refused", true),
+      call("accepted"),
+      result("accepted", false),
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n");
+    expect(writesOutsideProject(transcript, "/tmp/proj")).toEqual([planFile]);
+  });
+
   it("treats a parent-relative path as outside", () => {
     expect(
       writesOutsideProject(writeCall("Edit", "../x"), "/tmp/proj"),

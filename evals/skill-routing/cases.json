@@ -1,0 +1,87 @@
+[
+  {
+    "id": "bug-total",
+    "prompt": "The invoice total is off by one cent on some invoices. Find out why and fix it.",
+    "expected": ["agemon-root-cause"]
+  },
+  {
+    "id": "bug-flaky",
+    "prompt": "utils/invoice.test.ts fails about one run in five. Fix it.",
+    "expected": ["agemon-root-cause"]
+  },
+  {
+    "id": "claim-done",
+    "prompt": "I changed utils/invoice.ts. Confirm it's done and ready to merge.",
+    "expected": ["agemon-verify-before-done"]
+  },
+  {
+    "id": "claim-fixed",
+    "prompt": "I think the rounding bug is fixed now. Can you close it out?",
+    "expected": ["agemon-verify-before-done"]
+  },
+  {
+    "id": "ui-button",
+    "prompt": "Make the pay button in components/PayButton.vue look more polished and accessible.",
+    "expected": ["agemon-design"]
+  },
+  {
+    "id": "ui-page",
+    "prompt": "Design a settings page for this app with a profile section and billing section.",
+    "expected": ["agemon-design"]
+  },
+  {
+    "id": "commit-split",
+    "prompt": "Commit my changes. I touched the invoice util and also fixed a typo in app.vue.",
+    "expected": ["agemon-commit"]
+  },
+  {
+    "id": "sec-review",
+    "prompt": "Review server/api/invoice.get.ts for security problems.",
+    "expected": ["agemon-security", "agemon-security-audit"]
+  },
+  {
+    "id": "sec-input",
+    "prompt": "Is it safe how the invoice endpoint reads the id from the query string?",
+    "expected": ["agemon-security", "agemon-security-audit"]
+  },
+  {
+    "id": "vue-composable",
+    "prompt": "Add a composable that debounces the invoice search input.",
+    "expected": ["agemon-vue", "agemon-nuxt"]
+  },
+  {
+    "id": "nuxt-route",
+    "prompt": "Add a server route that returns the invoice PDF URL.",
+    "expected": ["agemon-nuxt", "agemon-nitro"]
+  },
+  {
+    "id": "browser-check",
+    "prompt": "Open the app in a browser and check the pay button actually renders and logs no console errors.",
+    "expected": ["agemon-webapp-testing"]
+  },
+  {
+    "id": "dead-code",
+    "prompt": "Are there unused exports or dependencies in this project?",
+    "expected": ["agemon-unused-code-check"]
+  },
+  {
+    "id": "neg-explain-code",
+    "prompt": "What does utils/invoice.ts export?",
+    "expected": []
+  },
+  {
+    "id": "neg-rename",
+    "prompt": "Rename the variable `amt` to `amount` in utils/invoice.ts.",
+    "expected": []
+  },
+  {
+    "id": "neg-question",
+    "prompt": "Which test runner does this project use?",
+    "expected": []
+  },
+  {
+    "id": "neg-typo",
+    "prompt": "Fix the typo 'Invocie' in app.vue.",
+    "expected": []
+  }
+]

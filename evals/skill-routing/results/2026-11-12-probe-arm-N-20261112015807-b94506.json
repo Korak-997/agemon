@@ -1,0 +1,33 @@
+{
+  "model": "claude-opus-5-5",
+  "effort": "default",
+  "agemonCommit": "8806ffa771a33da8641e198422904fd276700f2f",
+  "arm": "N",
+  "isolationNote": "Runs use only project and local settings, but account-synced skills stay listed; namespaced invocations are counted as foreign and left out of the outcome.",
+  "totalCostUsd": 0.140709,
+  "totalTurns": 3,
+  "summary": {
+    "runs": 1,
+    "recall": null,
+    "wrongSkillRate": null,
+    "falseTriggerRate": 0,
+    "foreignInvocations": 0,
+    "skillCalls": 0,
+    "meanCostUsd": 0.140709
+  },
+  "runs": [
+    {
+      "caseId": "neg-explain-code",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.140709,
+      "numTurns": 3,
+      "transcriptPath": "results/2026-11-12-probe-arm-N-20261112015807-b94506/transcripts/0.jsonl"
+    }
+  ]
+}

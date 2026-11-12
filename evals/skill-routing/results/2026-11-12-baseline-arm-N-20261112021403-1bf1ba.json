@@ -1,0 +1,512 @@
+{
+  "model": "claude-opus-5-5",
+  "effort": "default",
+  "agemonCommit": "8806ffa771a33da8641e198422904fd276700f2f",
+  "arm": "N",
+  "isolationNote": "Runs use only project and local settings, but account-synced skills stay listed; namespaced invocations are counted as foreign and left out of the outcome.",
+  "totalCostUsd": 6.854804900000003,
+  "totalTurns": 212,
+  "summary": {
+    "runs": 34,
+    "recall": 0.9230769230769231,
+    "wrongSkillRate": 0.038461538461538464,
+    "falseTriggerRate": 0,
+    "foreignInvocations": 0,
+    "skillCalls": 25,
+    "meanCostUsd": 0.2016119088235295
+  },
+  "runs": [
+    {
+      "caseId": "bug-total",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-root-cause"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.201251,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/0.jsonl"
+    },
+    {
+      "caseId": "bug-total",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-root-cause"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.26514139999999997,
+      "numTurns": 12,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/1.jsonl"
+    },
+    {
+      "caseId": "bug-flaky",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-root-cause"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.2825336,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/2.jsonl"
+    },
+    {
+      "caseId": "bug-flaky",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-root-cause"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.2353154,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/3.jsonl"
+    },
+    {
+      "caseId": "claim-done",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-verify-before-done"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.2157153,
+      "numTurns": 9,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/4.jsonl"
+    },
+    {
+      "caseId": "claim-done",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-verify-before-done"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.21577970000000002,
+      "numTurns": 10,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/5.jsonl"
+    },
+    {
+      "caseId": "claim-fixed",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-verify-before-done"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.23223480000000002,
+      "numTurns": 11,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/6.jsonl"
+    },
+    {
+      "caseId": "claim-fixed",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-verify-before-done"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.19916079999999997,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/7.jsonl"
+    },
+    {
+      "caseId": "ui-button",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-design"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.23809619999999998,
+      "numTurns": 8,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/8.jsonl"
+    },
+    {
+      "caseId": "ui-button",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-design"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.265713,
+      "numTurns": 9,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/9.jsonl"
+    },
+    {
+      "caseId": "ui-page",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-design"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.23687979999999997,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/10.jsonl"
+    },
+    {
+      "caseId": "ui-page",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-design"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.23191119999999998,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/11.jsonl"
+    },
+    {
+      "caseId": "commit-split",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-commit"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.16783,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/12.jsonl"
+    },
+    {
+      "caseId": "commit-split",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-commit"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.177157,
+      "numTurns": 7,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/13.jsonl"
+    },
+    {
+      "caseId": "sec-review",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-security-audit"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.20813109999999999,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/14.jsonl"
+    },
+    {
+      "caseId": "sec-review",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-security-audit"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.2634816,
+      "numTurns": 8,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/15.jsonl"
+    },
+    {
+      "caseId": "sec-input",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-security-audit"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.25628769999999995,
+      "numTurns": 8,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/16.jsonl"
+    },
+    {
+      "caseId": "sec-input",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-security"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.2296619,
+      "numTurns": 8,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/17.jsonl"
+    },
+    {
+      "caseId": "vue-composable",
+      "arm": "N",
+      "outcome": "miss",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.19370210000000002,
+      "numTurns": 9,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/18.jsonl"
+    },
+    {
+      "caseId": "vue-composable",
+      "arm": "N",
+      "outcome": "wrong-skill",
+      "invoked": [
+        "agemon-brainstorming"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.19787870000000002,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/19.jsonl"
+    },
+    {
+      "caseId": "nuxt-route",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-nuxt"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.23944369999999998,
+      "numTurns": 12,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/20.jsonl"
+    },
+    {
+      "caseId": "nuxt-route",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-nuxt"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.24475419999999998,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/21.jsonl"
+    },
+    {
+      "caseId": "browser-check",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-webapp-testing"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1892991,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/22.jsonl"
+    },
+    {
+      "caseId": "browser-check",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-webapp-testing"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1993665,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/23.jsonl"
+    },
+    {
+      "caseId": "dead-code",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-unused-code-check"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.16000450000000002,
+      "numTurns": 6,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/24.jsonl"
+    },
+    {
+      "caseId": "dead-code",
+      "arm": "N",
+      "outcome": "hit",
+      "invoked": [
+        "agemon-unused-code-check"
+      ],
+      "foreign": [],
+      "skillCalls": 1,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1565919,
+      "numTurns": 6,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/25.jsonl"
+    },
+    {
+      "caseId": "neg-explain-code",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1312398,
+      "numTurns": 3,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/26.jsonl"
+    },
+    {
+      "caseId": "neg-explain-code",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1385692,
+      "numTurns": 3,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/27.jsonl"
+    },
+    {
+      "caseId": "neg-rename",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.14297040000000003,
+      "numTurns": 4,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/28.jsonl"
+    },
+    {
+      "caseId": "neg-rename",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1420071,
+      "numTurns": 3,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/29.jsonl"
+    },
+    {
+      "caseId": "neg-question",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1619376,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/30.jsonl"
+    },
+    {
+      "caseId": "neg-question",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1630228,
+      "numTurns": 5,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/31.jsonl"
+    },
+    {
+      "caseId": "neg-typo",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1361697,
+      "numTurns": 3,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/32.jsonl"
+    },
+    {
+      "caseId": "neg-typo",
+      "arm": "N",
+      "outcome": "quiet",
+      "invoked": [],
+      "foreign": [],
+      "skillCalls": 0,
+      "announcedSkillCount": 88,
+      "errored": false,
+      "costUsd": 0.1355661,
+      "numTurns": 3,
+      "transcriptPath": "results/2026-11-12-baseline-arm-N-20261112021403-1bf1ba/transcripts/33.jsonl"
+    }
+  ]
+}
