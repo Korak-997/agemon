@@ -10,6 +10,8 @@ import {
   AGNIX_PACKAGE_FILE_SHA256,
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
+  AST_GREP_ARCHIVE_SHA256,
+  AST_GREP_VERSION,
   GITLEAKS_RELEASE_ARCHIVE_SHA256,
   GITLEAKS_VERSION,
 } from "../pins.js";
@@ -60,6 +62,17 @@ function gitleaksArchive(
     url: `${GITLEAKS_RELEASE_DOWNLOAD_URL}/${asset}`,
     sha256: GITLEAKS_RELEASE_ARCHIVE_SHA256[asset],
     memberName: "gitleaks",
+  };
+}
+
+function astGrepArchive(
+  packageName: keyof typeof AST_GREP_ARCHIVE_SHA256,
+): PinnedReleaseArchive {
+  const unscopedName = packageName.split("/")[1];
+  return {
+    url: `https://registry.npmjs.org/${packageName}/-/${unscopedName}-${AST_GREP_VERSION}.tgz`,
+    sha256: AST_GREP_ARCHIVE_SHA256[packageName],
+    memberName: "package/ast-grep",
   };
 }
 
@@ -125,6 +138,31 @@ export const CLI_TOOL_BUNDLE: CliToolBundleEntry[] = [
           "gitleaks",
           GITLEAKS_VERSION,
           "gitleaks",
+        );
+      },
+      removalVerb: "remove",
+      migratesFromRepoLedgers: false,
+    },
+  },
+  {
+    id: "ast-grep",
+    version: AST_GREP_VERSION,
+    binaryName: "ast-grep",
+    install: { kind: "linked-binary" },
+    releaseArchivesByPlatform: {
+      "linux-x64": [astGrepArchive("@ast-grep/cli-linux-x64-gnu")],
+      "linux-arm64": [astGrepArchive("@ast-grep/cli-linux-arm64-gnu")],
+      "darwin-arm64": [astGrepArchive("@ast-grep/cli-darwin-arm64")],
+      "darwin-x64": [astGrepArchive("@ast-grep/cli-darwin-x64")],
+    },
+    sharedResource: {
+      id: "bin:ast-grep",
+      toolName: "ast-grep",
+      get manualRemoveCommand() {
+        return linkedToolRemoveCommand(
+          "ast-grep",
+          AST_GREP_VERSION,
+          "ast-grep",
         );
       },
       removalVerb: "remove",

@@ -322,6 +322,20 @@ describe("machine ledger", () => {
     });
   });
 
+  it("accepts a record for the linked ast-grep binary", async () => {
+    const { ledgerPath, repoA } = await createSandbox();
+    await writeLedger(
+      ledgerPath,
+      ledgerWith({
+        "bin:ast-grep": { origin: "pre-existing", holders: [repoA] },
+      }),
+    );
+
+    expect((await readMachineLedger()).resources).toEqual({
+      "bin:ast-grep": { origin: "pre-existing", holders: [repoA] },
+    });
+  });
+
   it("a null record deletes the resource", async () => {
     const { ledgerPath, repoA } = await createSandbox();
     await writeLedger(

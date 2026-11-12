@@ -19,6 +19,7 @@ const SHARED_RESOURCE_IDS = [
   "pipx:code-review-graph",
   "npm-global:agnix",
   "bin:gitleaks",
+  "bin:ast-grep",
   "linger",
 ] as const;
 

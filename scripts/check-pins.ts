@@ -2,6 +2,7 @@ import { errorMessage } from "../src/core/error-message.js";
 import { printable } from "../src/core/untrusted-text.js";
 import {
   AGNIX_VERSION,
+  AST_GREP_VERSION,
   CODE_REVIEW_GRAPH_VERSION,
   GITLEAKS_VERSION,
 } from "../src/plugins/pins.js";
@@ -155,6 +156,24 @@ const PIN_CHECKS: PinCheck[] = [
     },
     bumpReminder:
       "a bump also needs, in src/plugins/pins.ts: the sha256 of every release archive (GITLEAKS_RELEASE_ARCHIVE_SHA256), computed from the downloaded files and cross-checked against gitleaks_<version>_checksums.txt; the asset names in src/plugins/cli-tool/catalog.ts carry the version too",
+  },
+  {
+    name: "ast-grep (npm)",
+    pinned: AST_GREP_VERSION,
+    inspect: async (now) => {
+      const releases = npmReleases(
+        await fetchJson("https://registry.npmjs.org/@ast-grep/cli"),
+      );
+      return {
+        newer: newerVersion(
+          AST_GREP_VERSION,
+          newestSettledVersion(releases, now),
+        ),
+        problems: pinnedReleaseProblems(releases, AST_GREP_VERSION),
+      };
+    },
+    bumpReminder:
+      "a bump also needs, in src/plugins/pins.ts: the sha256 of every @ast-grep/cli-<platform> tarball (AST_GREP_ARCHIVE_SHA256), computed from the downloaded files after checking each against its packument dist.integrity",
   },
 ];
 

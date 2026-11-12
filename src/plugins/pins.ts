@@ -41,3 +41,15 @@ export const GITLEAKS_RELEASE_ARCHIVE_SHA256 = {
   "gitleaks_8.30.1_darwin_x64.tar.gz":
     "dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709",
 } as const;
+
+export const AST_GREP_VERSION = "0.51.1";
+export const AST_GREP_ARCHIVE_SHA256 = {
+  "@ast-grep/cli-linux-x64-gnu":
+    "617128eff67d49d709ded54d9c089371d882ce11628c6d79c00add00aa38cb3c",
+  "@ast-grep/cli-linux-arm64-gnu":
+    "1b68729c99bf026f5b8deec3ebd52f2f721a157a45bb4375c61ca5acaaad13d5",
+  "@ast-grep/cli-darwin-arm64":
+    "9d2c21843cebaa11afff8a249703b04a764ef1e03c9f795447e83bec5e34230b",
+  "@ast-grep/cli-darwin-x64":
+    "bd227e54be0dd7f3f3543aa287ec90bed598f1e5e0e34102b371fca2ba1451ba",
+} as const;

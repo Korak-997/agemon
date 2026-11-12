@@ -85,6 +85,8 @@ describe("non-interactive output contract", () => {
              npm install --global --ignore-scripts of the sha512-pinned agnix@0.58.0 tarball; binary from the v0.58.0 GitHub release, sha256-pinned
         v  gitleaks                 [executes]
              sha256-pinned gitleaks 8.30.1 release binary, installed under <HOME>/.local/share/agemon-tools and linked as <HOME>/.local/bin/gitleaks
+        v  ast-grep                 [executes]
+             sha256-pinned ast-grep 0.51.1 release binary, installed under <HOME>/.local/share/agemon-tools and linked as <HOME>/.local/bin/ast-grep
 
       master-prompt
         +  AGENTS.md                [writes-config]
@@ -170,7 +172,7 @@ describe("non-interactive output contract", () => {
              +making any changes here. This file exists only because Windsurf looks for \`.windsurfrules\` specifically; it intentionally does not restate the rules.
 
       Summary
-        4 install · 1 register · 6 create
+        5 install · 1 register · 6 create
 
       Plan written to .agemon/plans/<PLAN_ID>.json
       Review, then re-run interactively or with --yes, or 'agemon apply --plan <PLAN_ID>'."
@@ -238,6 +240,8 @@ describe("non-interactive output contract", () => {
              npm install --global --ignore-scripts of the sha512-pinned agnix@0.58.0 tarball; binary from the v0.58.0 GitHub release, sha256-pinned
         v  gitleaks                 [executes]
              sha256-pinned gitleaks 8.30.1 release binary, installed under <HOME>/.local/share/agemon-tools and linked as <HOME>/.local/bin/gitleaks
+        v  ast-grep                 [executes]
+             sha256-pinned ast-grep 0.51.1 release binary, installed under <HOME>/.local/share/agemon-tools and linked as <HOME>/.local/bin/ast-grep
 
       master-prompt
         +  AGENTS.md                [writes-config]
@@ -323,7 +327,7 @@ describe("non-interactive output contract", () => {
              +making any changes here. This file exists only because Windsurf looks for \`.windsurfrules\` specifically; it intentionally does not restate the rules.
 
       Summary
-        4 install · 1 register · 6 create
+        5 install · 1 register · 6 create
 
       Plan written to .agemon/plans/<PLAN_ID>.json
       Review, then re-run interactively or with --yes, or 'agemon apply --plan <PLAN_ID>'."
@@ -340,14 +344,15 @@ describe("non-interactive output contract", () => {
       Installing 8 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash], explore [tools: Read, Grep, Glob]. Each agent can use only the tools listed.
       daemon hardening: strict
       <HOME>/.local/bin is not on your PATH; add it to use gitleaks
+      <HOME>/.local/bin is not on your PATH; add it to use ast-grep
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
-      ╭ [ok] Applied 32 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 33 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
       │     Skills             15 operations                                   │
       │     Subagents          8 operations                                    │
-      │     CLI tools          2 operations                                    │
+      │     CLI tools          3 operations                                    │
       │     Instruction files  5 operations                                    │
       │                                                                        │
       │   Next steps                                                           │
@@ -363,13 +368,13 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       Installing 8 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash], explore [tools: Read, Grep, Glob]. Each agent can use only the tools listed.
-      ╭ [ok] Applied 32 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 33 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
       │     Skills             15 operations                                   │
       │     Subagents          8 operations                                    │
-      │     CLI tools          2 operations                                    │
+      │     CLI tools          3 operations                                    │
       │     Instruction files  5 operations                                    │
       │                                                                        │
       │   Next steps                                                           │
@@ -438,6 +443,8 @@ describe("non-interactive output contract", () => {
              npm install --global --ignore-scripts of the sha512-pinned agnix@0.58.0 tarball; binary from the v0.58.0 GitHub release, sha256-pinned
         v  gitleaks                 [executes]
              sha256-pinned gitleaks 8.30.1 release binary, installed under <HOME>/.local/share/agemon-tools and linked as <HOME>/.local/bin/gitleaks
+        v  ast-grep                 [executes]
+             sha256-pinned ast-grep 0.51.1 release binary, installed under <HOME>/.local/share/agemon-tools and linked as <HOME>/.local/bin/ast-grep
 
       master-prompt
         +  AGENTS.md                [writes-config]
@@ -523,7 +530,7 @@ describe("non-interactive output contract", () => {
              +making any changes here. This file exists only because Windsurf looks for \`.windsurfrules\` specifically; it intentionally does not restate the rules.
 
       Summary
-        4 install · 1 register · 6 create
+        5 install · 1 register · 6 create
 
       Plan written to .agemon/plans/<PLAN_ID>.json"
     `);
@@ -611,6 +618,13 @@ describe("non-interactive output contract", () => {
             "capabilityId": "cli-tool",
             "resourceId": "package:agnix",
             "label": "agnix",
+            "state": "absent",
+            "detail": null
+          },
+          {
+            "capabilityId": "cli-tool",
+            "resourceId": "package:ast-grep",
+            "label": "ast-grep",
             "state": "absent",
             "detail": null
           },

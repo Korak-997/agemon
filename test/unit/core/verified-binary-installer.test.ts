@@ -13,7 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   inspectLinkedBinary,
@@ -70,15 +70,18 @@ async function writePackageManifest(version: string): Promise<void> {
 
 let fixtureCount = 0;
 
-async function buildFixtureArchive(binaryContents: string): Promise<Buffer> {
+async function buildFixtureArchive(
+  binaryContents: string,
+  memberName = "agnix",
+): Promise<Buffer> {
   fixtureCount += 1;
   const sourceDirectory = join(workDirectory, `fixture-${fixtureCount}`);
-  await mkdir(sourceDirectory);
-  await writeFile(join(sourceDirectory, "agnix"), binaryContents, {
+  await mkdir(dirname(join(sourceDirectory, memberName)), { recursive: true });
+  await writeFile(join(sourceDirectory, memberName), binaryContents, {
     mode: 0o755,
   });
   const archivePath = join(workDirectory, `fixture-${fixtureCount}.tar.gz`);
-  execFileSync("tar", ["-czf", archivePath, "-C", sourceDirectory, "agnix"]);
+  execFileSync("tar", ["-czf", archivePath, "-C", sourceDirectory, memberName]);
   return readFile(archivePath);
 }
 
@@ -165,6 +168,24 @@ describe("installVerifiedArchive", () => {
     expect(installed).toEqual({ binaryRuns: true });
     expect(await readFile(targetPath, "utf8")).toBe(RUNNING_BINARY);
     expect((await stat(targetPath)).mode & 0o777).toBe(0o755);
+    expect(await extractionLeftovers()).toEqual([]);
+  });
+
+  it("moves a binary nested in a directory of the archive into place", async () => {
+    const archive = await buildFixtureArchive(RUNNING_BINARY, "package/agnix");
+    const targetPath = join(packageDirectory, BINARY_PATH_IN_PACKAGE);
+
+    const installed = await installVerifiedArchive({
+      archive,
+      expectedSha256: sha256(archive),
+      archiveMemberName: "package/agnix",
+      extractionParent: packageDirectory,
+      targetPath,
+      run: createRunner().run,
+    });
+
+    expect(installed).toEqual({ binaryRuns: true });
+    expect(await readFile(targetPath, "utf8")).toBe(RUNNING_BINARY);
     expect(await extractionLeftovers()).toEqual([]);
   });
 

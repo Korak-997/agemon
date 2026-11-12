@@ -42,6 +42,7 @@ import {
   AGNIX_NPM_TARBALL,
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
+  AST_GREP_VERSION,
   GITLEAKS_VERSION,
 } from "../../../src/plugins/pins.js";
 import {
@@ -242,6 +243,7 @@ describe("cli-tool plugin", () => {
     ).toEqual([
       ["agnix", false],
       ["gitleaks", false],
+      ["ast-grep", false],
     ]);
 
     await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
@@ -546,6 +548,39 @@ describe("cli-tool plugin", () => {
     ).toContain("gitleaks");
   });
 
+  it("downloads ast-grep only from its pinned version's npm platform packages, as a linked binary", () => {
+    const astGrep = CLI_TOOL_BUNDLE.find((entry) => entry.id === "ast-grep");
+
+    expect(astGrep?.binaryName).toBe("ast-grep");
+    expect(astGrep?.install.kind).toBe("linked-binary");
+    expect(astGrep?.sharedResource.id).toBe("bin:ast-grep");
+    for (const platformKey of [
+      "linux-x64",
+      "linux-arm64",
+      "darwin-arm64",
+      "darwin-x64",
+    ]) {
+      const candidates = astGrep
+        ? resolveVerifiedArchiveCandidates(astGrep, platformKey)
+        : [];
+      expect(candidates, platformKey).toHaveLength(1);
+      for (const candidate of candidates) {
+        expect(candidate.url).toMatch(
+          /^https:\/\/registry\.npmjs\.org\/@ast-grep\/cli-/u,
+        );
+        expect(candidate.url).toContain(`-${AST_GREP_VERSION}.tgz`);
+        expect(candidate.sha256).toMatch(/^[0-9a-f]{64}$/u);
+        expect(candidate.memberName).toBe("package/ast-grep");
+      }
+    }
+  });
+
+  it("never links ast-grep's sg alias, which collides with the system's sg command", () => {
+    expect(CLI_TOOL_BUNDLE.map((entry) => entry.binaryName)).not.toContain(
+      "sg",
+    );
+  });
+
   it("refuses a platform without a pinned build", () => {
     expect(() => resolveVerifiedArchiveCandidates(AGNIX, "darwin-x64")).toThrow(
       "agnix has no pinned build for darwin-x64",
@@ -562,6 +597,7 @@ describe("cli-tool plugin", () => {
     expect(pinnedArchiveKeyFor(intelMac)).toBe("darwin-x64");
     expect(toolsWithPinnedBuild(intelMac).map((tool) => tool.id)).toEqual([
       "gitleaks",
+      "ast-grep",
     ]);
     expect(toolsWithoutPinnedBuild(intelMac).map((tool) => tool.id)).toEqual([
       "agnix",
@@ -572,7 +608,7 @@ describe("cli-tool plugin", () => {
         family: "darwin",
         arch: "arm64",
       }).map((tool) => tool.id),
-    ).toEqual(["agnix", "gitleaks"]);
+    ).toEqual(["agnix", "gitleaks", "ast-grep"]);
     expect(toolsWithoutPinnedBuild(LINUX_TEST_PLATFORM)).toEqual([]);
   });
 
@@ -588,7 +624,7 @@ describe("cli-tool plugin", () => {
         ((await cliToolPlugin.plan?.(context)) ?? []).map(
           (operation) => operation.resourceId,
         ),
-      ).toEqual(["package:agnix", "package:gitleaks"]);
+      ).toEqual(["package:agnix", "package:gitleaks", "package:ast-grep"]);
     } finally {
       CLI_TOOL_BUNDLE.pop();
     }
