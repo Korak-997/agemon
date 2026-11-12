@@ -1,4 +1,4 @@
-export type SkillRoutingArm = "N" | "I";
+export type SkillRoutingArm = "N";
 
 export interface SkillRoutingCase {
   id: string;

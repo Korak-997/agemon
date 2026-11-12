@@ -1,7 +1,8 @@
 # Skill-routing eval
 
-Measures which skill an agent invokes for a task, with agemon's skills installed. It decides whether
-the capability index ships as a second managed block in `AGENTS.md`. It measures routing only (the
+Measures which skill an agent invokes for a task, with agemon's skills installed. It was built to
+decide whether a capability index ships as a second managed block in `AGENTS.md`; it did not (see
+"Verdict"). It measures routing only (the
 `Skill` calls in each run), not whether the task gets done. Nothing here ships in the npm package.
 
 ## Arms
@@ -12,7 +13,9 @@ copied from the working tree `assets/skills/` into `.claude/skills/`, which matc
 `agemon --yes` installs with every group selected.
 
 - **N**: no index. The rules block and the skills, nothing else.
-- **I**: N plus the capability index block. Not built yet (Phase 5).
+
+Arm I (N plus the capability index block) was built in `4194ab5` and removed again without a run;
+see "Verdict".
 
 ## Cases
 
@@ -106,3 +109,17 @@ All four negative controls stayed quiet in both runs.
 
 Arm N's recall is 0.92, so arm I can be at most 0.08 higher. The ship rule's first condition
 (at least +0.15) can't be met on this corpus.
+
+## Verdict
+
+**2026-11-12: FAIL by construction; the index is dropped.** Arm I was not run. With arm N at 0.92
+recall, no arm-I result could pass condition 1, so a paid run could only confirm the failure.
+Adding cases until arm N misses would mean designing the corpus after seeing the baseline, which
+the pre-registered rule exists to prevent.
+
+The skill descriptions alone already route these tasks well, and the index would add about 1k
+tokens to every session in every installed repo. Its 40-row cap would also have hidden 26 of the 66
+built-in skills. The renderer, arm I and the per-skill route hints were removed.
+
+Revisit only with cases taken from real tasks where an agent missed a skill, and re-run arm N on
+the same corpus first.

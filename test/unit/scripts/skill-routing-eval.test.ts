@@ -132,7 +132,7 @@ describe("skill-routing harness", () => {
   });
 
   it("installs arm N with the rules block, every skill and no index", () => {
-    installArm(workRoot, "N");
+    installArm(workRoot);
     const agents = readFileSync(join(workRoot, "AGENTS.md"), "utf8");
     expect(agents).toContain("<!-- agemon:start:agent-rules -->");
     expect(agents).not.toContain("<!-- agemon:start:capability-index -->");
@@ -141,21 +141,6 @@ describe("skill-routing harness", () => {
         join(workRoot, ".claude", "skills", "agemon-root-cause", "SKILL.md"),
       ),
     ).toBe(true);
-  });
-
-  it("installs arm I with the capability index after the rules block", () => {
-    installArm(workRoot, "I");
-    const agents = readFileSync(join(workRoot, "AGENTS.md"), "utf8");
-    const rulesEnd = agents.indexOf("<!-- agemon:end:agent-rules -->");
-    const indexStart = agents.indexOf("<!-- agemon:start:capability-index -->");
-    expect(rulesEnd).toBeGreaterThan(0);
-    expect(indexStart).toBeGreaterThan(rulesEnd);
-    expect(agents).toContain("<!-- agemon:end:capability-index -->");
-    expect(agents).toContain(
-      "| A bug, failing test or unexpected behavior, before proposing a fix | `agemon-root-cause` |",
-    );
-    expect(agents).toContain("| `agnix` |");
-    expect(agents).toContain("`code-review-graph`");
   });
 
   it("loads a corpus whose expected skills all exist", () => {
