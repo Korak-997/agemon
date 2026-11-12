@@ -1,6 +1,4 @@
 const ENV_MEMBER = "env";
-// File reads decode invalid UTF-8 to this character, so writing the text back
-// would silently replace the user's original bytes.
 const UTF8_REPLACEMENT_CHARACTER = "\uFFFD";
 
 export type EnvKeyReading =
@@ -20,14 +18,14 @@ export type RemoveEnvKeyResult =
   | { kind: "conflict"; currentValue: string }
   | { kind: "invalid"; reason: string };
 
-interface ObjectMember {
+export interface ObjectMember {
   key: string;
   keyStart: number;
   valueStart: number;
   valueEnd: number;
 }
 
-function skipWhitespace(text: string, index: number): number {
+export function skipWhitespace(text: string, index: number): number {
   let position = index;
   while (/\s/u.test(text[position] ?? "")) {
     position += 1;
@@ -43,7 +41,7 @@ function endOfString(text: string, openingQuote: number): number {
   return position + 1;
 }
 
-function endOfContainer(text: string, opening: number): number {
+export function endOfContainer(text: string, opening: number): number {
   let depth = 0;
   let position = opening;
   do {
@@ -70,7 +68,7 @@ function endOfPrimitive(text: string, start: number): number {
   return position;
 }
 
-function endOfValue(text: string, start: number): number {
+export function endOfValue(text: string, start: number): number {
   const first = text[start];
   if (first === '"') {
     return endOfString(text, start);
@@ -80,8 +78,7 @@ function endOfValue(text: string, start: number): number {
     : endOfPrimitive(text, start);
 }
 
-// Callers pass text JSON.parse accepted, so this walk trusts its structure.
-function objectMembers(text: string, opening: number): ObjectMember[] {
+export function objectMembers(text: string, opening: number): ObjectMember[] {
   const members: ObjectMember[] = [];
   let position = skipWhitespace(text, opening + 1);
   while (text[position] !== "}") {
@@ -103,11 +100,11 @@ function objectMembers(text: string, opening: number): ObjectMember[] {
   return members;
 }
 
-function whitespaceBefore(text: string, index: number): string {
+export function whitespaceBefore(text: string, index: number): string {
   return /\s*$/u.exec(text.slice(0, index))?.[0] ?? "";
 }
 
-function replaceRange(
+export function replaceRange(
   text: string,
   start: number,
   end: number,
@@ -132,8 +129,10 @@ function renderEnvObject(
   return `{${memberGap}${oneIndent}${renderPair(key, value)}${memberGap}}`;
 }
 
-// JSON.parse keeps the last of duplicate keys, so the edits must target that one.
-function effectiveMemberIndex(members: ObjectMember[], key: string): number {
+export function effectiveMemberIndex(
+  members: ObjectMember[],
+  key: string,
+): number {
   return members.map((member) => member.key).lastIndexOf(key);
 }
 
@@ -171,19 +170,40 @@ function insertEnvKey(text: string, key: string, value: string): string {
   );
 }
 
-function removeMember(text: string, opening: number, key: string): string {
-  const members = objectMembers(text, opening);
-  const index = effectiveMemberIndex(members, key);
-  const member = members[index];
-  const previous = members[index - 1];
-  const next = members[index + 1];
+export interface TextSpan {
+  start: number;
+  end: number;
+}
+
+export function removeSpan(
+  text: string,
+  opening: number,
+  spans: TextSpan[],
+  index: number,
+): string {
+  const span = spans[index];
+  const previous = spans[index - 1];
+  const next = spans[index + 1];
   if (next !== undefined) {
-    return replaceRange(text, member.keyStart, next.keyStart, "");
+    return replaceRange(text, span.start, next.start, "");
   }
   if (previous !== undefined) {
-    return replaceRange(text, previous.valueEnd, member.valueEnd, "");
+    return replaceRange(text, previous.end, span.end, "");
   }
   return replaceRange(text, opening + 1, endOfContainer(text, opening) - 1, "");
+}
+
+export function removeMember(
+  text: string,
+  opening: number,
+  key: string,
+): string {
+  const members = objectMembers(text, opening);
+  const spans = members.map((member) => ({
+    start: member.keyStart,
+    end: member.valueEnd,
+  }));
+  return removeSpan(text, opening, spans, effectiveMemberIndex(members, key));
 }
 
 function deleteEnvKey(text: string, key: string): string {
@@ -198,14 +218,17 @@ function deleteEnvKey(text: string, key: string): string {
     : removeMember(text, env.valueStart, key);
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function readEnvKey(content: string | null, key: string): EnvKeyReading {
-  if (content === null) {
-    return { kind: "absent" };
-  }
+export type SettingsParse =
+  | { kind: "parsed"; settings: Record<string, unknown> }
+  | { kind: "invalid"; reason: string };
+
+export function parseSettings(content: string): SettingsParse {
   if (content.includes(UTF8_REPLACEMENT_CHARACTER)) {
     return {
       kind: "invalid",
@@ -219,9 +242,20 @@ export function readEnvKey(content: string | null, key: string): EnvKeyReading {
   } catch {
     return { kind: "invalid", reason: "it is not valid JSON" };
   }
-  if (!isPlainObject(settings)) {
-    return { kind: "invalid", reason: "its top level is not a JSON object" };
+  return isPlainObject(settings)
+    ? { kind: "parsed", settings }
+    : { kind: "invalid", reason: "its top level is not a JSON object" };
+}
+
+export function readEnvKey(content: string | null, key: string): EnvKeyReading {
+  if (content === null) {
+    return { kind: "absent" };
   }
+  const parsed = parseSettings(content);
+  if (parsed.kind === "invalid") {
+    return parsed;
+  }
+  const { settings } = parsed;
   if (!Object.hasOwn(settings, ENV_MEMBER)) {
     return { kind: "absent" };
   }

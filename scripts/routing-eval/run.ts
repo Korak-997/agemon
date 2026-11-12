@@ -15,6 +15,11 @@ import {
   agentFileStem,
   renderAgentFile,
 } from "../../src/plugins/agents/index.js";
+import {
+  DELEGATION_GUARD_SCRIPT_PATH,
+  readBundledDelegationGuardScript,
+  settingsWithDelegationGuardHooks,
+} from "../../src/plugins/delegation-guard/index.js";
 import { renderRuleFileContents } from "../../src/plugins/master-prompt/index.js";
 import {
   CORE_AGENTS,
@@ -112,7 +117,6 @@ const SESSION_MODELS: readonly SessionModel[] = ["opus", "sonnet"];
 const DEFAULT_SESSION_MODEL: SessionModel = "opus";
 const PENDING_ARM_INSTALLERS: Partial<Record<RoutingArm, string>> = {
   C: "arm C needs Phase 4",
-  G: "arm G needs Phase 5",
 };
 export const LARGE_BASE_SEED = 20261111;
 const ROUTING_ROOT = resolve(import.meta.dirname, "../../evals/routing");
@@ -124,6 +128,8 @@ const AGENT_RULES_FILE = "AGENTS.md";
 const POINTER_FILE = "CLAUDE.md";
 const SUBAGENT_RULES_SECTION = /## Subagent Models\n[\s\S]*?\n(?=## )/u;
 const SUBAGENT_DEFAULT_MODEL = "sonnet";
+// Headless runs cannot answer the guard's per-chat question, so arm G turns it on up front.
+const GUARD_TURNED_ON = { AGEMON_GUARD: "on" };
 const WORKFLOW_ROLE_AGENTS = findSkillGroup(WORKFLOW_GROUP)?.agents ?? [];
 const ROLE_AGENT_NAMES = WORKFLOW_ROLE_AGENTS.map((agent) => agent.name);
 const ROUTING_TOOLS = "Agent,Read,Glob,Grep,Write,Edit,Bash";
@@ -206,18 +212,24 @@ export async function installRouting(
       await renderAgentFile(agent),
     );
   }
+  const env = {
+    CLAUDE_CODE_SUBAGENT_MODEL: SUBAGENT_DEFAULT_MODEL,
+    ...(arm === "G" ? GUARD_TURNED_ON : {}),
+  };
+  const settings = `${JSON.stringify({ env }, null, 2)}\n`;
   writeFileSync(
     join(projectDirectory, ".claude", "settings.json"),
-    `${JSON.stringify(
-      { env: { CLAUDE_CODE_SUBAGENT_MODEL: SUBAGENT_DEFAULT_MODEL } },
-      null,
-      2,
-    )}\n`,
+    arm === "G" ? settingsWithDelegationGuardHooks(settings) : settings,
   );
+  if (arm === "G") {
+    mkdirSync(join(projectDirectory, ".claude", "hooks"), { recursive: true });
+    writeFileSync(
+      join(projectDirectory, DELEGATION_GUARD_SCRIPT_PATH),
+      await readBundledDelegationGuardScript(),
+    );
+  }
 }
 
-// A session with background subagents emits one result event each time it wakes. Their cost and
-// model usage are cumulative, but num_turns restarts, so turns must be added up.
 export function totalTurns(transcript: string): number {
   return transcriptEvents(transcript)
     .filter((event) => event.type === "result")
@@ -408,7 +420,6 @@ export async function runCell(
       passed,
       failure: assessment.reason,
       turns: totalTurns(claudeRun.transcript),
-      // A killed run never emits its result event, so charge the most it could have spent.
       costUsd: usage.costUsd ?? maxBudgetUsd,
       costIsCapEstimate: usage.costUsd === undefined ? true : undefined,
       costByModel: costByModel(claudeRun.transcript),

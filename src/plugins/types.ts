@@ -128,6 +128,7 @@ export interface AgemonPlugin {
   id: string;
   summary?: string;
   dependsOn?: string[];
+  optIn?: boolean;
   riskClass?: RiskClass;
   sharedResources?: SharedResourceDeclaration[];
   detect(ctx: Context): Promise<PluginPresence>;

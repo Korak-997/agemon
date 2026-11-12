@@ -23,6 +23,7 @@ export type ConsentGateId =
   | "remove-retired-skills"
   | "install-subagents"
   | "register-service"
+  | "install-hooks"
   | "write-config"
   | "touch-instruction-files"
   | "resolve-conflict";
@@ -65,6 +66,12 @@ const INSTRUCTION_FILE_ACTIONS: ReadonlySet<ProposedOperationAction> = new Set([
 
 type OperationGateId = Exclude<ConsentGateId, "workspace-isolation">;
 
+const HOOK_INSTALL_ACTIONS: ReadonlySet<ProposedOperationAction> = new Set([
+  "create",
+  "replace",
+  "merge-key",
+]);
+
 export const CUSTOM_SKILL_GROUP_RESOURCE_PREFIX = "custom-skill-group:";
 export const AGENT_FILE_RESOURCE_PREFIX = "agent-file:";
 export const RETIRED_SKILL_RESOURCE_PREFIX = "retired-skill:";
@@ -86,6 +93,7 @@ const OPERATION_GATE_ORDER: readonly OperationGateId[] = [
   "remove-retired-skills",
   "install-subagents",
   "register-service",
+  "install-hooks",
   "write-config",
   "touch-instruction-files",
   "resolve-conflict",
@@ -144,6 +152,7 @@ export function buildConsentGates(
             operations,
             forcesDiff:
               gateId === "install-custom-skills" ||
+              gateId === "install-hooks" ||
               gateId === "write-config" ||
               operations.some(
                 (operation) => operation.riskClass === "credential-adjacent",
@@ -258,6 +267,12 @@ function gateForOperation(
   if (operation.action === "register-service") {
     return "register-service";
   }
+  if (
+    operation.riskClass === "executes" &&
+    HOOK_INSTALL_ACTIONS.has(operation.action)
+  ) {
+    return "install-hooks";
+  }
   if (operation.action === "merge-key") {
     return "write-config";
   }
@@ -370,6 +385,8 @@ function operationGateSummary(
       return `Install ${describeSubagents(operations)}. Proceed?`;
     case "register-service":
       return `Register ${operations.length} background service unit(s) (${targets}). Proceed?`;
+    case "install-hooks":
+      return `Install Claude Code hooks that run code on your prompts and tool calls (${targets}). Exact diff shown. Proceed?`;
     case "write-config":
       return `Merge ${operations.length} config key set(s) into ${targets}. Sibling keys stay untouched; exact diff shown. Proceed?`;
     case "touch-instruction-files":

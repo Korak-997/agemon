@@ -69,6 +69,10 @@ export function resolveVendoredSkillPath(
   return join(resolvePackageRoot(), "assets", "skills", groupId, skillId);
 }
 
+export function resolveHookScriptPath(scriptName: string): string {
+  return join(resolvePackageRoot(), "assets", "hooks", scriptName);
+}
+
 export function resolveToolsManifestDirectory(): string {
   return join(resolvePackageRoot(), "assets", "tools");
 }

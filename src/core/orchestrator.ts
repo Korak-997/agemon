@@ -3,7 +3,10 @@ import { relative } from "node:path";
 import { discoverRepository } from "../inspect/discover.js";
 import { redactSecretsInText } from "../inspect/redact.js";
 import { verifyManagedState } from "../inspect/status.js";
-import { CORE_CAPABILITY_IDS } from "../plugins/index.js";
+import {
+  CORE_CAPABILITY_IDS,
+  DEFAULT_CAPABILITY_IDS,
+} from "../plugins/index.js";
 import type { AgemonPlugin, ProposedOperation } from "../plugins/types.js";
 import { renderPlan } from "../ui/plan-view.js";
 import { renderRunSummary } from "../ui/summary.js";
@@ -111,6 +114,16 @@ export interface BuildPlanOptions {
   agemonVersion: string;
 }
 
+function idsToInstall(
+  allPlugins: AgemonPlugin[],
+  onlyIds: string[] | undefined,
+): string[] {
+  return (
+    onlyIds ??
+    allPlugins.filter((plugin) => !plugin.optIn).map((plugin) => plugin.id)
+  );
+}
+
 function resolvePluginOrder(
   allPlugins: AgemonPlugin[],
   onlyIds: string[] | undefined,
@@ -165,7 +178,10 @@ export async function buildPlan(
   allPlugins: AgemonPlugin[],
   options: BuildPlanOptions,
 ): Promise<Plan> {
-  const plugins = resolvePluginOrder(allPlugins, options.only);
+  const plugins = resolvePluginOrder(
+    allPlugins,
+    idsToInstall(allPlugins, options.only),
+  );
 
   const operations: ProposedOperation[] = [];
   for (const plugin of plugins) {
@@ -264,7 +280,7 @@ async function persistDesiredStateConfig(
     capabilities: desiredCapabilityIds(plugins, options),
     skillGroups: ctx.skillGroupsOption ?? null,
     conflictDecisions,
-    knownCapabilities: CORE_CAPABILITY_IDS,
+    knownCapabilities: DEFAULT_CAPABILITY_IDS,
   });
 
   ctx.ui.info(
@@ -445,7 +461,10 @@ export async function reconcile(
     ctx.ui.info(line),
   );
   await assertNoInterruptedApply(ctx.cwd);
-  const plugins = resolvePluginOrder(allPlugins, options.only);
+  const plugins = resolvePluginOrder(
+    allPlugins,
+    idsToInstall(allPlugins, options.only),
+  );
 
   if (plugins.length === 0) {
     ctx.ui.info("Nothing to do — no capabilities selected.");

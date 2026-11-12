@@ -1,6 +1,9 @@
 import { rm } from "node:fs/promises";
 import { CLAUDE_PROBE_SPEC } from "../../adapters/claude-code.js";
-import { probeAgentInstallation } from "../../adapters/version-probe.js";
+import {
+  isVersionOlderThan,
+  probeAgentInstallation,
+} from "../../adapters/version-probe.js";
 import type { Context } from "../../core/context.js";
 import {
   MAX_READ_FILE_LABEL,
@@ -40,8 +43,6 @@ const SUBAGENT_MODEL_KEY = "CLAUDE_CODE_SUBAGENT_MODEL";
 const DEFAULT_SUBAGENT_MODEL = "sonnet";
 const RESOURCE_ID = `settings-key:env.${SUBAGENT_MODEL_KEY}`;
 const ACTION_TYPE_MANAGED_SETTINGS_KEY = "managed-settings-key";
-// Before this release the variable outranked per-call and frontmatter models,
-// so writing it would silently move a pinned Opus agent onto the default.
 const FIRST_CLI_WHERE_PINS_OUTRANK_THE_DEFAULT = "2.1.251";
 
 type SettingsState =
@@ -80,14 +81,6 @@ async function readSettingsState(ctx: Context): Promise<SettingsState> {
     : { kind: "usable", contents, reading };
 }
 
-function isOlderThanPinSafeCli(version: string): boolean {
-  return (
-    version.localeCompare(FIRST_CLI_WHERE_PINS_OUTRANK_THE_DEFAULT, "en", {
-      numeric: true,
-    }) < 0
-  );
-}
-
 async function reasonClaudeCodeCannotTakeDefault(
   ctx: Context,
 ): Promise<string | null> {
@@ -95,7 +88,7 @@ async function reasonClaudeCodeCannotTakeDefault(
   if (version === null) {
     return `agemon could not read a Claude Code version, so it can't tell whether a default subagent model would override pinned ones (that stopped in ${FIRST_CLI_WHERE_PINS_OUTRANK_THE_DEFAULT}); no default written`;
   }
-  return isOlderThanPinSafeCli(version)
+  return isVersionOlderThan(version, FIRST_CLI_WHERE_PINS_OUTRANK_THE_DEFAULT)
     ? `Claude Code ${version} is older than ${FIRST_CLI_WHERE_PINS_OUTRANK_THE_DEFAULT}, where a default subagent model would override pinned ones; no default written`
     : null;
 }

@@ -27,6 +27,7 @@ const RECORDABLE_DIRECTORIES: readonly string[] = [
   ".claude",
   ".claude/skills",
   ".claude/agents",
+  ".claude/hooks",
   ".agents",
   ".agents/skills",
 ];

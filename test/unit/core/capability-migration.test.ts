@@ -71,6 +71,7 @@ describe("capabilities an existing agemon.toml can still take", () => {
     expect(findCapabilityOffers(config, getRegisteredPlugins())).toEqual([
       { kind: "capability", id: "agents", state: "new" },
       { kind: "capability", id: "subagent-default", state: "new" },
+      { kind: "capability", id: "delegation-guard", state: "new" },
       { kind: "capability", id: "cli-tool", state: "declined" },
     ]);
   });
@@ -84,7 +85,13 @@ describe("capabilities an existing agemon.toml can still take", () => {
       findCapabilityOffers(config, getRegisteredPlugins()).map(
         (offer) => offer.id,
       ),
-    ).toEqual(["crg", "skills", "subagent-default", "cli-tool"]);
+    ).toEqual([
+      "crg",
+      "skills",
+      "subagent-default",
+      "delegation-guard",
+      "cli-tool",
+    ]);
   });
 
   it("keeps a capability declined once the file says agemon knew it", async () => {
@@ -116,6 +123,7 @@ describe("capabilities an existing agemon.toml can still take", () => {
       "daemon:new",
       "skills:new",
       "subagent-default:new",
+      "delegation-guard:new",
       "cli-tool:new",
       "master-prompt:new",
     ]);
@@ -129,6 +137,7 @@ describe("capabilities an existing agemon.toml can still take", () => {
 
     expect(findCapabilityOffers(config, withoutAgents)).toEqual([
       { kind: "capability", id: "subagent-default", state: "new" },
+      { kind: "capability", id: "delegation-guard", state: "new" },
       { kind: "capability", id: "cli-tool", state: "declined" },
     ]);
   });

@@ -280,13 +280,35 @@ describe("routing eval", () => {
       });
     });
 
-    it('arms C and G throw "arm C needs Phase 4" / "arm G needs Phase 5" until their installers exist', async () => {
+    it('arm C throws "arm C needs Phase 4" until its installer exists', async () => {
       await expect(installRouting(workRoot, "C")).rejects.toThrow(
         "arm C needs Phase 4",
       );
-      await expect(installRouting(workRoot, "G")).rejects.toThrow(
-        "arm G needs Phase 5",
+    });
+
+    it("arm G adds the delegation guard to arm A, turned on without asking", async () => {
+      await installRouting(workRoot, "G");
+      expect(readFileSync(join(workRoot, EXPLORE_AGENT), "utf8")).toContain(
+        "model: haiku",
       );
+      expect(
+        readFileSync(
+          join(workRoot, ".claude/hooks/agemon-delegation-guard.mjs"),
+          "utf8",
+        ),
+      ).toBe(readFileSync("assets/hooks/agemon-delegation-guard.mjs", "utf8"));
+      const settings = JSON.parse(
+        readFileSync(join(workRoot, SETTINGS), "utf8"),
+      );
+      expect(settings.env).toEqual({
+        CLAUDE_CODE_SUBAGENT_MODEL: "sonnet",
+        AGEMON_GUARD: "on",
+      });
+      expect(Object.keys(settings.hooks)).toEqual([
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+      ]);
     });
   });
 

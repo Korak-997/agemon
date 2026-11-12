@@ -10,6 +10,10 @@ const SEMVER_PATTERN = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/;
 export function extractSemverVersion(stdout: string): string | null {
   return SEMVER_PATTERN.exec(stdout)?.[0] ?? null;
 }
+
+export function isVersionOlderThan(version: string, minimum: string): boolean {
+  return version.localeCompare(minimum, "en", { numeric: true }) < 0;
+}
 export async function resolveExecutableAbsolutePath(
   binaryName: string,
   pathEnv: string,

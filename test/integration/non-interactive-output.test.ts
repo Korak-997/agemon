@@ -622,6 +622,13 @@ describe("non-interactive output contract", () => {
             "detail": null
           },
           {
+            "capabilityId": "delegation-guard",
+            "resourceId": "hook-script",
+            "label": "delegation guard hooks",
+            "state": "absent",
+            "detail": "agemon could not read a Claude Code version, so it can't tell whether hooks can tell subagents apart (that started in 2.1.251); no guard installed"
+          },
+          {
             "capabilityId": "skills",
             "resourceId": "skill-groups:none",
             "label": "skill groups",
