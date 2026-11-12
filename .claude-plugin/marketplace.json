@@ -76,6 +76,13 @@
       "skills": ["./"]
     },
     {
+      "name": "agemon-motion",
+      "description": "Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system.",
+      "source": "./assets/skills/motion",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
       "name": "agemon-teamlead",
       "description": "Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync.",
       "source": "./assets/skills/team-lead",

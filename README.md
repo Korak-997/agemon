@@ -80,6 +80,7 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 | `commit` | `agemon-commit` | Staging review, commit message structure, and splitting unrelated changes into separate commits. |
 | `nuxt-vue` | `agemon-vue`, `agemon-nuxt`, `agemon-nitro`, `agemon-pinia`, `agemon-vite`, `agemon-vitest`, `agemon-unocss` | Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills, generated from each project's own docs at a pinned commit; they describe the versions current then (Nuxt 5), so check them against your project's versions. |
 | `browser-testing` | `agemon-webapp-testing` | Tests a local web app in a real browser with Python Playwright scripts: starts the dev server, inspects the rendered page, captures screenshots and console logs. Needs Python 3 and Playwright (see [Requirements](#requirements)); the agent runs Python and your server commands, so expect permission prompts. |
+| `motion` | `agemon-motion-design` | Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system. |
 | `workflow` | `agemon-brainstorming`, `agemon-writing-plans`, `agemon-executing-plans`, `agemon-subagent-driven-development`, `agemon-test-driven-development`, `agemon-using-git-worktrees`, `agemon-dispatching-parallel-agents`, `agemon-finishing-a-development-branch` | Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Comes with the `agemon-scout` and `agemon-worker` [subagents](#subagents). Pairs with `self-review`. |
 | `output-style` | `agemon-adhd` | On request (`/agemon-adhd`), replies lead with the next action, number their steps, restate progress, and skip preamble and tangents. |
 | `founder` | `agemon-founder-board`, `agemon-founder-competitors`, `agemon-founder-consumer`, `agemon-founder-pricing`, `agemon-founder-offer`, `agemon-founder-cfo`, `agemon-founder-marketing`, `agemon-founder-brand`, `agemon-founder-ops`, `agemon-founder-launch`, `agemon-founder-plan` | Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict. The panel is simulated buyers, not customers. The scripts need Python 3.8 or newer. |
@@ -1166,7 +1167,7 @@ Useful sandbox flags:
 
 ## Vendored Skills & Attribution
 
-The `essentials`, `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`, `nuxt-vue`, `browser-testing`,
+The `essentials`, `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`, `nuxt-vue`, `browser-testing`, `motion`,
 `workflow`, `output-style`, `founder`, `teamlead` and `geo-seo` skill groups (see [Skill Groups](#skill-groups)) are vendored under
 `assets/skills/<group>/<skill>/`.
 Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
@@ -1195,6 +1196,7 @@ that already have those skills recognise them and can update them.
 | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | `verification-before-completion`, `receiving-code-review`, `requesting-code-review`, `systematic-debugging` | [obra/superpowers](https://github.com/obra/superpowers) (cherry-picked; not a full vendor of that framework) |
 | `agemon-vue`, `agemon-nuxt`, `agemon-nitro`, `agemon-pinia`, `agemon-vite`, `agemon-vitest`, `agemon-unocss` | the same names without `agemon-` | [antfu/skills](https://github.com/antfu/skills) (generated from each project's docs; the Vue docs are CC-BY-4.0) |
 | `agemon-webapp-testing` | `webapp-testing` | [anthropics/skills](https://github.com/anthropics/skills) (Apache-2.0) |
+| `agemon-motion-design` | `motion-design` | [LottieFiles/motion-design-skill](https://github.com/LottieFiles/motion-design-skill) |
 | `agemon-clean-code` | `karpathy-guidelines` | [swarmclawai/andrej-karpathy-skills](https://github.com/swarmclawai/andrej-karpathy-skills) |
 | `agemon-house-rules`, `agemon-unused-code-check`, `agemon-performance`, `agemon-commit`, `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | — | Original — authored for this project, `agemon-house-rules` distilled from this repo's own `AGENTS.md`. The `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` keep their original `skill-*` names rather than the `agemon-*` convention. |
 

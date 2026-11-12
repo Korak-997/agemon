@@ -238,6 +238,14 @@ export const SKILL_GROUPS: SkillGroup[] = [
     skills: [vendoredSkill("browser-testing", "agemon-webapp-testing")],
   },
   {
+    id: "motion",
+    label: "Motion",
+    description:
+      "Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system.",
+    defaultSelected: false,
+    skills: [vendoredSkill("motion", "agemon-motion-design")],
+  },
+  {
     id: "teamlead",
     label: "Team Lead",
     description:

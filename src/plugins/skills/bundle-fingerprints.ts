@@ -95,6 +95,9 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
       "380dc8813cc2c06b767d79d0216a42e965a48fff01de8dfabe8976aca0f22721",
       "b127f8a1c793cefced3460873ce68290e78eb50a238c1aa94d819c9d9667b087",
     ],
+    "agemon-motion-design": [
+      "8e9e1cdbad561427def365a34ee2d82479abee3b65b10bbcd5b861b49b101487",
+    ],
     "agemon-nitro": [
       "d4b265233c884204fc4a4192f5f96b4d13f2a31121e3dfc4e7f7a5e77b065ead",
       "ec0a4f30e9580cecb6d2ab4371c32986749d478c2f0bc381c74b3f41faf4eb05",

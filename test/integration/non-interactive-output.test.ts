@@ -346,11 +346,11 @@ describe("non-interactive output contract", () => {
       <HOME>/.local/bin is not on your PATH; add it to use gitleaks
       <HOME>/.local/bin is not on your PATH; add it to use ast-grep
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
-      ╭ [ok] Applied 33 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 34 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             15 operations                                   │
+      │     Skills             16 operations                                   │
       │     Subagents          8 operations                                    │
       │     CLI tools          3 operations                                    │
       │     Instruction files  5 operations                                    │
@@ -368,11 +368,11 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       Installing 8 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash], explore [tools: Read, Grep, Glob]. Each agent can use only the tools listed.
-      ╭ [ok] Applied 33 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 34 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             15 operations                                   │
+      │     Skills             16 operations                                   │
       │     Subagents          8 operations                                    │
       │     CLI tools          3 operations                                    │
       │     Instruction files  5 operations                                    │

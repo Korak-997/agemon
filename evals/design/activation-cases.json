@@ -71,5 +71,35 @@
     "prompt": "Check this component against accessibility and web interface best practices and list every violation.",
     "expected": "no-trigger",
     "kind": "guidelines-boundary"
+  },
+  {
+    "prompt": "Add an entrance animation to the modal so it eases in instead of popping open.",
+    "expected": "trigger",
+    "kind": "motion"
+  },
+  {
+    "prompt": "The toast notifications appear and vanish abruptly. Make them slide in and fade out smoothly.",
+    "expected": "trigger",
+    "kind": "motion"
+  },
+  {
+    "prompt": "Stagger the cards on the dashboard so they animate in one after another on page load.",
+    "expected": "trigger",
+    "kind": "motion"
+  },
+  {
+    "prompt": "Pick durations and easing curves for our button hover, press and loading states.",
+    "expected": "trigger",
+    "kind": "motion"
+  },
+  {
+    "prompt": "Our animation library bumped a major version and the build fails on its import. Update the import paths.",
+    "expected": "no-trigger",
+    "kind": "motion"
+  },
+  {
+    "prompt": "Write a unit test that checks the carousel advances to the next slide after five seconds.",
+    "expected": "no-trigger",
+    "kind": "motion"
   }
 ]

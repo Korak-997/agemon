@@ -36,6 +36,7 @@ export interface EvalResults<Case> {
   isolationNote: string;
   totalCostUsd?: number;
   totalTurns?: number;
+  extraGroups?: string[];
   contaminated?: boolean;
   aborted?: string;
   cases: Case[];
@@ -57,6 +58,7 @@ export const EVAL_ROOT = join(REPOSITORY_ROOT, "evals", "design");
 export const DEFAULT_SKILL_REF = "c056fdc41d9eef734b85239bb21b5560e081cb3c";
 export const WORKING_TREE_REF = "WORKTREE";
 export const PROJECT_DESIGN_SKILL = "agemon-design";
+export const PROJECT_MOTION_SKILL = "agemon-motion-design";
 export const DESIGN_SKILL_PATTERN = /(^|:)agemon-design(-\w+)?$/u;
 export const ACTIVATION_TOOLS = "Skill,Read,Glob,Grep";
 export const BUILD_TOOLS = "Skill,Read,Glob,Grep,Write,Edit";
@@ -128,6 +130,10 @@ export function designSkillNames(names: string[]): string[] {
   return names.filter((name) => DESIGN_SKILL_PATTERN.test(name));
 }
 
+export function parseExtraGroups(value: string | undefined): string[] {
+  return value ? value.split(",").filter(Boolean) : [];
+}
+
 function gitBuffer(args: string[]): Buffer {
   return execFileSync("git", args, {
     cwd: REPOSITORY_ROOT,
@@ -171,6 +177,7 @@ export function installArm(
   projectDirectory: string,
   arm: Arm,
   skillRef = DEFAULT_SKILL_REF,
+  extraGroups: string[] = [],
 ): void {
   if (skillRef.startsWith("-"))
     throw new Error("--skill-ref must be a git ref");
@@ -186,6 +193,11 @@ export function installArm(
     } else {
       installSkillGroupFromRef(skillsDirectory, group, skillRef);
     }
+  }
+  for (const group of extraGroups) {
+    cpSync(join(REPOSITORY_ROOT, SKILLS_ROOT, group), skillsDirectory, {
+      recursive: true,
+    });
   }
 }
 
