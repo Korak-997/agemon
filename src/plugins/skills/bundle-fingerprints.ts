@@ -155,6 +155,9 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     "agemon-vue": [
       "c9702ff7d8aaf823d93e10a1add6a366a5adfad4714b30517cbf847ee7727bf1",
     ],
+    "agemon-webapp-testing": [
+      "c50a039d18ff70c651391010b29b5366297d81756cd5f34276e863d71b61c0fe",
+    ],
     "agemon-writing-plans": [
       "2bec0bb492e14735f9e24d8aa6d4a0970949e701d611a198568a36a7f7c7616f",
     ],

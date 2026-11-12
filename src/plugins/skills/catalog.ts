@@ -229,6 +229,14 @@ export const SKILL_GROUPS: SkillGroup[] = [
     ],
   },
   {
+    id: "browser-testing",
+    label: "Browser Testing",
+    description:
+      "Test a local web app in a real browser by writing Python Playwright scripts: start the dev server, inspect the rendered page, capture screenshots and console logs. Needs Python 3 and Playwright with its browsers, which agemon does not install. The agent runs Python and your server commands, so expect permission prompts.",
+    defaultSelected: false,
+    skills: [vendoredSkill("browser-testing", "agemon-webapp-testing")],
+  },
+  {
     id: "teamlead",
     label: "Team Lead",
     description:

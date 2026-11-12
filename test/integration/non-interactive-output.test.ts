@@ -336,11 +336,11 @@ describe("non-interactive output contract", () => {
       Installing 8 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash], explore [tools: Read, Grep, Glob]. Each agent can use only the tools listed.
       daemon hardening: strict
       Wrote agemon.toml — commit it so teammates and CI reconcile the same way.
-      ╭ [ok] Applied 30 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 31 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             14 operations                                   │
+      │     Skills             15 operations                                   │
       │     Subagents          8 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
@@ -358,11 +358,11 @@ describe("non-interactive output contract", () => {
     ).toMatchInlineSnapshot(`
       "exit 0
       Installing 8 Claude Code subagent definition(s) into .claude/agents: geo-audit-ai-visibility [tools: WebFetch], geo-audit-platform [tools: WebFetch], geo-audit-technical [tools: WebFetch, Bash], geo-audit-content [tools: WebFetch], geo-audit-schema [tools: WebFetch, Bash], agemon-scout [tools: Read, Grep, Glob], agemon-worker [tools: Read, Grep, Glob, Edit, Write, Bash], explore [tools: Read, Grep, Glob]. Each agent can use only the tools listed.
-      ╭ [ok] Applied 30 operations · environment verified ─────────────────────╮
+      ╭ [ok] Applied 31 operations · environment verified ─────────────────────╮
       │                                                                        │
       │     code-review-graph  1 operation                                     │
       │     Background service 1 operation                                     │
-      │     Skills             14 operations                                   │
+      │     Skills             15 operations                                   │
       │     Subagents          8 operations                                    │
       │     CLI tools          1 operation                                     │
       │     Instruction files  5 operations                                    │
