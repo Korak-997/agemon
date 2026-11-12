@@ -62,27 +62,6 @@
       "skills": ["./"]
     },
     {
-      "name": "agemon-nuxt-vue",
-      "description": "Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills generated from each project's docs at a pinned commit. They describe the versions current at that commit (Nuxt 5); check your project's versions.",
-      "source": "./assets/skills/nuxt-vue",
-      "strict": false,
-      "skills": ["./"]
-    },
-    {
-      "name": "agemon-browser-testing",
-      "description": "Test a local web app in a real browser by writing Python Playwright scripts: start the dev server, inspect the rendered page, capture screenshots and console logs. Needs Python 3 and Playwright with its browsers, which agemon does not install. The agent runs Python and your server commands, so expect permission prompts.",
-      "source": "./assets/skills/browser-testing",
-      "strict": false,
-      "skills": ["./"]
-    },
-    {
-      "name": "agemon-motion",
-      "description": "Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system.",
-      "source": "./assets/skills/motion",
-      "strict": false,
-      "skills": ["./"]
-    },
-    {
       "name": "agemon-teamlead",
       "description": "Team-lead workflows: RFC planning, PRD generation/decomposition, meeting lifecycle, task extraction, tech spikes, IT audits, incident RCA, security checks, tech-lead review, and Obsidian vault sync.",
       "source": "./assets/skills/team-lead",
@@ -114,6 +93,27 @@
       "name": "agemon-founder",
       "description": "Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict.",
       "source": "./assets/skills/founder",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-nuxt-vue",
+      "description": "Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills generated from each project's docs at a pinned commit. They describe the versions current at that commit (Nuxt 5); check your project's versions.",
+      "source": "./assets/skills/nuxt-vue",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-browser-testing",
+      "description": "Test a local web app in a real browser by writing Python Playwright scripts: start the dev server, inspect the rendered page, capture screenshots and console logs. Needs Python 3 and Playwright with its browsers, which agemon does not install. The agent runs Python and your server commands, so expect permission prompts.",
+      "source": "./assets/skills/browser-testing",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "agemon-motion",
+      "description": "Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system.",
+      "source": "./assets/skills/motion",
       "strict": false,
       "skills": ["./"]
     }

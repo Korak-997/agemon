@@ -214,38 +214,6 @@ export const SKILL_GROUPS: SkillGroup[] = [
     skills: [vendoredSkill("commit", "agemon-commit")],
   },
   {
-    id: "nuxt-vue",
-    label: "Nuxt / Vue",
-    description:
-      "Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills generated from each project's docs at a pinned commit. They describe the versions current at that commit (Nuxt 5); check your project's versions.",
-    defaultSelected: false,
-    skills: [
-      vendoredSkill("nuxt-vue", "agemon-vue"),
-      vendoredSkill("nuxt-vue", "agemon-nuxt"),
-      vendoredSkill("nuxt-vue", "agemon-nitro"),
-      vendoredSkill("nuxt-vue", "agemon-pinia"),
-      vendoredSkill("nuxt-vue", "agemon-vite"),
-      vendoredSkill("nuxt-vue", "agemon-vitest"),
-      vendoredSkill("nuxt-vue", "agemon-unocss"),
-    ],
-  },
-  {
-    id: "browser-testing",
-    label: "Browser Testing",
-    description:
-      "Test a local web app in a real browser by writing Python Playwright scripts: start the dev server, inspect the rendered page, capture screenshots and console logs. Needs Python 3 and Playwright with its browsers, which agemon does not install. The agent runs Python and your server commands, so expect permission prompts.",
-    defaultSelected: false,
-    skills: [vendoredSkill("browser-testing", "agemon-webapp-testing")],
-  },
-  {
-    id: "motion",
-    label: "Motion",
-    description:
-      "Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system.",
-    defaultSelected: false,
-    skills: [vendoredSkill("motion", "agemon-motion-design")],
-  },
-  {
     id: "teamlead",
     label: "Team Lead",
     description:
@@ -380,6 +348,38 @@ export const SKILL_GROUPS: SkillGroup[] = [
       vendoredSkill("founder", "agemon-founder-launch"),
       vendoredSkill("founder", "agemon-founder-plan"),
     ],
+  },
+  {
+    id: "nuxt-vue",
+    label: "Nuxt / Vue",
+    description:
+      "Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills generated from each project's docs at a pinned commit. They describe the versions current at that commit (Nuxt 5); check your project's versions.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("nuxt-vue", "agemon-vue"),
+      vendoredSkill("nuxt-vue", "agemon-nuxt"),
+      vendoredSkill("nuxt-vue", "agemon-nitro"),
+      vendoredSkill("nuxt-vue", "agemon-pinia"),
+      vendoredSkill("nuxt-vue", "agemon-vite"),
+      vendoredSkill("nuxt-vue", "agemon-vitest"),
+      vendoredSkill("nuxt-vue", "agemon-unocss"),
+    ],
+  },
+  {
+    id: "browser-testing",
+    label: "Browser Testing",
+    description:
+      "Test a local web app in a real browser by writing Python Playwright scripts: start the dev server, inspect the rendered page, capture screenshots and console logs. Needs Python 3 and Playwright with its browsers, which agemon does not install. The agent runs Python and your server commands, so expect permission prompts.",
+    defaultSelected: false,
+    skills: [vendoredSkill("browser-testing", "agemon-webapp-testing")],
+  },
+  {
+    id: "motion",
+    label: "Motion",
+    description:
+      "Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system.",
+    defaultSelected: false,
+    skills: [vendoredSkill("motion", "agemon-motion-design")],
   },
 ];
 

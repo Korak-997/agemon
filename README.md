@@ -37,7 +37,7 @@ agemon is plugin-driven and runs its plugins in this order:
    [Daemon naming](#daemon-naming).
 3. `skills`: installs bundled skills with a pinned copy of the `skills` CLI. Always installs the `essentials` group;
    additional groups (design, security, code quality, architecture, self-review, performance,
-   commit, workflow, output style, founder, team lead, GEO) are selected interactively, via `--skill-groups`, or skipped entirely in a
+   commit, workflow, output style, founder, team lead, GEO, Nuxt/Vue, browser testing, motion) are selected interactively, via `--skill-groups`, or skipped entirely in a
    non-interactive session — see [Skill Groups](#skill-groups).
 4. `agents`: installs a Haiku override of Claude Code's `Explore` agent, and the subagents that
    come with an installed skill group, into `.claude/agents/` — see [Subagents](#subagents). It
@@ -358,7 +358,7 @@ and OpenCode read both folders, so they may list a skill twice once copies exist
   containers, WSL without systemd), agemon skips the daemon and says so; `agemon.toml`
   still lists it for machines that have systemd.
 - Node.js `>=22.12` (used to run the installed CLI; no other Node tooling needed).
-- browser-testing group: Python 3 and the Playwright package with its browsers (pip install playwright && playwright install chromium); agemon does not install them.
+- browser-testing group: Python 3 and the Playwright package with its browsers (`pip install playwright && playwright install chromium`); agemon does not install them.
 - `curl` and `tar` (used by the installer script only).
 - Binaries checked at runtime: `python3`, `pip`, `pipx`, `uv`, `code-review-graph`.
 
