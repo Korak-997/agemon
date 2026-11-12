@@ -25,9 +25,11 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     ],
     "agemon-design": [
       "1775ab661da86fdee13b74b0e76a2ce47994e7a0608a1e7df43e7a2a40018c38",
+      "1bdc4b507c1b1ff6f971f52de2776f903d9ba818f1f21561eb1fcab9437f0a02",
       "3401c4c074987666ad5e41ababa58752d67de5725708a76c9cbcd0c6a3851395",
       "3581e052b7effcfe82b98c788dbed81023a6d59b5806e69d74270049458a1d5b",
       "5e565bfdd50ec5bf4dc1480fea3f5f6cea0b9ff0f3e98ccad5fcdaefdc09ab99",
+      "88902fcd162cb712b1eaf8966af724d565badfd165b69083ca560a9d9c584619",
       "a7e453034da8bccf513c72f59aedca951642f4ff7046ad4c9a4a0c25fbcb5009",
       "b8bc96d4c9e6d11f298a218096012616a486f4dc385d12136f53fad889fac5eb",
       "ca2db4034532ef31ba2a8680bfed29a3ef3ab399a0b52d44db9ddc1c7a31b3d0",

@@ -86,11 +86,11 @@ Four tokens cover ~95% of UI easing. System defaults — framework libraries hav
 | `--ease-soft` | Gentle ease-out with softer deceleration tail — less snappy, more comfortable for dense UI. | Gentler alternative for general UI; Material-style products. |
 
 **Never:**
-- `ease-in` for UI — acceleration without deceleration means the element speeds up as it arrives, which reads as a collision, not a landing. A dropdown with `ease-in` at 300ms *feels* slower than `ease-out` at the same duration.
+- `ease-in` for anything arriving or staying on screen — acceleration without deceleration means the element speeds up as it arrives, which reads as a collision, not a landing. A dropdown with `ease-in` at 300ms *feels* slower than `ease-out` at the same duration. The one exception is an element leaving the screen (see Choreography Rules).
 - `linear` for spatial motion — machine-like and robotic; use only for opacity-only fades, loading bars, marquees, scroll-linked progress, and continuous rotation.
 - Bespoke easings named "smooth" with `cubic-bezier(0.5, 0.5, 0.5, 0.5)` — that's a straight line.
 - Bounce / elastic easing on functional UI — reads dated and draws attention to the animation itself.
-- Different easings on entrance vs exit of the same element.
+- Different easings for the two directions of one on-screen state change (hover in and out, expand and collapse in place).
 
 ---
 
@@ -100,6 +100,7 @@ Four tokens cover ~95% of UI easing. System defaults — framework libraries hav
 - **Hover contract** — transform + color + shadow move together, never just one property.
 - **Focus contract** — a focus ring still needs a perceptible transition (fast, no easing drama) so keyboard users see the state change.
 - **Never change metrics on interaction** — `font-weight`, `font-size`, `letter-spacing`, `padding`, `border-width`. **Why:** these are layout properties, so the text re-flows and every glyph shifts under the cursor; the element also can't be animated on the compositor, so the change lands as a jump instead of a transition. Signal hover with color, background, shadow, or `transform` — all of which leave the box untouched. When a bolder hover is the design, render the bold weight from the start in a hidden layer and cross-fade opacity, or pair a `border` with a same-width transparent `border` in the resting state so the box never resizes.
+- **Hit-test against where things rest or are heading, never where they are mid-animation.** **Why:** an element that moves away from the pointer when hovered stops being hovered, moves back, is hovered again, and flickers in a loop. Keep the hit area at the rest pose (a static wrapper, or the animation's target value). For drawn figures, see [illustration.md](illustration.md#hit-areas).
 - **Disable interactions on exiting elements** — visually present, logically gone.
 - **Never block interaction while a stagger plays** — decorative motion must not gate input.
 - **Transitions vs. keyframes — pick by interruptibility.** A CSS transition retargets smoothly toward whatever the newest end state is, even mid-flight — interrupt a hover-out with a hover-in and it reverses cleanly from its current position. A keyframe animation restarts from its `0%` frame every time it's re-triggered, discarding wherever it currently was. Interactive state changes (hover, press, toggle, open/close) are transitions for exactly this reason; keyframes are for one-shot choreography that never needs to be interrupted mid-play (a one-time celebration, a loading spinner).
@@ -110,7 +111,7 @@ General interaction rules (keyboard timing, touch targets, `overscroll-behavior`
 
 ## Choreography Rules
 
-**Exit runs at ~75% of entrance duration.** This is the one rule that matters most. If entrance is `--motion-medium` (280ms), exit is ~200ms with `--ease-out` (or a flatter tail like `cubic-bezier(0.4, 0, 1, 1)`).
+**Exit runs at ~75% of entrance duration.** This is the one rule that matters most. If entrance is `--motion-medium` (280ms), exit is ~200ms with `--ease-out`. An element leaving the screen for good (dismissed toast, closed sheet sliding off the edge) may instead accelerate away on `cubic-bezier(0.4, 0, 1, 1)`: it has nowhere to land, so speeding up reads as departure. That is the only place a curve that ends at full speed is right; anything arriving or staying on screen ends by decelerating.
 
 1. **Hierarchy first.** Parent/container animates before child/content. Context arrives, then detail. Modal backdrop fades in (`--motion-fast`), then the modal panel slides (`--motion-medium`), then form fields enter (staggered).
 2. **Stagger is 30-80ms between siblings.** Never uniform at zero (feels pasted-on), never more than 80ms per item (list feels slow beyond the 6th item). Marketing pages can push to 100-150ms for dramatic entrances.
@@ -247,9 +248,10 @@ DOM-only fallback when a motion library isn't in play — stack both icons in th
 }
 ```
 
-**Two exceptions to "disable everything":**
+**Three exceptions to "disable everything":**
 - **Loading indicators keep animating.** Reduced motion removes gratuitous motion, not signal. A frozen spinner reads as "broken."
 - **Essential feedback stays.** A focus ring still needs a perceptible transition (fast, no easing drama) so keyboard users see the state change.
+- **When motion is the content** — a figure or diagram whose whole job is to answer the pointer — do not simply freeze it. Jump straight to the target state, or show the choice with a highlight instead of movement, and keep answering the pointer. Never leave it blank, and never frozen mid-pose. Anything it plays on its own (a loop, an attract mode) stops.
 
 Test: macOS → System Preferences → Accessibility → Display → "Reduce motion." Windows → Settings → Accessibility → Visual effects → "Animation effects" off. Every entrance and exit should still deliver the user to the right visual state, instantly.
 
@@ -346,12 +348,12 @@ Never animate inherited CSS variables. Scope animated variables locally.
 - [ ] `transition: all` — list specific properties.
 - [ ] Easings named "smooth" with symmetric `cubic-bezier(0.5, 0.5, 0.5, 0.5)`. That's linear.
 - [ ] Bounce / elastic easing on functional UI. Bounce is for celebration, not buttons.
-- [ ] `ease-in` on UI — slow start reads as sluggish.
+- [ ] `ease-in` on anything arriving or staying on screen — slow start reads as sluggish. Only an element leaving the screen may accelerate.
 - [ ] Parallax on body content (kills scroll performance; hostile to reduced-motion).
 - [ ] Scroll-jacking (hijacking the wheel). Users have a mental model for scroll. Don't break it.
 - [ ] Motion on every hover (death by a thousand animations). Hover affordance is enough; not every row needs to move.
 - [ ] Entrance animations on every page load. First visit is special; the 47th is not.
-- [ ] Different easings on entrance vs exit of the same element. Asymmetry feels broken.
+- [ ] Different easings for the two directions of one on-screen state change (hover in and out). Asymmetry feels broken.
 - [ ] Exaggerated scale on hover (`1.08+` on CTAs). Keep ≤ 1.02 for functional UI; 1.02-1.05 for cards.
 - [ ] Animating `width` / `height` / `top` / `left` — layout thrash. Use `transform` / `opacity`.
 
@@ -424,6 +426,7 @@ Map the project's animation library to the token names, not raw values — when 
 - `stack.md` — Motion / GSAP / Three.js library specifics (opt-in during intake).
 - `modern-css.md` — `@starting-style` for enter-on-mount, View Transitions API.
 - `accessibility.md` — reduced-motion + full interaction rules (keyboard, focus, touch).
+- `illustration.md` — drawn SVG figures that answer the pointer: projection, paint order, hit areas, one shared loop.
 - `../examples/animation-storyboard.md` — multi-stage sequenced animations pattern.
 
 ---

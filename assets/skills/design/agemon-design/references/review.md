@@ -174,7 +174,7 @@ Keep it honest and short. The report reflects what this run actually inspected �
 ### Animation Audit
 - [ ] No `transition: all` — properties listed explicitly
 - [ ] No `scale(0)` entry — starts from `scale(0.95)` with `opacity: 0`
-- [ ] No `ease-in` on UI elements — use `ease-out` or custom curve
+- [ ] No `ease-in` on UI elements — use `ease-out` or custom curve; only an element leaving the screen may accelerate away
 - [ ] No `transform-origin: center` on popovers — set to trigger location (modals exempt)
 - [ ] No animation on keyboard actions
 - [ ] No duration > 300ms on UI elements

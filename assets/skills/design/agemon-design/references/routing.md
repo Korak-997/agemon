@@ -46,6 +46,7 @@ Invoke an action as `/agemon-design <action>`, or just say what you want in plai
 | PM-ready, severity-ranked heuristic critique | Action `review`, heuristic review → [heuristics.md](heuristics.md) + [personas.md](personas.md) |
 | State-first design (before happy path) | [state-design.md](state-design.md) |
 | Data visualization / charts / dashboards | [dataviz.md](dataviz.md) — Cleveland-McGill, color for data, Tufte |
+| Interactive illustrations (SVG figures and diagrams that answer the pointer) | [illustration.md](illustration.md) — projection, paint order, hit areas, one shared loop |
 | Motion system / tokens / choreography | [motion.md](motion.md) — duration + easing scale, motion budget |
 | Wireframe-first: lay out states and content before coding | [state-design.md](state-design.md) — state lattice + content inventory |
 | AI / chat / streaming surfaces | [ai-chat.md](ai-chat.md) — streaming contract, tool traces, citations, feedback |
