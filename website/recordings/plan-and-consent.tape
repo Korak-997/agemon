@@ -11,18 +11,21 @@ Show
 Type "agemon --skill-groups essentials"
 Sleep 400ms
 Enter
-Wait+Screen@60s /Gate 1 \/ 3/
+Wait+Screen@60s /Gate 1 \/ 4/
 Sleep 2500ms
 Screenshot plan-and-consent.png
 Up
 Sleep 700ms
 Enter
-Wait+Screen@30s /Gate 2 \/ 3/
+Wait+Screen@30s /Gate 2 \/ 4/
 Sleep 2500ms
 Up
 Sleep 700ms
 Enter
-Wait+Screen@30s /Gate 3 \/ 3/
+Sleep 2500ms
+Up
+Sleep 700ms
+Enter
 Sleep 2500ms
 Down
 Sleep 700ms
