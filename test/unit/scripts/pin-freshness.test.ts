@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareVersions,
   declaredInstallDependencies,
+  githubReleases,
   newestSettledVersion,
   npmReleases,
   pinnedReleaseProblem,
@@ -118,6 +119,54 @@ describe("pypiReleases", () => {
 
   it("rejects a project without a releases map", () => {
     expect(() => pypiReleases({ info: {} })).toThrow("unexpected response");
+  });
+});
+
+describe("githubReleases", () => {
+  it("strips the tag's leading v and skips drafts, prereleases and non-exact tags", () => {
+    expect(
+      githubReleases([
+        {
+          tag_name: "v8.30.1",
+          published_at: EIGHT_DAYS_AGO,
+          draft: false,
+          prerelease: false,
+        },
+        {
+          tag_name: "8.29.0",
+          published_at: SIX_DAYS_AGO,
+          draft: false,
+          prerelease: false,
+        },
+        {
+          tag_name: "v8.31.0",
+          published_at: null,
+          draft: true,
+          prerelease: false,
+        },
+        {
+          tag_name: "v8.31.0-rc1",
+          published_at: SIX_DAYS_AGO,
+          draft: false,
+          prerelease: true,
+        },
+        {
+          tag_name: "nightly",
+          published_at: SIX_DAYS_AGO,
+          draft: false,
+          prerelease: false,
+        },
+      ]),
+    ).toEqual([
+      { version: "8.30.1", publishedAt: EIGHT_DAYS_AGO, withdrawn: false },
+      { version: "8.29.0", publishedAt: SIX_DAYS_AGO, withdrawn: false },
+    ]);
+  });
+
+  it("rejects a response that is not a release list", () => {
+    expect(() => githubReleases({ message: "Not Found" })).toThrow(
+      "unexpected response",
+    );
   });
 });
 

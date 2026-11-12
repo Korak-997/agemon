@@ -11,6 +11,7 @@ const GATE_TITLES: Record<string, string> = {
   "remove-retired-skills": "Remove retired skills",
   "install-subagents": "Install Claude Code subagents",
   "register-service": "Register background service",
+  "install-hooks": "Install Claude Code hooks",
   "write-config": "Write structured config",
   "touch-instruction-files": "Write instruction files",
   "resolve-conflict": "Resolve conflicts",

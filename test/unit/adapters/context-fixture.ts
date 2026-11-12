@@ -80,6 +80,7 @@ export async function createAdapterTestContext(
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };

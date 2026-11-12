@@ -1,19 +1,25 @@
+import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
+  readlink,
   realpath,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Context } from "../../../src/core/context.js";
 import {
   createFakeVerifiedBinaryInstaller,
   resetFakeSubprocessState,
 } from "../../../src/core/fake-subprocess.js";
+import {
+  inspectLinkedBinary,
+  linkedBinaryPaths,
+} from "../../../src/core/linked-binary.js";
 import { directoryIdentity } from "../../../src/core/machine-ledger.js";
 import { uninstallPlugins } from "../../../src/core/orchestrator.js";
 import { StateManifest } from "../../../src/core/state-manifest.js";
@@ -27,15 +33,23 @@ import type { ServiceManager } from "../../../src/platform/service-manager/index
 import { CLI_TOOL_BUNDLE } from "../../../src/plugins/cli-tool/catalog.js";
 import {
   cliToolPlugin,
-  hasPinnedBuildFor,
   pinnedArchiveKeyFor,
   resolveVerifiedArchiveCandidates,
+  toolsWithoutPinnedBuild,
+  toolsWithPinnedBuild,
 } from "../../../src/plugins/cli-tool/index.js";
 import {
   AGNIX_NPM_TARBALL,
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
+  AST_GREP_VERSION,
+  GITLEAKS_VERSION,
 } from "../../../src/plugins/pins.js";
+import {
+  linkedTool,
+  toolBuiltOnlyFor,
+  withOnlyTool,
+} from "../cli-tool-fixture.js";
 import { CLEAN_GIT_CONFIG_GUARD } from "../git-config-guard-fixture.js";
 import { appendLedgerClaims } from "../ledger-claims.js";
 import { LINUX_TEST_PLATFORM } from "../platform-fixture.js";
@@ -140,6 +154,10 @@ afterEach(async () => {
   await rm(join(process.env.XDG_STATE_HOME ?? "", "agemon", "machine.json"), {
     force: true,
   });
+  await rm(join(process.env.HOME ?? "", ".local"), {
+    recursive: true,
+    force: true,
+  });
 });
 
 async function createTestContext(
@@ -183,6 +201,7 @@ async function createTestContext(
         installRequests.push(request);
         await fakeInstaller.install(request);
       },
+      installLinked: (request) => fakeInstaller.installLinked(request),
       inspect: (request) => fakeInstaller.inspect(request),
     },
   };
@@ -219,9 +238,13 @@ describe("cli-tool plugin", () => {
     const actionsAfterInstall = context.manifest
       .getActions()
       .filter((action) => action.plugin === "cli-tool");
-    expect(actionsAfterInstall).toHaveLength(1);
-    expect(actionsAfterInstall[0]?.preExisting).toBe(false);
-    expect(actionsAfterInstall[0]?.target).toBe("agnix");
+    expect(
+      actionsAfterInstall.map((action) => [action.target, action.preExisting]),
+    ).toEqual([
+      ["agnix", false],
+      ["gitleaks", false],
+      ["ast-grep", false],
+    ]);
 
     await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
 
@@ -250,7 +273,6 @@ describe("cli-tool plugin", () => {
         packageName: "agnix",
         version: AGNIX_VERSION,
         binaryPathInPackage: "bin/agnix-binary",
-        archiveMemberName: "agnix",
         candidates: resolveVerifiedArchiveCandidates(AGNIX, "linux-x64"),
         packageTarball: AGNIX_NPM_TARBALL,
       },
@@ -271,33 +293,37 @@ describe("cli-tool plugin", () => {
   });
 
   it("flags an agemon-installed agnix that is not the pinned build in verify, without running it", async () => {
-    const context = await createTestContext("agnix");
-    await recordAgemonInstall(context);
-    inspectAs(context, UNPINNED_AGNIX);
-    const commands = recordCommands(context);
+    await withOnlyTool(AGNIX, async () => {
+      const context = await createTestContext("agnix");
+      await recordAgemonInstall(context);
+      inspectAs(context, UNPINNED_AGNIX);
+      const commands = recordCommands(context);
 
-    const verification = await cliToolPlugin.verify(context);
+      const verification = await cliToolPlugin.verify(context);
 
-    expect(verification.ok).toBe(true);
-    expect(verification.attention).toContain(
-      "agnix is not the pinned agnix 0.58.0 build (bin/agnix-binary is not a pinned build); reinstall it: npm uninstall --global agnix, then run agemon",
-    );
-    expect(commands.some((command) => command[0] === "agnix")).toBe(false);
+      expect(verification.ok).toBe(true);
+      expect(verification.attention).toContain(
+        "agnix is not the pinned agnix 0.58.0 build (bin/agnix-binary is not a pinned build); reinstall it: npm uninstall --global agnix, then run agemon",
+      );
+      expect(commands.some((command) => command[0] === "agnix")).toBe(false);
+    });
   });
 
   it("counts a migrated shared-tools record as agemon-installed", async () => {
-    const context = await createTestContext("agnix");
-    await writeMachineLedger({
-      "npm-global:agnix": {
-        origin: "migrated",
-        claimedBy: context.cwd,
-        ownerDirectoryId: "1:2:3",
-        holders: [context.cwd],
-      },
-    });
-    inspectAs(context, UNPINNED_AGNIX);
+    await withOnlyTool(AGNIX, async () => {
+      const context = await createTestContext("agnix");
+      await writeMachineLedger({
+        "npm-global:agnix": {
+          origin: "migrated",
+          claimedBy: context.cwd,
+          ownerDirectoryId: "1:2:3",
+          holders: [context.cwd],
+        },
+      });
+      inspectAs(context, UNPINNED_AGNIX);
 
-    expect((await cliToolPlugin.verify(context)).attention).toBeDefined();
+      expect((await cliToolPlugin.verify(context)).attention).toBeDefined();
+    });
   });
 
   it("only notes an adopted agnix that is not the pinned build", async () => {
@@ -331,20 +357,22 @@ describe("cli-tool plugin", () => {
   });
 
   it("reinstalls a flagged agemon-installed agnix the user removed, and then verifies it", async () => {
-    const context = await createTestContext();
-    await recordAgemonInstall(context);
+    await withOnlyTool(AGNIX, async () => {
+      const context = await createTestContext();
+      await recordAgemonInstall(context);
 
-    expect((await cliToolPlugin.detect(context)).present).toBe(false);
-    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
-    expect(operations.map((operation) => operation.action)).toEqual([
-      "install-package",
-    ]);
-    await cliToolPlugin.apply?.(context, operations);
+      expect((await cliToolPlugin.detect(context)).present).toBe(false);
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      expect(operations.map((operation) => operation.action)).toEqual([
+        "install-package",
+      ]);
+      await cliToolPlugin.apply?.(context, operations);
 
-    const verification = await cliToolPlugin.verify(context);
-    expect(verification).toMatchObject({ ok: true });
-    expect(verification.attention).toBeUndefined();
-    expect(installRequests).toHaveLength(1);
+      const verification = await cliToolPlugin.verify(context);
+      expect(verification).toMatchObject({ ok: true });
+      expect(verification.attention).toBeUndefined();
+      expect(installRequests).toHaveLength(1);
+    });
   });
 
   it("inspects an agemon-installed agnix once per run, and afresh under the lock", async () => {
@@ -376,6 +404,7 @@ describe("cli-tool plugin", () => {
       async install() {
         throw new Error("Downloaded archive does not match its pinned sha256");
       },
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     };
 
@@ -402,6 +431,7 @@ describe("cli-tool plugin", () => {
       async install() {
         throw new Error("install failed");
       },
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     };
 
@@ -424,6 +454,7 @@ describe("cli-tool plugin", () => {
       async install() {
         throw new Error("No pinned agnix 0.58.0 build runs on this host.");
       },
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     };
 
@@ -458,6 +489,7 @@ describe("cli-tool plugin", () => {
         url: `${AGNIX_RELEASE_URL}/agnix-x86_64-unknown-linux-gnu.tar.gz`,
         sha256:
           AGNIX_RELEASE_ARCHIVE_SHA256["agnix-x86_64-unknown-linux-gnu.tar.gz"],
+        memberName: "agnix",
       },
       {
         url: `${AGNIX_RELEASE_URL}/agnix-x86_64-unknown-linux-musl.tar.gz`,
@@ -465,6 +497,7 @@ describe("cli-tool plugin", () => {
           AGNIX_RELEASE_ARCHIVE_SHA256[
             "agnix-x86_64-unknown-linux-musl.tar.gz"
           ],
+        memberName: "agnix",
       },
     ]);
   });
@@ -477,6 +510,7 @@ describe("cli-tool plugin", () => {
           AGNIX_RELEASE_ARCHIVE_SHA256[
             "agnix-aarch64-unknown-linux-gnu.tar.gz"
           ],
+        memberName: "agnix",
       },
     ]);
   });
@@ -487,8 +521,64 @@ describe("cli-tool plugin", () => {
         url: `${AGNIX_RELEASE_URL}/agnix-aarch64-apple-darwin.tar.gz`,
         sha256:
           AGNIX_RELEASE_ARCHIVE_SHA256["agnix-aarch64-apple-darwin.tar.gz"],
+        memberName: "agnix",
       },
     ]);
+  });
+
+  it("downloads gitleaks only from its pinned version's release, as a linked binary", () => {
+    const gitleaks = CLI_TOOL_BUNDLE.find((entry) => entry.id === "gitleaks");
+
+    expect(gitleaks?.install.kind).toBe("linked-binary");
+    expect(gitleaks?.sharedResource.id).toBe("bin:gitleaks");
+    for (const platformKey of ["linux-x64", "linux-arm64", "darwin-arm64"]) {
+      const candidates = gitleaks
+        ? resolveVerifiedArchiveCandidates(gitleaks, platformKey)
+        : [];
+      expect(candidates, platformKey).toHaveLength(1);
+      for (const candidate of candidates) {
+        expect(candidate.url).toContain(`/v${GITLEAKS_VERSION}/`);
+        expect(candidate.url).toContain(`gitleaks_${GITLEAKS_VERSION}_`);
+        expect(candidate.sha256).toMatch(/^[0-9a-f]{64}$/u);
+        expect(candidate.memberName).toBe("gitleaks");
+      }
+    }
+    expect(
+      toolsWithPinnedBuild(LINUX_TEST_PLATFORM).map((tool) => tool.id),
+    ).toContain("gitleaks");
+  });
+
+  it("downloads ast-grep only from its pinned version's npm platform packages, as a linked binary", () => {
+    const astGrep = CLI_TOOL_BUNDLE.find((entry) => entry.id === "ast-grep");
+
+    expect(astGrep?.binaryName).toBe("ast-grep");
+    expect(astGrep?.install.kind).toBe("linked-binary");
+    expect(astGrep?.sharedResource.id).toBe("bin:ast-grep");
+    for (const platformKey of [
+      "linux-x64",
+      "linux-arm64",
+      "darwin-arm64",
+      "darwin-x64",
+    ]) {
+      const candidates = astGrep
+        ? resolveVerifiedArchiveCandidates(astGrep, platformKey)
+        : [];
+      expect(candidates, platformKey).toHaveLength(1);
+      for (const candidate of candidates) {
+        expect(candidate.url).toMatch(
+          /^https:\/\/registry\.npmjs\.org\/@ast-grep\/cli-/u,
+        );
+        expect(candidate.url).toContain(`-${AST_GREP_VERSION}.tgz`);
+        expect(candidate.sha256).toMatch(/^[0-9a-f]{64}$/u);
+        expect(candidate.memberName).toBe("package/ast-grep");
+      }
+    }
+  });
+
+  it("never links ast-grep's sg alias, which collides with the system's sg command", () => {
+    expect(CLI_TOOL_BUNDLE.map((entry) => entry.binaryName)).not.toContain(
+      "sg",
+    );
   });
 
   it("refuses a platform without a pinned build", () => {
@@ -505,15 +595,39 @@ describe("cli-tool plugin", () => {
     } as const;
 
     expect(pinnedArchiveKeyFor(intelMac)).toBe("darwin-x64");
-    expect(hasPinnedBuildFor(intelMac)).toBe(false);
+    expect(toolsWithPinnedBuild(intelMac).map((tool) => tool.id)).toEqual([
+      "gitleaks",
+      "ast-grep",
+    ]);
+    expect(toolsWithoutPinnedBuild(intelMac).map((tool) => tool.id)).toEqual([
+      "agnix",
+    ]);
     expect(
-      hasPinnedBuildFor({
+      toolsWithPinnedBuild({
         ...LINUX_TEST_PLATFORM,
         family: "darwin",
         arch: "arm64",
-      }),
-    ).toBe(true);
-    expect(hasPinnedBuildFor(LINUX_TEST_PLATFORM)).toBe(true);
+      }).map((tool) => tool.id),
+    ).toEqual(["agnix", "gitleaks", "ast-grep"]);
+    expect(toolsWithoutPinnedBuild(LINUX_TEST_PLATFORM)).toEqual([]);
+  });
+
+  it("plans only the tools with a pinned build for this platform", async () => {
+    CLI_TOOL_BUNDLE.push(toolBuiltOnlyFor("darwin-x64"));
+    try {
+      const context = await createTestContext();
+
+      expect(
+        toolsWithoutPinnedBuild(LINUX_TEST_PLATFORM).map((tool) => tool.id),
+      ).toEqual(["unbuilt-tool"]);
+      expect(
+        ((await cliToolPlugin.plan?.(context)) ?? []).map(
+          (operation) => operation.resourceId,
+        ),
+      ).toEqual(["package:agnix", "package:gitleaks", "package:ast-grep"]);
+    } finally {
+      CLI_TOOL_BUNDLE.pop();
+    }
   });
 
   it("leaves the ledger to the orchestrator when uninstalled directly", async () => {
@@ -527,59 +641,67 @@ describe("cli-tool plugin", () => {
   });
 
   it("detect writes nothing; using a pre-existing tool records a holder that nuke drops without uninstalling", async () => {
-    const context = await createTestContext("agnix");
-    const commands = recordCommands(context);
+    await withOnlyTool(AGNIX, async () => {
+      const context = await createTestContext("agnix");
+      const commands = recordCommands(context);
 
-    const detected = await cliToolPlugin.detect(context);
-    expect(detected).toEqual({ present: true, preExisting: true });
-    expect(context.manifest.getActions()).toEqual([]);
+      const detected = await cliToolPlugin.detect(context);
+      expect(detected).toEqual({ present: true, preExisting: true });
+      expect(context.manifest.getActions()).toEqual([]);
 
-    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
-    expect(operations.map((operation) => operation.action)).toEqual([
-      "use-shared",
-    ]);
-    await cliToolPlugin.apply?.(context, operations);
-    expect(
-      context.manifest
-        .getActions()
-        .map((action) => [action.type, action.resourceId]),
-    ).toEqual([["uses-shared-resource", "shared:npm-global:agnix"]]);
-    expect(await cliToolPlugin.plan?.(context)).toEqual([]);
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      expect(operations.map((operation) => operation.action)).toEqual([
+        "use-shared",
+      ]);
+      await cliToolPlugin.apply?.(context, operations);
+      expect(
+        context.manifest
+          .getActions()
+          .map((action) => [action.type, action.resourceId]),
+      ).toEqual([["uses-shared-resource", "shared:npm-global:agnix"]]);
+      expect(await cliToolPlugin.plan?.(context)).toEqual([]);
 
-    await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
+      await uninstallPlugins({ ...context, yes: true }, [cliToolPlugin], {});
 
-    expect(
-      context.manifest
-        .getActions()
-        .filter((action) => action.plugin === "cli-tool"),
-    ).toEqual([]);
-    expect(commands.some((command) => command[1] === "uninstall")).toBe(false);
+      expect(
+        context.manifest
+          .getActions()
+          .filter((action) => action.plugin === "cli-tool"),
+      ).toEqual([]);
+      expect(commands.some((command) => command[1] === "uninstall")).toBe(
+        false,
+      );
+    });
   });
 
   it("an unconfirmed install claim makes agnix pre-existing, so nuke --remove-shared uninstalls nothing", async () => {
-    const context = await createTestContext("agnix");
-    await appendLedgerClaims(context, [
-      {
-        plugin: "cli-tool",
-        type: "installed-cli-tool",
-        target: "agnix",
-        preExisting: false,
-      },
-    ]);
-    const commands = recordCommands(context);
+    await withOnlyTool(AGNIX, async () => {
+      const context = await createTestContext("agnix");
+      await appendLedgerClaims(context, [
+        {
+          plugin: "cli-tool",
+          type: "installed-cli-tool",
+          target: "agnix",
+          preExisting: false,
+        },
+      ]);
+      const commands = recordCommands(context);
 
-    const operations = (await cliToolPlugin.plan?.(context)) ?? [];
-    expect(operations.map((operation) => operation.preview.text)).toEqual([
-      "record that this repository uses agnix",
-    ]);
-    await cliToolPlugin.apply?.(context, operations);
-    await uninstallPlugins(
-      { ...context, yes: true, removeSharedTools: new Set(["agnix"]) },
-      [cliToolPlugin],
-      {},
-    );
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      expect(operations.map((operation) => operation.preview.text)).toEqual([
+        "record that this repository uses agnix",
+      ]);
+      await cliToolPlugin.apply?.(context, operations);
+      await uninstallPlugins(
+        { ...context, yes: true, removeSharedTools: new Set(["agnix"]) },
+        [cliToolPlugin],
+        {},
+      );
 
-    expect(commands.some((command) => command[1] === "uninstall")).toBe(false);
+      expect(commands.some((command) => command[1] === "uninstall")).toBe(
+        false,
+      );
+    });
   });
 
   it("an installed record naming this repository is kept on nuke when its install entry is unconfirmed", async () => {
@@ -785,5 +907,97 @@ describe("cli-tool plugin", () => {
       "ignoring ledger entry for typescript: cli-tool does not manage that package",
     );
     expect(context.manifest.getActions()).toEqual([]);
+  });
+});
+
+describe("cli-tool plugin with a linked-binary tool", () => {
+  const originalHome = process.env.HOME;
+  let home: string;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), "agemon-linked-home-")));
+    createdTempDirectories.push(home);
+    process.env.HOME = home;
+  });
+
+  afterEach(() => {
+    process.env.HOME = originalHome;
+  });
+
+  function linkedToolPaths() {
+    const tool = linkedTool();
+    return linkedBinaryPaths(tool.id, tool.version, tool.binaryName);
+  }
+
+  it("installs through installLinked, verifies the link, and unlinks on nuke", async () => {
+    await withOnlyTool(linkedTool(), async () => {
+      const context = await createTestContext();
+      const infos: string[] = [];
+      context.ui = { ...context.ui, info: (line: string) => infos.push(line) };
+
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      expect(operations.map((operation) => operation.targetPath)).toEqual([
+        "linked-tool",
+      ]);
+      await cliToolPlugin.apply?.(context, operations);
+
+      expect(await inspectLinkedBinary(linkedToolPaths())).toBe("ours-current");
+      expect(installRequests).toEqual([]);
+      expect(infos).toContain(
+        `${join(home, ".local/bin")} is not on your PATH; add it to use linked-tool`,
+      );
+      expect((await cliToolPlugin.verify(context)).ok).toBe(true);
+      expect(await cliToolPlugin.plan?.(context)).toEqual([]);
+
+      await uninstallPlugins(
+        { ...context, yes: true, removeSharedTools: new Set(["agnix"]) },
+        [cliToolPlugin],
+        {},
+      );
+
+      expect(await inspectLinkedBinary(linkedToolPaths())).toBe("absent");
+      expect(existsSync(linkedToolPaths().toolsRoot)).toBe(false);
+      expect((await cliToolPlugin.verify(context)).ok).toBe(false);
+    });
+  });
+
+  it("refuses to replace a link path it did not create, and records nothing", async () => {
+    await withOnlyTool(linkedTool(), async () => {
+      const context = await createTestContext();
+      const { linkPath } = linkedToolPaths();
+      await mkdir(dirname(linkPath), { recursive: true });
+      await symlink("/nonexistent/linked-tool", linkPath);
+
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      await expect(cliToolPlugin.apply?.(context, operations)).rejects.toThrow(
+        `${linkPath} already exists and was not installed by agemon; remove it or keep using your own linked-tool`,
+      );
+
+      expect(await readlink(linkPath)).toBe("/nonexistent/linked-tool");
+      expect(existsSync(linkedToolPaths().toolsRoot)).toBe(false);
+      expect(context.manifest.getActions()).toEqual([]);
+    });
+  });
+
+  it("keeps a working linked tool the user installed and never removes it on nuke", async () => {
+    await withOnlyTool(linkedTool(), async () => {
+      const context = await createTestContext();
+      const { linkPath } = linkedToolPaths();
+      await mkdir(dirname(linkPath), { recursive: true });
+      await writeFile(linkPath, "#!/bin/sh\n", { mode: 0o755 });
+
+      const operations = (await cliToolPlugin.plan?.(context)) ?? [];
+      expect(operations.map((operation) => operation.action)).toEqual([
+        "use-shared",
+      ]);
+      await cliToolPlugin.apply?.(context, operations);
+      await uninstallPlugins(
+        { ...context, yes: true, removeSharedTools: new Set(["agnix"]) },
+        [cliToolPlugin],
+        {},
+      );
+
+      expect(await inspectLinkedBinary(linkedToolPaths())).toBe("foreign");
+    });
   });
 });

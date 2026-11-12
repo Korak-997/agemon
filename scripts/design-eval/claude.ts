@@ -36,6 +36,7 @@ export interface EvalResults<Case> {
   isolationNote: string;
   totalCostUsd?: number;
   totalTurns?: number;
+  extraGroups?: string[];
   contaminated?: boolean;
   aborted?: string;
   cases: Case[];
@@ -57,6 +58,7 @@ export const EVAL_ROOT = join(REPOSITORY_ROOT, "evals", "design");
 export const DEFAULT_SKILL_REF = "c056fdc41d9eef734b85239bb21b5560e081cb3c";
 export const WORKING_TREE_REF = "WORKTREE";
 export const PROJECT_DESIGN_SKILL = "agemon-design";
+export const PROJECT_MOTION_SKILL = "agemon-motion-design";
 export const DESIGN_SKILL_PATTERN = /(^|:)agemon-design(-\w+)?$/u;
 export const ACTIVATION_TOOLS = "Skill,Read,Glob,Grep";
 export const BUILD_TOOLS = "Skill,Read,Glob,Grep,Write,Edit";
@@ -103,17 +105,12 @@ export function parseArm(value: string | undefined): Arm {
   if (value === "A" || value === "B" || value === "C") return value;
   throw new Error(`--arm must be A, B or C, got ${JSON.stringify(value)}`);
 }
-
-// Arm B is the old skill by definition. Arm C must name the commit it tests, so a results file
-// can never claim the pipeline while silently holding the old skill.
 export function skillRefFor(arm: Arm, requested: string | undefined): string {
   if (requested) return requested;
   if (arm === "C") throw new Error("arm C needs --skill-ref <commit>");
   return DEFAULT_SKILL_REF;
 }
 
-// The selector cannot run without a shell, so arm C gets one limited to the skill's own read-only
-// scripts and its log-writing selector. Every other command stays denied in a headless run.
 export function designScriptRules(projectDirectory: string): string[] {
   const folders = [
     SKILL_SCRIPTS_FOLDER,
@@ -131,6 +128,10 @@ export function parseModel(value: string | undefined): string | undefined {
 
 export function designSkillNames(names: string[]): string[] {
   return names.filter((name) => DESIGN_SKILL_PATTERN.test(name));
+}
+
+export function parseExtraGroups(value: string | undefined): string[] {
+  return value ? value.split(",").filter(Boolean) : [];
 }
 
 function gitBuffer(args: string[]): Buffer {
@@ -176,6 +177,7 @@ export function installArm(
   projectDirectory: string,
   arm: Arm,
   skillRef = DEFAULT_SKILL_REF,
+  extraGroups: string[] = [],
 ): void {
   if (skillRef.startsWith("-"))
     throw new Error("--skill-ref must be a git ref");
@@ -191,6 +193,11 @@ export function installArm(
     } else {
       installSkillGroupFromRef(skillsDirectory, group, skillRef);
     }
+  }
+  for (const group of extraGroups) {
+    cpSync(join(REPOSITORY_ROOT, SKILLS_ROOT, group), skillsDirectory, {
+      recursive: true,
+    });
   }
 }
 
@@ -402,8 +409,6 @@ function isPathInside(directory: string, target: string): boolean {
   return relativeTarget.split(sep)[0] !== ".." && !isAbsolute(relativeTarget);
 }
 
-// macOS temp directories live under the /var symlink, while Claude Code reports
-// the resolved /private/var path for the same files.
 function projectDirectoryForms(projectDirectory: string): string[] {
   const lexicalDirectory = resolve(projectDirectory);
   try {
@@ -413,8 +418,6 @@ function projectDirectoryForms(projectDirectory: string): string[] {
   }
 }
 
-// Claude Code gives each session a scratch folder named after the project, outside the project.
-// Only this run's own folder is exempt: a write anywhere else still fails the run.
 export function runScratchDirectory(projectDirectory: string): string {
   const projectSlug = resolve(projectDirectory).replace(/[^a-zA-Z0-9]/gu, "-");
   return join("/tmp", `claude-${process.getuid?.()}`, projectSlug);
@@ -441,6 +444,21 @@ export function finalResultText(transcript: string): string {
   return String(result?.result ?? "");
 }
 
+function refusedToolUseIds(events: Record<string, unknown>[]): Set<string> {
+  const refused = new Set<string>();
+  for (const event of events) {
+    const content = (event.message as { content?: unknown } | undefined)
+      ?.content;
+    if (event.type !== "user" || !Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block.type === "tool_result" && block.is_error === true) {
+        refused.add(String(block.tool_use_id));
+      }
+    }
+  }
+  return refused;
+}
+
 export function writesOutsideProject(
   transcript: string,
   projectDirectory: string,
@@ -449,13 +467,19 @@ export function writesOutsideProject(
     ...projectDirectoryForms(projectDirectory),
     runScratchDirectory(projectDirectory),
   ];
+  const events = transcriptEvents(transcript);
+  const refused = refusedToolUseIds(events);
   const outside: string[] = [];
-  for (const event of transcriptEvents(transcript)) {
+  for (const event of events) {
     const content = (event.message as { content?: unknown } | undefined)
       ?.content;
     if (event.type !== "assistant" || !Array.isArray(content)) continue;
     for (const block of content) {
-      if (block.type !== "tool_use" || !FILE_WRITING_TOOLS.has(block.name))
+      if (
+        block.type !== "tool_use" ||
+        !FILE_WRITING_TOOLS.has(block.name) ||
+        refused.has(String(block.id))
+      )
         continue;
       const target = String(
         block.input?.file_path ?? block.input?.notebook_path ?? "",

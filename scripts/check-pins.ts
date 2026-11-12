@@ -2,11 +2,14 @@ import { errorMessage } from "../src/core/error-message.js";
 import { printable } from "../src/core/untrusted-text.js";
 import {
   AGNIX_VERSION,
+  AST_GREP_VERSION,
   CODE_REVIEW_GRAPH_VERSION,
+  GITLEAKS_VERSION,
 } from "../src/plugins/pins.js";
 import {
   compareVersions,
   declaredInstallDependencies,
+  githubReleases,
   newestSettledVersion,
   npmReleases,
   type PublishedRelease,
@@ -17,6 +20,7 @@ import {
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_LISTED_NAMES = 10;
 const MAX_UPSTREAM_TEXT_CHARACTERS = 100;
+const GITHUB_RELEASES_PER_PAGE = 100;
 
 interface PinProblem {
   kind: "refuse" | "problem";
@@ -131,6 +135,45 @@ const PIN_CHECKS: PinCheck[] = [
     },
     bumpReminder:
       "a bump also needs, in src/plugins/pins.ts: the sha256 of every release archive (AGNIX_RELEASE_ARCHIVE_SHA256) and of the agnix binary inside each (AGNIX_BINARY_SHA256), the npm tarball's dist.integrity (AGNIX_NPM_TARBALL), and the sha256 of its package.json and bin/agnix after a real npm install (AGNIX_PACKAGE_FILE_SHA256)",
+  },
+  {
+    name: "gitleaks (GitHub releases)",
+    pinned: GITLEAKS_VERSION,
+    inspect: async (now) => {
+      const releases = githubReleases(
+        await fetchJson(
+          `https://api.github.com/repos/gitleaks/gitleaks/releases?per_page=${GITHUB_RELEASES_PER_PAGE}`,
+          { accept: "application/vnd.github+json" },
+        ),
+      );
+      return {
+        newer: newerVersion(
+          GITLEAKS_VERSION,
+          newestSettledVersion(releases, now),
+        ),
+        problems: pinnedReleaseProblems(releases, GITLEAKS_VERSION),
+      };
+    },
+    bumpReminder:
+      "a bump also needs, in src/plugins/pins.ts: the sha256 of every release archive (GITLEAKS_RELEASE_ARCHIVE_SHA256), computed from the downloaded files and cross-checked against gitleaks_<version>_checksums.txt; the asset names in src/plugins/cli-tool/catalog.ts carry the version too",
+  },
+  {
+    name: "ast-grep (npm)",
+    pinned: AST_GREP_VERSION,
+    inspect: async (now) => {
+      const releases = npmReleases(
+        await fetchJson("https://registry.npmjs.org/@ast-grep/cli"),
+      );
+      return {
+        newer: newerVersion(
+          AST_GREP_VERSION,
+          newestSettledVersion(releases, now),
+        ),
+        problems: pinnedReleaseProblems(releases, AST_GREP_VERSION),
+      };
+    },
+    bumpReminder:
+      "a bump also needs, in src/plugins/pins.ts: the sha256 of every @ast-grep/cli-<platform> tarball (AST_GREP_ARCHIVE_SHA256), computed from the downloaded files after checking each against its packument dist.integrity",
   },
 ];
 

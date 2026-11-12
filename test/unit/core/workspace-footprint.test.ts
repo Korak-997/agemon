@@ -72,6 +72,7 @@ async function createTestContext(): Promise<FootprintContext> {
     serviceManager: {} as ServiceManager,
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };

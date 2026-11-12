@@ -158,6 +158,7 @@ async function createTestContext(dryRun = false): Promise<NukeContext> {
     serviceManager: {} as ServiceManager,
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };

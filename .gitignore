@@ -28,3 +28,6 @@ evals/design/results/
 
 # routing-eval transcripts stay local; each results file records the numbers
 evals/routing/results/*/
+
+# skill-routing-eval transcripts stay local; each results file records the numbers
+evals/skill-routing/results/*/

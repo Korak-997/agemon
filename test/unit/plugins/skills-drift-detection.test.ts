@@ -126,6 +126,7 @@ async function createTestContext(overrides: {
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
     skillGroupsOption: undefined,

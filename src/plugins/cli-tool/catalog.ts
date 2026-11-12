@@ -1,53 +1,108 @@
-import type { PinnedNpmTarball } from "../../core/verified-binary-installer.js";
+import { join } from "node:path";
+import { linkedBinaryPaths } from "../../core/linked-binary.js";
+import type {
+  PinnedNpmTarball,
+  VerifiedArchiveCandidate,
+} from "../../core/verified-binary-installer.js";
 import {
   AGNIX_BINARY_SHA256,
   AGNIX_NPM_TARBALL,
   AGNIX_PACKAGE_FILE_SHA256,
   AGNIX_RELEASE_ARCHIVE_SHA256,
   AGNIX_VERSION,
+  AST_GREP_ARCHIVE_SHA256,
+  AST_GREP_VERSION,
+  GITLEAKS_RELEASE_ARCHIVE_SHA256,
+  GITLEAKS_VERSION,
 } from "../pins.js";
 import type { SharedResourceDeclaration } from "../types.js";
 
-export interface PinnedReleaseArchive {
-  asset: string;
-  sha256: string;
+export type PinnedReleaseArchive = VerifiedArchiveCandidate;
+
+export interface NpmWrappedInstall {
+  kind: "npm-wrapped";
+  packageName: string;
+  packageTarball: PinnedNpmTarball;
+  packageFileSha256: Readonly<Record<string, string>>;
+  commandPathInPackage: string;
+  binaryPathInPackage: string;
+  binarySha256: readonly string[];
+}
+
+export interface LinkedBinaryInstall {
+  kind: "linked-binary";
 }
 
 export interface CliToolBundleEntry {
   id: string;
-  packageName: string;
   version: string;
   binaryName: string;
-  commandPathInPackage: string;
-  binaryPathInPackage: string;
-  packageTarball: PinnedNpmTarball;
-  packageFileSha256: Readonly<Record<string, string>>;
-  binarySha256: readonly string[];
-  archiveMemberName: string;
-  releaseDownloadUrl: string;
+  install: NpmWrappedInstall | LinkedBinaryInstall;
   releaseArchivesByPlatform: Record<string, PinnedReleaseArchive[]>;
   sharedResource: SharedResourceDeclaration;
 }
 
+const AGNIX_RELEASE_DOWNLOAD_URL = `https://github.com/agent-sh/agnix/releases/download/v${AGNIX_VERSION}`;
+const GITLEAKS_RELEASE_DOWNLOAD_URL = `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}`;
+
 function agnixArchive(
   asset: keyof typeof AGNIX_RELEASE_ARCHIVE_SHA256,
 ): PinnedReleaseArchive {
-  return { asset, sha256: AGNIX_RELEASE_ARCHIVE_SHA256[asset] };
+  return {
+    url: `${AGNIX_RELEASE_DOWNLOAD_URL}/${asset}`,
+    sha256: AGNIX_RELEASE_ARCHIVE_SHA256[asset],
+    memberName: "agnix",
+  };
+}
+
+function gitleaksArchive(
+  asset: keyof typeof GITLEAKS_RELEASE_ARCHIVE_SHA256,
+): PinnedReleaseArchive {
+  return {
+    url: `${GITLEAKS_RELEASE_DOWNLOAD_URL}/${asset}`,
+    sha256: GITLEAKS_RELEASE_ARCHIVE_SHA256[asset],
+    memberName: "gitleaks",
+  };
+}
+
+function astGrepArchive(
+  packageName: keyof typeof AST_GREP_ARCHIVE_SHA256,
+): PinnedReleaseArchive {
+  const unscopedName = packageName.split("/")[1];
+  return {
+    url: `https://registry.npmjs.org/${packageName}/-/${unscopedName}-${AST_GREP_VERSION}.tgz`,
+    sha256: AST_GREP_ARCHIVE_SHA256[packageName],
+    memberName: "package/ast-grep",
+  };
+}
+
+function linkedToolRemoveCommand(
+  toolId: string,
+  version: string,
+  binaryName: string,
+): string {
+  const { toolsRoot, linkPath } = linkedBinaryPaths(
+    toolId,
+    version,
+    binaryName,
+  );
+  return `rm ${linkPath} && rm -r ${join(toolsRoot, toolId)}`;
 }
 
 export const CLI_TOOL_BUNDLE: CliToolBundleEntry[] = [
   {
     id: "agnix",
-    packageName: "agnix",
     version: AGNIX_VERSION,
     binaryName: "agnix",
-    commandPathInPackage: "bin/agnix",
-    binaryPathInPackage: "bin/agnix-binary",
-    packageTarball: AGNIX_NPM_TARBALL,
-    packageFileSha256: AGNIX_PACKAGE_FILE_SHA256,
-    binarySha256: AGNIX_BINARY_SHA256,
-    archiveMemberName: "agnix",
-    releaseDownloadUrl: `https://github.com/agent-sh/agnix/releases/download/v${AGNIX_VERSION}`,
+    install: {
+      kind: "npm-wrapped",
+      packageName: "agnix",
+      packageTarball: AGNIX_NPM_TARBALL,
+      packageFileSha256: AGNIX_PACKAGE_FILE_SHA256,
+      commandPathInPackage: "bin/agnix",
+      binaryPathInPackage: "bin/agnix-binary",
+      binarySha256: AGNIX_BINARY_SHA256,
+    },
     releaseArchivesByPlatform: {
       "linux-x64": [
         agnixArchive("agnix-x86_64-unknown-linux-gnu.tar.gz"),
@@ -62,6 +117,56 @@ export const CLI_TOOL_BUNDLE: CliToolBundleEntry[] = [
       manualRemoveCommand: "npm uninstall --global agnix",
       removalVerb: "uninstall",
       migratesFromRepoLedgers: true,
+    },
+  },
+  {
+    id: "gitleaks",
+    version: GITLEAKS_VERSION,
+    binaryName: "gitleaks",
+    install: { kind: "linked-binary" },
+    releaseArchivesByPlatform: {
+      "linux-x64": [gitleaksArchive("gitleaks_8.30.1_linux_x64.tar.gz")],
+      "linux-arm64": [gitleaksArchive("gitleaks_8.30.1_linux_arm64.tar.gz")],
+      "darwin-arm64": [gitleaksArchive("gitleaks_8.30.1_darwin_arm64.tar.gz")],
+      "darwin-x64": [gitleaksArchive("gitleaks_8.30.1_darwin_x64.tar.gz")],
+    },
+    sharedResource: {
+      id: "bin:gitleaks",
+      toolName: "gitleaks",
+      get manualRemoveCommand() {
+        return linkedToolRemoveCommand(
+          "gitleaks",
+          GITLEAKS_VERSION,
+          "gitleaks",
+        );
+      },
+      removalVerb: "remove",
+      migratesFromRepoLedgers: false,
+    },
+  },
+  {
+    id: "ast-grep",
+    version: AST_GREP_VERSION,
+    binaryName: "ast-grep",
+    install: { kind: "linked-binary" },
+    releaseArchivesByPlatform: {
+      "linux-x64": [astGrepArchive("@ast-grep/cli-linux-x64-gnu")],
+      "linux-arm64": [astGrepArchive("@ast-grep/cli-linux-arm64-gnu")],
+      "darwin-arm64": [astGrepArchive("@ast-grep/cli-darwin-arm64")],
+      "darwin-x64": [astGrepArchive("@ast-grep/cli-darwin-x64")],
+    },
+    sharedResource: {
+      id: "bin:ast-grep",
+      toolName: "ast-grep",
+      get manualRemoveCommand() {
+        return linkedToolRemoveCommand(
+          "ast-grep",
+          AST_GREP_VERSION,
+          "ast-grep",
+        );
+      },
+      removalVerb: "remove",
+      migratesFromRepoLedgers: false,
     },
   },
 ];

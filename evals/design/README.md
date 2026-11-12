@@ -98,8 +98,9 @@ unless `--allow-contaminated` is passed; then every result in the batch is label
 
 ## Corpus
 
-`activation-cases.json`: 13 cases, none naming a skill, with a trigger case for each track
-(`track`). `splitCases(cases, seed)` gives a stable 8 train / 5 validation split per seed. Rates from this few runs are rough: report
+`activation-cases.json`: 19 cases, none naming a skill, with a trigger case for each track
+(`track`) and 6 `motion` cases (4 trigger, 2 no-trigger) for the motion A/B below.
+`splitCases(cases, seed)` gives a stable 11 train / 8 validation split per seed. Rates from this few runs are rough: report
 counts (`correct/total`) next to percentages. `expected` for `small-edit` and the
 `guidelines-boundary` cases is an owner judgement call; review before trusting those rates.
 
@@ -125,6 +126,29 @@ npm run design-eval:activation -- --dry-run
 npm run design-eval:activation -- --arm B --label baseline --runs 2 --limit 3 --offset 0
 npm run design-eval:output -- --arm B --brief tarn-ember-brand --label baseline
 ```
+
+`--extra-groups <id,…>` copies more skill groups from the working tree into every run, in
+either arm, and records them as `extraGroups` in the results file. On a `motion` case a run
+counts as activated when it invokes `agemon-design` or `agemon-motion-design`; on every other
+case only `agemon-design` counts.
+
+### Motion A/B
+
+Run arm B on all activation cases twice: once without and once with `--extra-groups motion`,
+2 runs per case each. Keep the `motion` group only if all three hold:
+
+- `agemon-design` activation on the 13 non-motion cases drops by at most one run;
+- with `--extra-groups motion`, `agemon-design` or `agemon-motion-design` triggers on at least
+  3 of the 4 motion `trigger` cases;
+- with `--extra-groups motion`, neither triggers on the 2 motion `no-trigger` cases.
+
+This rule was written on 2026-11-12, before either arm ran.
+
+The full A/B was not run. On 2026-11-12 the owner chose a smoke check instead: the 6 motion
+cases once each, arm B, `--skill-ref HEAD --extra-groups motion`, on `claude-opus-5-5`, total
+$1.17. `agemon-motion-design` fired on 4/4 `trigger` cases and nothing fired on the 2
+`no-trigger` cases, so rules 2 and 3 held on this small sample. Rule 1 (whether the motion group
+takes activations away from `agemon-design` on the 13 non-motion cases) is untested. Indicative only.
 
 Output takes a required `--arm`, a required `--brief` (one build per invocation), `--repeat` and
 `--max-budget-usd` (default 5, passed to `claude`).

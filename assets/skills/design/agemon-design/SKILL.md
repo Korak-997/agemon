@@ -96,6 +96,7 @@ Load only what the current stage needs. [routing.md](references/routing.md) has 
 | Foundations | [layout.md](references/layout.md), [color.md](references/color.md), [typography.md](references/typography.md), [responsive.md](references/responsive.md) |
 | Interaction | [components.md](references/components.md), [forms.md](references/forms.md), [state-design.md](references/state-design.md), [accessibility.md](references/accessibility.md) |
 | Motion and sound | [motion.md](references/motion.md), [modern-css.md](references/modern-css.md), [sound.md](references/sound.md); [stack.md](references/stack.md) only if the user opts in |
+| Drawn figures that answer the pointer | [illustration.md](references/illustration.md) |
 | Data and AI surfaces | [dashboard.md](references/dashboard.md), [dataviz.md](references/dataviz.md), [ai-chat.md](references/ai-chat.md) |
 | Words and page metadata | [copy.md](references/copy.md), [metadata.md](references/metadata.md) |
 | Reviewing and finishing | [review.md](references/review.md), [heuristics.md](references/heuristics.md), [personas.md](references/personas.md), [finish-bar.md](references/finish-bar.md), [loops.md](references/loops.md) |

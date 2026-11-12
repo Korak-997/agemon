@@ -122,6 +122,7 @@ async function createTestContext(
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
     confirm: async () => false,
@@ -338,6 +339,23 @@ describe("reconcile", () => {
 
     expect(alpha.installCallCount()).toBe(1);
     expect(beta.installCallCount()).toBe(0);
+  });
+
+  it("skips an opt-in capability unless --only names it", async () => {
+    const context = await createTestContext(approveEveryGate);
+    const guard = createFakeCapability({ id: "guard", targetPath: "g.txt" });
+    const beta = createFakeCapability({ id: "beta", targetPath: "beta.txt" });
+    const optInGuard = { ...guard.plugin, optIn: true };
+
+    await reconcile(context, [optInGuard, beta.plugin], RECONCILE_OPTIONS);
+    expect(guard.installCallCount()).toBe(0);
+    expect(beta.installCallCount()).toBe(1);
+
+    await reconcile(context, [optInGuard, beta.plugin], {
+      ...RECONCILE_OPTIONS,
+      only: ["guard"],
+    });
+    expect(guard.installCallCount()).toBe(1);
   });
 
   it("writes agemon.toml on first apply, then is a silent no-op that adds no ledger entries", async () => {

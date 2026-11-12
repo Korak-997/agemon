@@ -37,15 +37,18 @@ agemon is plugin-driven and runs its plugins in this order:
    [Daemon naming](#daemon-naming).
 3. `skills`: installs bundled skills with a pinned copy of the `skills` CLI. Always installs the `essentials` group;
    additional groups (design, security, code quality, architecture, self-review, performance,
-   commit, workflow, output style, founder, team lead, GEO) are selected interactively, via `--skill-groups`, or skipped entirely in a
+   commit, workflow, output style, founder, team lead, GEO, Nuxt/Vue, browser testing, motion) are selected interactively, via `--skill-groups`, or skipped entirely in a
    non-interactive session — see [Skill Groups](#skill-groups).
-4. `agents`: installs the Claude Code subagents that come with an installed skill group into
-   `.claude/agents/` — see [Subagents](#subagents). It depends on `skills`, so `--only agents`
-   also runs `skills`.
+4. `agents`: installs a Haiku override of Claude Code's `Explore` agent, and the subagents that
+   come with an installed skill group, into `.claude/agents/` — see [Subagents](#subagents). It
+   depends on `skills`, so `--only agents` also runs `skills`.
 5. `subagent-default`: behind consent, sets a default model in `.claude/settings.json` for
    Claude Code subagents that name none — see [Default subagent model](#default-subagent-model).
-6. `cli-tool`: installs bundled global CLI tools.
-7. `master-prompt`: consolidates agent rule files and pointer files.
+6. `delegation-guard`: opt-in, never installed by default. Hooks that, in a chat where you turn
+   them on, cap searches in the main conversation and point Claude to `Explore` — see
+   [How agemon routes subagents](docs/subagent-routing.md#opt-in-the-delegation-guard).
+7. `cli-tool`: installs bundled global CLI tools.
+8. `master-prompt`: consolidates agent rule files and pointer files.
 
 Every mutating plugin action is recorded in `.agemon/state.json` and used by `nuke` for
 targeted reversal.
@@ -70,11 +73,14 @@ The `skills` plugin installs one always-on group plus whichever optional groups 
 | `essentials` (always on) | `web-design-guidelines`, `writing-guidelines` | Vercel Labs' web design and writing review guidelines, vendored as copies taken at one pinned upstream commit each. They keep their upstream names — see [Vendored Skills](#vendored-skills--attribution). |
 | `design` | `agemon-design` | A staged UI workflow: it picks a track, reads your real brand and tokens, builds from the product's subject, checks objective facts, and reports what it could not verify. Choosing among three directions is opt-in (`/agemon-design build --directions`) until an eval supports it as a default. Dashboard, editorial and minimal looks are presets it uses when you name them. Limits: auto-triggering cannot be guaranteed, its gates are voluntary without hooks, and a passing run does not mean a good design. |
 | `security` | `agemon-security`, `agemon-security-audit` | Exploit-driven security review — no finding without a working proof-of-concept — plus a multi-agent, multi-phase codebase audit with independently verified findings. |
-| `code-quality` | `agemon-clean-code`, `agemon-house-rules` | Simplicity, DRY architecture, self-documenting naming, surgical scope control. |
+| `code-quality` | `agemon-clean-code`, `agemon-house-rules`, `agemon-unused-code-check` | Simplicity, DRY architecture, self-documenting naming, surgical scope control, unused-code checks with the project's own Knip. |
 | `architecture` | `agemon-architecture` | Clean Architecture review: dependency rule, layering, boundary crossing, SOLID. |
 | `self-review` | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | Verification before claiming completion, giving/receiving code review, root-cause debugging. |
 | `performance` | `agemon-performance` | Algorithmic-complexity-first discipline: N+1 detection, hot-loop hygiene, when not to optimize. |
 | `commit` | `agemon-commit` | Staging review, commit message structure, and splitting unrelated changes into separate commits. |
+| `nuxt-vue` | `agemon-vue`, `agemon-nuxt`, `agemon-nitro`, `agemon-pinia`, `agemon-vite`, `agemon-vitest`, `agemon-unocss` | Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills, generated from each project's own docs at a pinned commit; they describe the versions current then (Nuxt 5), so check them against your project's versions. |
+| `browser-testing` | `agemon-webapp-testing` | Tests a local web app in a real browser with Python Playwright scripts: starts the dev server, inspects the rendered page, captures screenshots and console logs. Needs Python 3 and Playwright (see [Requirements](#requirements)); the agent runs Python and your server commands, so expect permission prompts. |
+| `motion` | `agemon-motion-design` | Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system. |
 | `workflow` | `agemon-brainstorming`, `agemon-writing-plans`, `agemon-executing-plans`, `agemon-subagent-driven-development`, `agemon-test-driven-development`, `agemon-using-git-worktrees`, `agemon-dispatching-parallel-agents`, `agemon-finishing-a-development-branch` | Structured feature delivery: brainstorming, written plans, test-driven development, subagent or inline execution, git worktrees, and branch finishing. Comes with the `agemon-scout` and `agemon-worker` [subagents](#subagents). Pairs with `self-review`. |
 | `output-style` | `agemon-adhd` | On request (`/agemon-adhd`), replies lead with the next action, number their steps, restate progress, and skip preamble and tangents. |
 | `founder` | `agemon-founder-board`, `agemon-founder-competitors`, `agemon-founder-consumer`, `agemon-founder-pricing`, `agemon-founder-offer`, `agemon-founder-cfo`, `agemon-founder-marketing`, `agemon-founder-brand`, `agemon-founder-ops`, `agemon-founder-launch`, `agemon-founder-plan` | Test a business idea before launch: board review, competitors, simulated buyer panel, pricing, offer, unit economics, marketing, brand, operations, launch, and a business plan with a computed verdict. The panel is simulated buyers, not customers. The scripts need Python 3.8 or newer. |
@@ -106,8 +112,14 @@ it. See [What a new version brings to a repository](#what-a-new-version-brings-t
 
 #### Subagents
 
-Some groups come with Claude Code subagents, which the `agents` capability installs into
-the project's `.claude/agents/` together with the group. Two groups have some:
+The `agents` capability installs Claude Code subagents into the project's `.claude/agents/`.
+One comes with every install:
+
+- `Explore` (`.claude/agents/explore.md`): a Haiku override of Claude Code's built-in search
+  agent, which otherwise runs on the Opus alias for subscription users. It needs no skill group.
+  If another agent file already declares `name: Explore`, agemon leaves it alone and says so.
+
+Two groups add their own, installed together with the group:
 
 - `geo-seo`: the five audit agents `geo-audit-ai-visibility`, `geo-audit-platform`,
   `geo-audit-technical`, `geo-audit-content` and `geo-audit-schema`, which `/geo audit`
@@ -115,10 +127,12 @@ the project's `.claude/agents/` together with the group. Two groups have some:
 - `workflow`: two role agents. `agemon-scout` runs on Haiku for read-only search, and
   `agemon-worker` runs on Sonnet for routine implementation and review.
 
+[How agemon routes subagents](docs/subagent-routing.md) shows the files and when routing helps.
+
 How they are set up:
 
-- Each agent file has only `name`, `description`, `tools` and `model`. `tools` is an
-  allowlist. The GEO agents get `WebFetch`, plus `Bash` (for one fixed, read-only `curl` you
+- Each agent file has only `name`, `description`, `tools` and `model`, plus `effort` and
+  `maxTurns` for `Explore` and the workflow role agents. `tools` is an allowlist. The GEO agents get `WebFetch`, plus `Bash` (for one fixed, read-only `curl` you
   approve per run) for the technical and schema agents. `agemon-scout` gets `Read`, `Grep` and
   `Glob`. `agemon-worker` also gets `Edit`, `Write` and `Bash`. Nothing is pre-approved, and no
   agent sets a permission mode, hooks or MCP servers.
@@ -130,7 +144,7 @@ How they are set up:
   overwritten without a decision (`[conflict_decisions] "agent-file:<name>" = "keep"`,
   `"replace"` or `"skip"`); a replaced file is backed up first; `nuke` removes the agents
   agemon created and restores the files it replaced.
-- An agent's group must be installed for the agent to be written; if you decline the group,
+- A group's agents are written only when the group is installed; if you decline the group,
   its agents are skipped.
 - `agemon status` shows one row per agent: managed, adopted (identical but not written by
   agemon on this machine), changed (your edit, kept), absent, or not a regular file. It
@@ -332,15 +346,19 @@ and OpenCode read both folders, so they may list a skill twice once copies exist
   On macOS, run agemon as your own user: it refuses to run as root there, because
   everything it installs belongs to one user. `inspect`, `status` and `plan` are
   read-only and run on any OS with Node.js.
-- agnix (the `cli-tool` capability) has pinned builds for Linux x64, Linux arm64 and
-  Apple Silicon Macs. On other machines (Intel Macs, x64 Node under Rosetta, other Linux
-  architectures) agemon skips `cli-tool` and says so; `agemon.toml` keeps it.
+- The `cli-tool` capability installs agnix, gitleaks and ast-grep. agnix has pinned builds
+  for Linux x64, Linux arm64 and Apple Silicon Macs; gitleaks and ast-grep also have one
+  for Intel Macs. agemon offers each tool only where it has a build and names the ones it
+  skips (on an Intel Mac, or x64 Node under Rosetta, that is agnix). Where none has a
+  build (other Linux architectures) agemon skips `cli-tool` and says so; `agemon.toml`
+  keeps it.
 - Without pipx, install it first: `sudo apt install pipx`, or on macOS
   `brew install pipx` with Homebrew's bin directory on `PATH`.
 - The daemon needs systemd on Linux, or launchd on macOS. Without systemd (most
   containers, WSL without systemd), agemon skips the daemon and says so; `agemon.toml`
   still lists it for machines that have systemd.
 - Node.js `>=22.12` (used to run the installed CLI; no other Node tooling needed).
+- browser-testing group: Python 3 and the Playwright package with its browsers (`pip install playwright && playwright install chromium`); agemon does not install them.
 - `curl` and `tar` (used by the installer script only).
 - Binaries checked at runtime: `python3`, `pip`, `pipx`, `uv`, `code-review-graph`.
 
@@ -610,6 +628,10 @@ Yes, agemon works with Claude in three places, and each gets a different part of
 The plugin marketplace was added in agemon 6.1.0, but it doesn't need agemon installed at all.
 See [Plugins vs. an agemon install](#plugins-vs-an-agemon-install).
 
+In Claude Code, agemon also runs read-heavy subagent work on Haiku: it installs an `Explore`
+override and role agents with pinned models, and `agemon usage` shows what each subagent type
+cost and which model it ran on. See [How agemon routes subagents](docs/subagent-routing.md).
+
 ### claude.ai
 
 1. In claude.ai, open **Customize** > **Plugins**.
@@ -746,6 +768,12 @@ uninstalling a global npm package or disabling user linger. It then asks once. N
   it tracked shared tools is kept unless you pass `--remove-shared code-review-graph,agnix`
   (or one of them); the kept line prints the manual uninstall command. See
   [Two Ledgers](docs/architecture-and-operations.md#two-ledgers).
+- gitleaks and ast-grep are shared the same way. agemon installs them under
+  `~/.local/share/agemon-tools` and links them as `~/.local/bin/gitleaks` and
+  `~/.local/bin/ast-grep` (`/usr/local/lib/agemon-tools` and `/usr/local/bin` as root).
+  ast-grep's `sg` alias is never linked, because `sg` is also a system command. An
+  existing tool at a link path is never replaced or removed: agemon uses it if it runs
+  and refuses otherwise. `nuke` removes only the links and directories agemon created.
 - skills: `nuke` removes `.claude/skills/<name>` itself, without the skills CLI and
   without network access, and only when its content is a version agemon installed; an
   edited copy is kept and named. A custom group's skill counts as installed by agemon
@@ -785,7 +813,9 @@ call any model.
 
 For each session it adds up what every response cost, then prices the subagents' same tokens at
 the session's own model. The difference is the estimated saving. It also shows how many sessions
-used subagents, and how many of those calls ran cheaper than the session's model.
+used subagents, how many subagent calls ran cheaper than the session's model, and how the cost
+splits between the main session and its subagents. For each subagent type it lists the models it
+ran on, its cost and its saving. If any `Explore` call ran on Opus or Fable, it says so and tells you to run `agemon`.
 
 - **It is an estimate, not a bill.** It uses API list prices, so on a subscription a saving means
   less of your usage limit spent, not less money paid. It assumes standard speed and global routing.
@@ -888,7 +918,9 @@ anything like that would be lost, the original is saved under `.agemon/backups/`
 names the file. Each such rewrite keeps its own saved original; a later one never overwrites an
 earlier one. It never happens with `--dry-run`, `--only` or `agemon plan`, or after a rollback. To
 opt out later, remove the capability from `capabilities`; because it is in `known_capabilities`,
-agemon does not ask again. Older agemon releases reject a file with `known_capabilities` or
+agemon does not ask again. The opt-in `delegation-guard` capability is left out of both lists
+when the file is first written, so the next interactive run offers it once; see
+[How agemon routes subagents](docs/subagent-routing.md#opt-in-the-delegation-guard). Older agemon releases reject a file with `known_capabilities` or
 `agents`, so upgrade agemon in CI before committing it. The rewrite is skipped while `/.agemon/` is
 not git-ignored, and a full `agemon nuke` deletes `.agemon/`, including that saved original.
 
@@ -1065,7 +1097,10 @@ Every third-party tool is pinned to an exact version
 upstream commit it was copied from in its `NOTICE.md`. agnix is installed with
 `npm install --global --ignore-scripts agnix@<pin>`, so its own download script never runs;
 agemon then downloads the binary from the matching GitHub release itself and installs it only
-if the archive matches a sha256 pinned in `src/plugins/pins.ts`.
+if the archive matches a sha256 pinned in `src/plugins/pins.ts`. gitleaks comes straight from
+its GitHub release archive, checked against a sha256 pinned there too. ast-grep's binary is
+unpacked from its `@ast-grep/cli-<platform>` npm tarball, also sha256-pinned, without npm
+or its install script.
 
 Machine-level caches outside the repo, under `${XDG_STATE_HOME:-~/.local/state}/agemon/`
 (macOS: `~/Library/Application Support/agemon/`), are
@@ -1074,7 +1109,7 @@ kept by `nuke` because every repo on the machine shares them:
 - `tools/<hash>/`: the `skills` CLI, installed from `assets/tools/package-lock.json`
 - `skills-src/<commit>/`: the pinned checkout of a custom skill group's GitHub source that `skills add` installs from
 - `usage/<repo key>.json`: the numbers `agemon usage` has saved for a repository
-- `machine.json`: which repositories use code-review-graph, agnix and user linger, and who
+- `machine.json`: which repositories use code-review-graph, agnix, gitleaks, ast-grep and user linger, and who
   installed or enabled them
 
 ## Local Development
@@ -1132,7 +1167,7 @@ Useful sandbox flags:
 
 ## Vendored Skills & Attribution
 
-The `essentials`, `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`,
+The `essentials`, `design`, `security`, `code-quality`, `architecture`, `self-review`, `performance`, `commit`, `nuxt-vue`, `browser-testing`, `motion`,
 `workflow`, `output-style`, `founder`, `teamlead` and `geo-seo` skill groups (see [Skill Groups](#skill-groups)) are vendored under
 `assets/skills/<group>/<skill>/`.
 Each vendored skill directory carries a `NOTICE.md` (source repo, exact commit, retrieval date)
@@ -1159,8 +1194,11 @@ that already have those skills recognise them and can update them.
 | `agemon-founder-board` and the other `agemon-founder-*` skills | `founder-board` and the other `founder-*` skills | [Jakeschincariol/founder-skill](https://github.com/Jakeschincariol/founder-skill) |
 | `agemon-architecture` | `clean-architecture` | [nathankim0/clean-architecture-skills](https://github.com/nathankim0/clean-architecture-skills) |
 | `agemon-verify-before-done`, `agemon-review-intake`, `agemon-review-request`, `agemon-root-cause` | `verification-before-completion`, `receiving-code-review`, `requesting-code-review`, `systematic-debugging` | [obra/superpowers](https://github.com/obra/superpowers) (cherry-picked; not a full vendor of that framework) |
+| `agemon-vue`, `agemon-nuxt`, `agemon-nitro`, `agemon-pinia`, `agemon-vite`, `agemon-vitest`, `agemon-unocss` | the same names without `agemon-` | [antfu/skills](https://github.com/antfu/skills) (generated from each project's docs; the Vue docs are CC-BY-4.0) |
+| `agemon-webapp-testing` | `webapp-testing` | [anthropics/skills](https://github.com/anthropics/skills) (Apache-2.0) |
+| `agemon-motion-design` | `motion-design` | [LottieFiles/motion-design-skill](https://github.com/LottieFiles/motion-design-skill) |
 | `agemon-clean-code` | `karpathy-guidelines` | [swarmclawai/andrej-karpathy-skills](https://github.com/swarmclawai/andrej-karpathy-skills) |
-| `agemon-house-rules`, `agemon-performance`, `agemon-commit`, `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | — | Original — authored for this project, `agemon-house-rules` distilled from this repo's own `AGENTS.md`. The `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` keep their original `skill-*` names rather than the `agemon-*` convention. |
+| `agemon-house-rules`, `agemon-unused-code-check`, `agemon-performance`, `agemon-commit`, `agemon-plan-rfc`, `prd-generator`, `skill-headofit-audit`, `skill-incident-rca`, `skill-meeting-lifecycle`, `skill-obsidian-vault-sync`, `skill-prd-decomposer`, `skill-sec-check`, `skill-task-extractor`, `skill-techlead-reviewer`, `skill-tech-spike` | — | Original — authored for this project, `agemon-house-rules` distilled from this repo's own `AGENTS.md`. The `team-lead` skills beyond `agemon-plan-rfc` and `prd-generator` keep their original `skill-*` names rather than the `agemon-*` convention. |
 
 `agemon-design`'s reference files still say "ui-craft" in two places: an older project's
 `.ui-craft/` directory, which the skill reads but never rewrites (new files go in `.design/`), and

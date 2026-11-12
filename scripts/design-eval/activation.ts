@@ -23,7 +23,9 @@ import {
   installArm,
   newBatchId,
   PROJECT_DESIGN_SKILL,
+  PROJECT_MOTION_SKILL,
   parseArm,
+  parseExtraGroups,
   parseModel,
   reportedModel,
   resultsPath,
@@ -42,6 +44,7 @@ const ACTIVATION_KINDS = [
   "small-edit",
   "near-miss",
   "guidelines-boundary",
+  "motion",
 ] as const;
 
 export type ActivationKind = (typeof ACTIVATION_KINDS)[number];
@@ -164,6 +167,7 @@ export interface ActivationOptions {
   runner: ClaudeRunner;
   workRoot: string;
   skillRef?: string;
+  extraGroups?: string[];
   model?: string;
   effort?: string;
   allowContaminated?: boolean;
@@ -185,6 +189,12 @@ function isContaminated(
   return foreignAnnounced.length > 0 || (arm === "A" && invoked.length > 0);
 }
 
+function activatingSkills(kind: ActivationKind): string[] {
+  return kind === "motion"
+    ? [PROJECT_DESIGN_SKILL, PROJECT_MOTION_SKILL]
+    : [PROJECT_DESIGN_SKILL];
+}
+
 export async function runActivation(options: ActivationOptions) {
   const runs: ActivationRun[] = [];
   let model: string | undefined;
@@ -196,7 +206,12 @@ export async function runActivation(options: ActivationOptions) {
         join(options.workRoot, "activation-"),
       );
       try {
-        installArm(projectDirectory, options.arm, options.skillRef);
+        installArm(
+          projectDirectory,
+          options.arm,
+          options.skillRef,
+          options.extraGroups,
+        );
         const run = await options.runner({
           cwd: projectDirectory,
           prompt: activationCase.prompt,
@@ -208,13 +223,20 @@ export async function runActivation(options: ActivationOptions) {
         });
         model ??= reportedModel(run.transcript);
         const assessment = assessRunIn(run, projectDirectory);
-        const invoked = designSkillNames(activatedSkills(run.transcript));
+        const invokedSkills = activatedSkills(run.transcript);
+        const invoked = designSkillNames(invokedSkills);
+        const invokedMotion = invokedSkills.filter(
+          (name) => name === PROJECT_MOTION_SKILL,
+        );
         const record: ActivationRun = {
           prompt: activationCase.prompt,
           kind: activationCase.kind,
           expected: activationCase.expected,
           activated:
-            options.arm === "B" && invoked.includes(PROJECT_DESIGN_SKILL),
+            options.arm === "B" &&
+            activatingSkills(activationCase.kind).some((name) =>
+              invokedSkills.includes(name),
+            ),
           errored: assessment.status !== "ok",
           errorReason: assessment.reason,
           contaminated: isContaminated(
@@ -222,7 +244,7 @@ export async function runActivation(options: ActivationOptions) {
             designSkillNames(announcedSkills(run.transcript)),
             invoked,
           ),
-          invokedDesignSkills: invoked,
+          invokedDesignSkills: [...invoked, ...invokedMotion],
           namespacedCall: invoked.some((name) => name.includes(":")),
           exitCode: run.exitCode,
           announcedSkillCount: announcedSkills(run.transcript).length,
@@ -273,6 +295,7 @@ async function main(): Promise<void> {
       model: { type: "string" },
       effort: { type: "string" },
       "skill-ref": { type: "string", default: DEFAULT_SKILL_REF },
+      "extra-groups": { type: "string" },
       "allow-contaminated": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
     },
@@ -309,6 +332,7 @@ async function main(): Promise<void> {
     agemonCommit: currentCommit(),
     arm,
     skillRef: values["skill-ref"] as string,
+    extraGroups: parseExtraGroups(values["extra-groups"]),
     isolationNote: ISOLATION_NOTE,
     cases: [] as ActivationRun[],
   };
@@ -324,6 +348,7 @@ async function main(): Promise<void> {
       runner: spawnClaude,
       workRoot,
       skillRef: header.skillRef,
+      extraGroups: header.extraGroups,
       model: parseModel(values.model),
       effort: values.effort,
       allowContaminated: values["allow-contaminated"],

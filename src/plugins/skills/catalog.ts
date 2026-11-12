@@ -18,11 +18,16 @@ export interface SkillBundleEntry {
 
 export type AgentModel = "haiku" | "sonnet" | "opus";
 
+export type AgentEffort = "low" | "medium" | "high";
+
 export interface AgentDefinition {
   name: string;
+  fileStem?: string;
   description: string;
   tools: readonly string[];
   model?: AgentModel;
+  effort?: AgentEffort;
+  maxTurns?: number;
   readonly briefPath: string;
 }
 
@@ -87,18 +92,35 @@ function geoAuditAgent(
   };
 }
 
+type RoleAgentOptions = Pick<
+  AgentDefinition,
+  "fileStem" | "effort" | "maxTurns"
+>;
+
+const READ_ONLY_TOOLS: readonly string[] = ["Read", "Grep", "Glob"];
+const SEARCH_AGENT_LIMITS: RoleAgentOptions = {
+  effort: "medium",
+  maxTurns: 30,
+};
+const WORKER_AGENT_LIMITS: RoleAgentOptions = {
+  effort: "medium",
+  maxTurns: 50,
+};
+
 function workflowRoleAgent(
   name: string,
   briefFileName: string,
   description: string,
   tools: readonly string[],
   model: AgentModel,
+  options: RoleAgentOptions,
 ): AgentDefinition {
   return {
     name,
     description,
     tools,
     model,
+    ...options,
     get briefPath() {
       return join(
         resolveVendoredSkillPath(
@@ -151,6 +173,7 @@ export const SKILL_GROUPS: SkillGroup[] = [
     skills: [
       vendoredSkill("code-quality", "agemon-clean-code"),
       vendoredSkill("code-quality", "agemon-house-rules"),
+      vendoredSkill("code-quality", "agemon-unused-code-check"),
     ],
   },
   {
@@ -283,16 +306,18 @@ export const SKILL_GROUPS: SkillGroup[] = [
       workflowRoleAgent(
         "agemon-scout",
         "role-scout.md",
-        "Cheap read-only search: finds code, traces usages and digests logs, then reports paths and lines. Changes nothing.",
-        ["Read", "Grep", "Glob"],
+        "Use proactively for read-only searches that would pull many files or long logs into the conversation: finding code, tracing usages, digesting logs. Runs on the cheapest model and reports paths and lines; changes nothing.",
+        READ_ONLY_TOOLS,
         "haiku",
+        SEARCH_AGENT_LIMITS,
       ),
       workflowRoleAgent(
         "agemon-worker",
         "role-worker.md",
-        "Mid-tier implementer for one well-defined task: routine code changes and routine reviews. Hands back anything needing a design decision.",
-        ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+        "Use for one well-defined implementation task or routine review whose spec is already written. Runs on the mid-tier model and hands back anything that needs a design decision.",
+        [...READ_ONLY_TOOLS, "Edit", "Write", "Bash"],
         "sonnet",
+        WORKER_AGENT_LIMITS,
       ),
     ],
   },
@@ -324,6 +349,49 @@ export const SKILL_GROUPS: SkillGroup[] = [
       vendoredSkill("founder", "agemon-founder-plan"),
     ],
   },
+  {
+    id: "nuxt-vue",
+    label: "Nuxt / Vue",
+    description:
+      "Vue 3, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS reference skills generated from each project's docs at a pinned commit. They describe the versions current at that commit (Nuxt 5); check your project's versions.",
+    defaultSelected: false,
+    skills: [
+      vendoredSkill("nuxt-vue", "agemon-vue"),
+      vendoredSkill("nuxt-vue", "agemon-nuxt"),
+      vendoredSkill("nuxt-vue", "agemon-nitro"),
+      vendoredSkill("nuxt-vue", "agemon-pinia"),
+      vendoredSkill("nuxt-vue", "agemon-vite"),
+      vendoredSkill("nuxt-vue", "agemon-vitest"),
+      vendoredSkill("nuxt-vue", "agemon-unocss"),
+    ],
+  },
+  {
+    id: "browser-testing",
+    label: "Browser Testing",
+    description:
+      "Test a local web app in a real browser by writing Python Playwright scripts: start the dev server, inspect the rendered page, capture screenshots and console logs. Needs Python 3 and Playwright with its browsers, which agemon does not install. The agent runs Python and your server commands, so expect permission prompts.",
+    defaultSelected: false,
+    skills: [vendoredSkill("browser-testing", "agemon-webapp-testing")],
+  },
+  {
+    id: "motion",
+    label: "Motion",
+    description:
+      "Motion design for UI animation: timing, easing, choreography and Disney principles adapted for interfaces, for CSS, Framer Motion, GSAP, Lottie or any animation system.",
+    defaultSelected: false,
+    skills: [vendoredSkill("motion", "agemon-motion-design")],
+  },
+];
+
+export const CORE_AGENTS: readonly AgentDefinition[] = [
+  workflowRoleAgent(
+    "Explore",
+    "role-scout.md",
+    "Fast read-only codebase exploration: finds files, traces usages and answers where/how questions. Reports paths and lines with a short summary; changes nothing.",
+    READ_ONLY_TOOLS,
+    "haiku",
+    { ...SEARCH_AGENT_LIMITS, fileStem: "explore" },
+  ),
 ];
 
 export const RETIRED_AGENT_NAMES: readonly string[] = [];

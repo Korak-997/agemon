@@ -1,0 +1,14 @@
+{
+  "name": "invoice-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "nuxt": "^3.13.0",
+    "vitest": "^2.1.0"
+  }
+}

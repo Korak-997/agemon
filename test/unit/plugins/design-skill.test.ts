@@ -224,6 +224,102 @@ describe("agemon-design skill content", () => {
     );
   });
 
+  it("routes interactive illustrations to illustration.md", () => {
+    expect(designFile("SKILL.md")).toContain("(references/illustration.md)");
+    expect(designFile("references/routing.md")).toContain("(illustration.md)");
+
+    const illustration = designFile("references/illustration.md");
+    for (const heading of [
+      "## When to read this",
+      "## Frame",
+      "## Projection",
+      "## Paint order",
+      "## Line hierarchy",
+      "## Hit areas",
+      "## One loop",
+      "## Reduced motion",
+    ]) {
+      expect(illustration).toContain(heading);
+    }
+    const frame = illustration.split("## Frame")[1]?.split(/^## /mu)[0];
+    expect(frame).toContain("aspect-ratio");
+    expect(frame).toContain("viewBox");
+  });
+
+  it("keeps ease-in banned for arriving elements", () => {
+    expect(designFile("references/motion.md")).toContain(
+      "`ease-in` for anything arriving or staying on screen",
+    );
+  });
+
+  it("allows acceleration only for elements leaving", () => {
+    const motion = designFile("references/motion.md");
+
+    expect(motion).toContain("cubic-bezier(0.4, 0, 1, 1)");
+    expect(motion).toContain("leaving the screen");
+    expect(motion).not.toContain(
+      "- [ ] Different easings on entrance vs exit of the same element.",
+    );
+  });
+
+  it("defines reduced motion when motion is the content", () => {
+    expect(designFile("references/motion.md")).toContain(
+      "When motion is the content",
+    );
+  });
+
+  it("hit-tests against the resting pose", () => {
+    expect(designFile("references/motion.md")).toContain(
+      "illustration.md#hit-areas",
+    );
+  });
+
+  it("writes illustration.md in its own words and credits every idea taken", () => {
+    const illustration = designFile("references/illustration.md");
+
+    for (const copied of [
+      "Clamp every lift, gap and lean",
+      "Past roughly a hundred solids",
+      "own rest top",
+    ]) {
+      expect(illustration).not.toContain(copied);
+    }
+    const credit = designFile("NOTICE.md")
+      .split("\n")
+      .find((line) => line.startsWith("- `references/illustration.md`:"));
+    for (const idea of [
+      "stagger by distance",
+      "designed rest pose",
+      "springs for continuous input",
+      "no words inside the figure",
+    ]) {
+      expect(credit).toContain(idea);
+    }
+  });
+
+  it("gives one exit-easing rule in every reference", () => {
+    expect(designFile("references/actions.md")).not.toContain(
+      "Never `ease-in` on UI",
+    );
+    expect(designFile("references/actions.md")).toContain("leaving the screen");
+    expect(designFile("references/review.md")).toContain("leaving the screen");
+    expect(designFile("references/motion.md")).not.toContain(
+      "only place an accelerating curve is right",
+    );
+  });
+
+  it("states the axis convention behind the paint order", () => {
+    expect(designFile("references/illustration.md")).toContain(
+      "toward the viewer",
+    );
+  });
+
+  it("makes script-driven figures read the reduced-motion preference", () => {
+    expect(designFile("references/illustration.md")).toContain(
+      "matchMedia('(prefers-reduced-motion: reduce)')",
+    );
+  });
+
   it("does not tell every card to carry a sparkline", () => {
     expect(designFile("SKILL.md")).not.toContain("Sparklines on all");
     expect(designFile("references/recipe-auth.md")).not.toContain(

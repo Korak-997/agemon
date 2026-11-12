@@ -119,7 +119,7 @@ const README_PAGES: ReadmePage[] = [
     title: "Upgrading agemon",
     description:
       "Check your version, upgrade, stay on or go back to a release, and what a new version brings.",
-    sidebarOrder: 3,
+    sidebarOrder: 4,
     headings: ["Upgrading agemon"],
   },
   {
@@ -145,6 +145,14 @@ interface FilePage {
 }
 
 const FILE_PAGES: FilePage[] = [
+  {
+    source: "docs/subagent-routing.md",
+    route: "/start/subagent-routing/",
+    title: "How agemon routes subagents",
+    description:
+      "The files agemon writes so Claude Code runs read-heavy work on Haiku, how to measure it in your repository, and when routing costs more.",
+    sidebarOrder: 3,
+  },
   {
     routeName: "security",
     source: "SECURITY.md",

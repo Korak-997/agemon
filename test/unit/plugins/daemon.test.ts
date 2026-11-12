@@ -261,6 +261,7 @@ async function createTestContext(options: {
     serviceManager: options.serviceManager,
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };

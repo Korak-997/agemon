@@ -1,5 +1,38 @@
 # agemon
 
+## 6.4.0
+
+Claude Code's code searches now run on Haiku, `agemon usage` shows where the cost went, and there
+are three new skill groups and two new CLI tools.
+
+### Added
+
+- **A Haiku `Explore` agent.** The `agents` capability installs `.claude/agents/explore.md`, so
+  Claude Code's built-in search agent runs on Haiku instead of the Opus alias. It needs no skill
+  group. An existing agent file named `Explore` is left alone. See
+  [How agemon routes subagents](docs/subagent-routing.md).
+- **`delegation-guard` (opt-in, experimental).** Hooks that, in a chat where you turn them on,
+  allow 12 searches per message in the main conversation, then point Claude to `Explore`. It is
+  never installed by default: an interactive run offers it once, or run
+  `agemon add delegation-guard`. agemon's eval hasn't measured it yet.
+- **gitleaks and ast-grep in `cli-tool`.** Both come from sha256-pinned release archives and are
+  linked into `~/.local/bin`. Each tool is offered only where it has a pinned build, and agemon
+  names the ones it skips. An existing `gitleaks` or `ast-grep` is never replaced.
+- **New skill groups:** `nuxt-vue` (Vue, Nuxt, Nitro, Pinia, Vite, Vitest and UnoCSS references),
+  `browser-testing` (Python Playwright testing of a local web app; needs Python 3 and Playwright,
+  which agemon does not install) and `motion` (UI motion design). Each is also a Claude plugin.
+- **`agemon-unused-code-check`** in `code-quality`: finds unused code with the project's own Knip.
+- **`agemon-design` guides interactive illustrations.**
+
+### Changed
+
+- **`agemon usage` splits the cost** between the main session and its subagents, lists each
+  subagent type with the models it ran on, and warns when an `Explore` call ran on Opus or Fable.
+- **The `Explore` agent and the workflow role agents run at medium effort with a turn limit**
+  (30 turns for search, 50 for `agemon-worker`). The skill library pages show each agent's model.
+- **The website has a [subagent routing page](docs/subagent-routing.md)** and a post with every
+  result of the routing eval so far. No saving is claimed yet.
+
 ## 6.3.1
 
 - fix(website): allow control-character regex in skill lint (#77)

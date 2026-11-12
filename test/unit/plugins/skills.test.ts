@@ -104,6 +104,7 @@ async function createTestContext(skillGroupsOption?: string): Promise<Context> {
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
     skillGroupsOption,

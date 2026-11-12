@@ -286,6 +286,74 @@ describe("usage report", () => {
       expect(text).toContain("list prices");
     });
 
+    it("splits main-thread and subagent cost", () => {
+      const summary = summarizeSessions([
+        {
+          ...session("s1", "2026-11-01", [
+            {
+              agentType: "Explore",
+              model: HAIKU,
+              costUsd: 0.1,
+              costAtSessionModelUsd: 0.1,
+            },
+            {
+              agentType: "agemon-worker",
+              model: SONNET,
+              costUsd: 0.3,
+              costAtSessionModelUsd: 0.3,
+            },
+          ]),
+          costUsd: 1,
+        },
+      ]);
+      expect(summary.mainCostUsd).toBeCloseTo(0.6);
+      expect(summary.subagentCostUsd).toBeCloseTo(0.4);
+    });
+
+    it("counts models per agent type", () => {
+      const explore = (model: string) => ({
+        agentType: "Explore",
+        model,
+        costUsd: 1,
+        costAtSessionModelUsd: 1,
+      });
+      const summary = summarizeSessions([
+        session("s1", "2026-11-01", [
+          explore(HAIKU),
+          explore(HAIKU),
+          explore(OPUS),
+        ]),
+      ]);
+      expect(summary.byAgentType[0].models).toEqual({
+        [HAIKU]: 2,
+        [OPUS]: 1,
+      });
+      expect(summary.topTierExploreCalls).toBe(1);
+    });
+
+    it("renders the top-tier Explore warning only when nonzero", () => {
+      const explore = (model: string) =>
+        session("s1", "2026-11-01", [
+          {
+            agentType: "Explore",
+            model,
+            costUsd: 1,
+            costAtSessionModelUsd: 1,
+          },
+        ]);
+      const warning =
+        "1 Explore call ran on a top-tier model; run agemon to install the Haiku Explore override.";
+      const onOpus = renderUsageReport(summarizeSessions([explore(OPUS)]));
+      expect(onOpus).toContain(warning);
+      expect(onOpus).toContain("Explore: 1 calls (opus ×1)");
+      expect(onOpus).toContain(
+        "Main session $9.00 (90.0%) · subagents $1.00 (10.0%)",
+      );
+      expect(
+        renderUsageReport(summarizeSessions([explore(HAIKU)])),
+      ).not.toContain("top-tier");
+    });
+
     it("replaces control characters in agent type names", () => {
       const text = renderUsageReport(
         summarizeSessions([
@@ -346,6 +414,37 @@ describe("usage report", () => {
       expect(second.summary.costUsd).toBeCloseTo(4);
       const saved = await readFile(second.historyFile, "utf8");
       expect(JSON.parse(saved).sessions[0].sessionId).toBe("s1");
+    });
+
+    it("loads version-1 history written before the split", async () => {
+      const { historyFile } = await loadUsageReport(repo, {});
+      await writeFile(
+        historyFile,
+        JSON.stringify({
+          version: 1,
+          sessions: [
+            {
+              sessionId: "s1",
+              lastActivity: "2026-11-01T10:00:00.000Z",
+              sessionModel: OPUS,
+              costUsd: 5,
+              unpricedMessages: 0,
+              subagents: [
+                {
+                  agentType: "Explore",
+                  model: OPUS,
+                  costUsd: 2,
+                  costAtSessionModelUsd: 2,
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      const { summary } = await loadUsageReport(repo, {});
+      expect(summary.mainCostUsd).toBeCloseTo(3);
+      expect(summary.subagentCostUsd).toBeCloseTo(2);
+      expect(summary.topTierExploreCalls).toBe(1);
     });
 
     it("refuses to overwrite a history file it cannot read", async () => {

@@ -5,6 +5,7 @@ import { parse } from "yaml";
 import { errorMessage } from "../../src/core/error-message.js";
 import { GITHUB_REPOSITORY } from "../../src/core/github-release.js";
 import type {
+  AgentDefinition,
   SkillBundleEntry,
   SkillGroup,
 } from "../../src/plugins/skills/catalog.js";
@@ -41,6 +42,17 @@ interface SkillProvenance {
 
 const CLAUDE_PAGE_LINK = link(CLAUDE_ROUTE, "Use agemon with Claude");
 export const SKILL_LIBRARY_ROUTE = `/${SKILLS_DIRECTORY}/`;
+
+function agentModelCell(agent: AgentDefinition): PhrasingContent[] {
+  const limits = [
+    agent.effort === undefined ? [] : [`effort ${agent.effort}`],
+    agent.maxTurns === undefined ? [] : [`at most ${agent.maxTurns} turns`],
+  ].flat();
+  return [
+    agent.model === undefined ? text("the session's model") : code(agent.model),
+    ...(limits.length === 0 ? [] : [text(`, ${limits.join(", ")}`)]),
+  ];
+}
 
 export function skillGroupRoute(group: SkillGroup): string {
   return `${SKILL_LIBRARY_ROUTE}${group.id}/`;
@@ -212,10 +224,11 @@ function skillGroupPage(
     body.push(
       heading(text("Subagents")),
       table(
-        ["Agent", "Tools", "Purpose"],
+        ["Agent", "Tools", "Model", "Purpose"],
         group.agents.map((agent) => [
           [code(agent.name)],
           [code(agent.tools.join(", "))],
+          agentModelCell(agent),
           [text(agent.description)],
         ]),
       ),

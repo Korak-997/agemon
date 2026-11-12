@@ -122,6 +122,7 @@ async function createContext(
     serviceManager: {} as ServiceManager,
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
     requestedSkillGroupIds: new Set(options.groups ?? ["commit"]),

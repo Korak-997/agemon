@@ -66,6 +66,7 @@ async function createTestContext(): Promise<Context & { infoLines: string[] }> {
     serviceManager: unusedServiceManager,
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };
@@ -153,7 +154,11 @@ describe("agents plugin — retired agent names", () => {
     await installAgentFile(context, RETIRED_NAME, RETIRED_CONTENTS);
     await rm(join(context.cwd, RETIRED_TARGET));
 
-    expect((await agentsPlugin.describeState?.(context)) ?? []).toEqual([]);
+    expect(
+      ((await agentsPlugin.describeState?.(context)) ?? []).map(
+        (row) => row.label,
+      ),
+    ).toEqual(["Explore"]);
   });
 
   it("status lists a recorded retired agent and how nuke removes it", async () => {

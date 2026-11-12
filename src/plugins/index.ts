@@ -2,6 +2,7 @@ import { agentsPlugin } from "./agents/index.js";
 import { cliToolPlugin } from "./cli-tool/index.js";
 import { crgPlugin } from "./crg/index.js";
 import { daemonPlugin } from "./daemon/index.js";
+import { delegationGuardPlugin } from "./delegation-guard/index.js";
 import { masterPromptPlugin } from "./master-prompt/index.js";
 import { skillsPlugin } from "./skills/index.js";
 import { subagentDefaultPlugin } from "./subagent-default/index.js";
@@ -13,6 +14,7 @@ const capabilityRegistry: AgemonPlugin[] = [
   skillsPlugin,
   agentsPlugin,
   subagentDefaultPlugin,
+  delegationGuardPlugin,
   cliToolPlugin,
   masterPromptPlugin,
 ];
@@ -20,6 +22,10 @@ const capabilityRegistry: AgemonPlugin[] = [
 export const CORE_CAPABILITY_IDS: string[] = capabilityRegistry.map(
   (plugin) => plugin.id,
 );
+
+export const DEFAULT_CAPABILITY_IDS: string[] = capabilityRegistry
+  .filter((plugin) => !plugin.optIn)
+  .map((plugin) => plugin.id);
 
 export function getRegisteredPlugins(): AgemonPlugin[] {
   return [...capabilityRegistry];

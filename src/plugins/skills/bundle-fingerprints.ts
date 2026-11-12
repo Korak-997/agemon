@@ -25,9 +25,11 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     ],
     "agemon-design": [
       "1775ab661da86fdee13b74b0e76a2ce47994e7a0608a1e7df43e7a2a40018c38",
+      "1bdc4b507c1b1ff6f971f52de2776f903d9ba818f1f21561eb1fcab9437f0a02",
       "3401c4c074987666ad5e41ababa58752d67de5725708a76c9cbcd0c6a3851395",
       "3581e052b7effcfe82b98c788dbed81023a6d59b5806e69d74270049458a1d5b",
       "5e565bfdd50ec5bf4dc1480fea3f5f6cea0b9ff0f3e98ccad5fcdaefdc09ab99",
+      "88902fcd162cb712b1eaf8966af724d565badfd165b69083ca560a9d9c584619",
       "a7e453034da8bccf513c72f59aedca951642f4ff7046ad4c9a4a0c25fbcb5009",
       "b8bc96d4c9e6d11f298a218096012616a486f4dc385d12136f53fad889fac5eb",
       "ca2db4034532ef31ba2a8680bfed29a3ef3ab399a0b52d44db9ddc1c7a31b3d0",
@@ -95,8 +97,22 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
       "380dc8813cc2c06b767d79d0216a42e965a48fff01de8dfabe8976aca0f22721",
       "b127f8a1c793cefced3460873ce68290e78eb50a238c1aa94d819c9d9667b087",
     ],
+    "agemon-motion-design": [
+      "8e9e1cdbad561427def365a34ee2d82479abee3b65b10bbcd5b861b49b101487",
+    ],
+    "agemon-nitro": [
+      "d4b265233c884204fc4a4192f5f96b4d13f2a31121e3dfc4e7f7a5e77b065ead",
+      "ec0a4f30e9580cecb6d2ab4371c32986749d478c2f0bc381c74b3f41faf4eb05",
+      "f483804a7d2af31a12599a0a790de3f0e097744a7085e9f381453337114d0f63",
+    ],
+    "agemon-nuxt": [
+      "451c59fa0c1c367d7fef4cd1c9c2840b1078edb46320cf987851a4eba9732780",
+    ],
     "agemon-performance": [
       "2b5c74be35fd534c403f7876fe31fd6e29e653015de91def940fc8a3777f89fd",
+    ],
+    "agemon-pinia": [
+      "da55a8bcda63c86bb6970c8df76088181f7abbf41baae5435748bca2bd964512",
     ],
     "agemon-plan-rfc": [
       "9d02d046d4b4c41748bff437934e3dfbac960b594d06f546ab291cc3b9f2b764",
@@ -120,16 +136,36 @@ export const BUNDLE_FINGERPRINTS: BundleFingerprints = {
     ],
     "agemon-subagent-driven-development": [
       "1bf57d8ec11957be1a596f94bd04a963523421a43f137ea8dac5dbd9f77b6122",
+      "2a7d26aa847492be2b09a5c8efed01198459984c4f29262566e001bbcd194e18",
       "e6ef12508b751a014e002515f040d1646d28954a980c49bb5108373a8e335416",
     ],
     "agemon-test-driven-development": [
       "4b3d22947664025ad8ac5cea203d1b4bce7bd9f5cf54390fe6fc3f351f04e729",
+    ],
+    "agemon-unocss": [
+      "dc8d5fc559ab550d602c7d527c6a2955ffec527a7f51378d9e0315b3dc84f50b",
+    ],
+    "agemon-unused-code-check": [
+      "ff0ba9c6c6a23817d7ba1421cb120762f482608f74a32ff5301213f23622c4fc",
     ],
     "agemon-using-git-worktrees": [
       "1f0bd621aa8cbbe5aaa60101ad3a389cf84d08d3b3be5a7bc7b2dd0b4cb86b69",
     ],
     "agemon-verify-before-done": [
       "dde468e926ec0e96cbeb45ce5b854e964980da8f1329a3743bd7f789bc576903",
+    ],
+    "agemon-vite": [
+      "2903ce0e81e8a4cfed2febaaaafc09748b30aec6c4e88c02b799bdb12d68b2e6",
+    ],
+    "agemon-vitest": [
+      "589f3a62a273258aada73f7f672330c8947f767f5f2cdc5ea0e3ca6842bdedd4",
+    ],
+    "agemon-vue": [
+      "c9702ff7d8aaf823d93e10a1add6a366a5adfad4714b30517cbf847ee7727bf1",
+    ],
+    "agemon-webapp-testing": [
+      "8110cfc3b463aa2db6026b3afa23ebf7d9d0534c45a2801a407d2c0be06caa43",
+      "c50a039d18ff70c651391010b29b5366297d81756cd5f34276e863d71b61c0fe",
     ],
     "agemon-writing-plans": [
       "2bec0bb492e14735f9e24d8aa6d4a0970949e701d611a198568a36a7f7c7616f",

@@ -110,6 +110,7 @@ async function createSandboxContext(): Promise<Context> {
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
     confirm: async () => false,

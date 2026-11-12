@@ -66,6 +66,8 @@ const BRIEF_FILE_BY_AGENT: Record<string, string> = {
   "geo-audit-schema": "schema.md",
 };
 const TECHNICAL_TARGET = ".claude/agents/geo-audit-technical.md";
+const EXPLORE_TARGET = ".claude/agents/explore.md";
+const GEO_AND_EXPLORE_FILE_COUNT = GEO_AGENT_NAMES.length + 1;
 const UNTRUSTED_CONTENT_HEADING = "## Untrusted content";
 
 afterEach(async () => {
@@ -148,6 +150,7 @@ async function createTestContext(): Promise<TestContext> {
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };
@@ -267,9 +270,11 @@ async function applyWithBreaker(
 }
 
 describe("agents plugin — which agents it plans", () => {
-  it("plans nothing when no skill group with agents is installed or planned", async () => {
+  it("plans only the Explore override when no skill group with agents is installed or planned", async () => {
     const context = await createTestContext();
-    expect(await planFor(context)).toEqual([]);
+    expect(
+      (await planFor(context)).map((operation) => operation.targetPath),
+    ).toEqual([EXPLORE_TARGET]);
   });
 
   it("plans the GEO agents for a geo-seo group recorded by an older agemon", async () => {
@@ -278,9 +283,10 @@ describe("agents plugin — which agents it plans", () => {
 
     const plan = await planFor(context);
 
-    expect(plan.map((operation) => operation.targetPath)).toEqual(
-      GEO_AGENT_NAMES.map((name) => `.claude/agents/${name}.md`),
-    );
+    expect(plan.map((operation) => operation.targetPath)).toEqual([
+      ...GEO_AGENT_NAMES.map((name) => `.claude/agents/${name}.md`),
+      EXPLORE_TARGET,
+    ]);
     expect(plan.every((operation) => operation.action === "create")).toBe(true);
     expect(plan.every((operation) => operation.capabilityId === "agents")).toBe(
       true,
@@ -295,7 +301,9 @@ describe("agents plugin — which agents it plans", () => {
       action: "install-package",
     } as ProposedOperation;
 
-    expect(await planFor(context, [groupOperation])).toHaveLength(5);
+    expect(await planFor(context, [groupOperation])).toHaveLength(
+      GEO_AND_EXPLORE_FILE_COUNT,
+    );
   });
 
   it("ignores declines, custom groups and operations of other capabilities", async () => {
@@ -323,7 +331,11 @@ describe("agents plugin — which agents it plans", () => {
       },
     ] as ProposedOperation[];
 
-    expect(await planFor(context, lookalikes)).toEqual([]);
+    expect(
+      (await planFor(context, lookalikes)).map(
+        (operation) => operation.targetPath,
+      ),
+    ).toEqual([EXPLORE_TARGET]);
   });
 
   it("plans nothing for a declined group even if one of its skills is recorded", async () => {
@@ -336,7 +348,9 @@ describe("agents plugin — which agents it plans", () => {
       preExisting: false,
     });
 
-    expect(await planFor(context)).toEqual([]);
+    expect(
+      (await planFor(context)).map((operation) => operation.targetPath),
+    ).toEqual([EXPLORE_TARGET]);
   });
 });
 
@@ -355,7 +369,7 @@ describe("agents plugin — file ownership", () => {
     const entries = context.manifest
       .getActions()
       .filter((entry) => entry.plugin === "agents");
-    expect(entries).toHaveLength(5);
+    expect(entries).toHaveLength(GEO_AND_EXPLORE_FILE_COUNT);
     expect(entries[0]).toMatchObject({
       type: "managed-agent-file",
       preExisting: false,
@@ -366,7 +380,7 @@ describe("agents plugin — file ownership", () => {
     expect(await planFor(context)).toEqual([]);
     expect(await agentsPlugin.verify(context)).toEqual({
       ok: true,
-      detail: "5 subagent file(s)",
+      detail: `${GEO_AND_EXPLORE_FILE_COUNT} subagent file(s)`,
     });
 
     await agentsPlugin.uninstall(context);
@@ -583,8 +597,15 @@ describe("agents plugin — file ownership", () => {
 
     const report = await agentsPlugin.apply?.(context, operations);
 
-    expect(await exists(join(context.cwd, ".claude"))).toBe(false);
-    expect(context.manifest.getActions()).toEqual([]);
+    expect(await readdir(join(context.cwd, ".claude/agents"))).toEqual([
+      "explore.md",
+    ]);
+    expect(
+      context.manifest
+        .getActions()
+        .filter((entry) => entry.plugin === "agents")
+        .map((entry) => entry.target),
+    ).toEqual([EXPLORE_TARGET]);
     expect(report?.skipped).toContainEqual({
       operationId: operations.find(
         (operation) => operation.targetPath === TECHNICAL_TARGET,
@@ -592,7 +613,7 @@ describe("agents plugin — file ownership", () => {
       reason:
         "its skill group geo-seo is not installed; approve the skill group install to get it",
     });
-    expect(report?.skipped).toHaveLength(operations.length);
+    expect(report?.skipped).toHaveLength(GEO_AGENT_NAMES.length);
   });
 
   it("a refused replace is reported as skipped, not applied, and gets no validation mark", async () => {
@@ -794,7 +815,9 @@ describe("agents plugin — rollback", () => {
     expect(await readText(context, TECHNICAL_TARGET)).toBe(
       "my own technical agent\n",
     );
-    expect(await readdir(join(context.cwd, ".claude/agents"))).toHaveLength(5);
+    expect(await readdir(join(context.cwd, ".claude/agents"))).toHaveLength(
+      GEO_AND_EXPLORE_FILE_COUNT,
+    );
     expect(context.infoLines.join("\n")).not.toContain("manual cleanup");
   });
 
@@ -865,7 +888,10 @@ describe("agents plugin — status rows", () => {
 
     const rows = await stateRows(context);
 
-    expect(rows.map((row) => row.label)).toEqual(GEO_AGENT_NAMES);
+    expect(rows.map((row) => row.label)).toEqual([
+      ...GEO_AGENT_NAMES,
+      "Explore",
+    ]);
     expect(rowFor(rows, "geo-audit-technical")).toEqual({
       capabilityId: "agents",
       resourceId: "agent-file:geo-audit-technical",
@@ -875,10 +901,30 @@ describe("agents plugin — status rows", () => {
     });
   });
 
-  it("reports nothing when no group with agents is recorded", async () => {
+  it("reports only the absent Explore override when no group with agents is recorded", async () => {
     const context = await createTestContext();
 
+    expect(await stateRows(context)).toEqual([
+      {
+        capabilityId: "agents",
+        resourceId: "agent-file:explore",
+        label: "Explore",
+        state: "absent",
+        detail: "run agemon to create it",
+      },
+    ]);
+  });
+
+  it("reports no Explore row when the user's own agent file defines Explore", async () => {
+    const context = await createTestContext();
+    await writeText(
+      context,
+      ".claude/agents/my-explorer.md",
+      "---\nname: Explore\n---\n\nmine\n",
+    );
+
     expect(await stateRows(context)).toEqual([]);
+    expect((await agentsPlugin.verify(context)).attention).toBeUndefined();
   });
 
   it("an edited agent file is present-modified and not attention", async () => {
@@ -1273,7 +1319,7 @@ describe("agents plugin — consent gate", () => {
     );
     expect(gate?.summary).toContain("geo-audit-content [tools: WebFetch]");
     expect(gate?.announcementWithYes).toMatch(
-      /^Installing 5 Claude Code subagent/,
+      `Installing ${GEO_AND_EXPLORE_FILE_COUNT} Claude Code subagent`,
     );
     expect(gate?.forcesDiff).toBe(false);
   });
@@ -1371,6 +1417,18 @@ describe("agent model pins", () => {
     expect(await renderAgentFile(await agentWithBrief())).toBe(
       '---\nname: pinned-agent\ndescription: "An agent."\ntools: Read\n---\n\nthe brief\n',
     );
+  });
+
+  it("renders effort and maxTurns after model when set", async () => {
+    const rendered = await renderAgentFile({
+      ...(await agentWithBrief("haiku")),
+      effort: "medium",
+      maxTurns: 30,
+    });
+
+    expect(rendered).toContain("model: haiku\neffort: medium\nmaxTurns: 30\n");
+    const geoAgent = await renderAgentFile(technicalAgent());
+    expect(geoAgent).not.toMatch(/^(effort|maxTurns):/mu);
   });
 
   it("every agent agemon ships names its model", () => {
@@ -1502,6 +1560,8 @@ describe("workflow role agents", () => {
   it("pins the scout to the cheapest tier with read-only tools", () => {
     expect(agentNamed("agemon-scout")).toMatchObject({
       model: "haiku",
+      effort: "medium",
+      maxTurns: 30,
       tools: ["Read", "Grep", "Glob"],
     });
   });
@@ -1509,6 +1569,8 @@ describe("workflow role agents", () => {
   it("pins the worker to the mid tier with the tools to implement", () => {
     expect(agentNamed("agemon-worker")).toMatchObject({
       model: "sonnet",
+      effort: "medium",
+      maxTurns: 50,
       tools: ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
     });
   });
@@ -1538,8 +1600,68 @@ describe("workflow role agents", () => {
 
     const plan = await planFor(context, [groupOperation]);
 
-    expect(plan.map((operation) => operation.targetPath)).toEqual(
-      ROLE_AGENT_NAMES.map((name) => `.claude/agents/${name}.md`),
+    expect(plan.map((operation) => operation.targetPath)).toEqual([
+      ...ROLE_AGENT_NAMES.map((name) => `.claude/agents/${name}.md`),
+      EXPLORE_TARGET,
+    ]);
+  });
+});
+
+describe("Explore override", () => {
+  it("plans .claude/agents/explore.md with no skill group installed", async () => {
+    const context = await createTestContext();
+
+    const plan = await planFor(context);
+    const [staged] = (await agentsPlugin.materialize?.(context, plan)) ?? [];
+
+    expect(plan).toEqual([
+      expect.objectContaining({
+        action: "create",
+        targetPath: EXPLORE_TARGET,
+        resourceId: "agent-file:explore",
+      }),
+    ]);
+    expect(staged?.contents.startsWith("---\nname: Explore\n")).toBe(true);
+  });
+
+  it("applies the Explore override without a skill group", async () => {
+    const context = await createTestContext();
+
+    const report = await agentsPlugin.apply?.(context, await planFor(context));
+
+    expect(report?.skipped).toEqual([]);
+    expect(await readText(context, EXPLORE_TARGET)).toContain(
+      "model: haiku\neffort: medium\nmaxTurns: 30\n",
+    );
+  });
+
+  it("treats an existing user-authored explore.md as a conflict, not a replace", async () => {
+    const context = await createTestContext();
+    await writeText(context, EXPLORE_TARGET, "my own explorer\n");
+
+    const plan = await planFor(context);
+    await agentsPlugin.apply?.(context, plan);
+
+    expect(plan).toEqual([
+      expect.objectContaining({
+        action: "conflict",
+        targetPath: EXPLORE_TARGET,
+      }),
+    ]);
+    expect(await readText(context, EXPLORE_TARGET)).toBe("my own explorer\n");
+  });
+
+  it("does not plan explore.md when another agent file already declares name: Explore", async () => {
+    const context = await createTestContext();
+    await writeText(
+      context,
+      ".claude/agents/my-explorer.md",
+      "---\nname: Explore\n---\n\nmine\n",
+    );
+
+    expect(await planFor(context)).toEqual([]);
+    expect(context.infoLines).toContain(
+      "agents: .claude/agents/my-explorer.md already defines Explore; agemon leaves it alone",
     );
   });
 });

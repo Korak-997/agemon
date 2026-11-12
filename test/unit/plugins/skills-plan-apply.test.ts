@@ -128,6 +128,7 @@ async function createTestContext(
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
     skillGroupsOption: options.skillGroupsOption,

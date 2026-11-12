@@ -105,7 +105,7 @@ export interface SharedResourceDeclaration {
   id: SharedResourceId;
   toolName: string;
   manualRemoveCommand: string;
-  removalVerb: "uninstall" | "disable";
+  removalVerb: "uninstall" | "disable" | "remove";
   migratesFromRepoLedgers: boolean;
 }
 
@@ -128,6 +128,7 @@ export interface AgemonPlugin {
   id: string;
   summary?: string;
   dependsOn?: string[];
+  optIn?: boolean;
   riskClass?: RiskClass;
   sharedResources?: SharedResourceDeclaration[];
   detect(ctx: Context): Promise<PluginPresence>;

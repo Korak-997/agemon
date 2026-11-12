@@ -196,7 +196,7 @@ describe("agemon.toml capability validation", () => {
 
       expect(run.exitCode).toBe(1);
       expect(run.stderr.replace(/[\s│]+/g, " ")).toContain(
-        "agemon.toml lists unknown capabilities: skils. Known: crg, daemon, skills, agents, subagent-default, cli-tool, master-prompt",
+        "agemon.toml lists unknown capabilities: skils. Known: crg, daemon, skills, agents, subagent-default, delegation-guard, cli-tool, master-prompt",
       );
       expect(await exists(join(repoDirectory, ".agemon"))).toBe(false);
       expect(await exists(join(repoDirectory, "AGENTS.md"))).toBe(false);
@@ -585,7 +585,7 @@ describe("adding the agents capability to an existing agemon.toml", () => {
   }
 
   const NEW_AGENTS_LINE =
-    "New: capability 'agents', capability 'subagent-default'. Run 'agemon' to choose.";
+    "New: capability 'agents', capability 'subagent-default', capability 'delegation-guard'. Run 'agemon' to choose.";
 
   async function withTerminal(body: () => Promise<void>): Promise<void> {
     const original = {
@@ -674,7 +674,7 @@ describe("adding the agents capability to an existing agemon.toml", () => {
           "agents",
         );
         expect(run.stdout).toContain(
-          "Updated agemon.toml: added 'agents' to capabilities; remove it there to opt out; left 'subagent-default' out; 'agemon add <name>' installs it later. Comments and layout were not kept; the original is saved at .agemon/backups/",
+          "Updated agemon.toml: added 'agents' to capabilities; remove it there to opt out; left 'subagent-default', 'delegation-guard' out; 'agemon add <name>' installs it later. Comments and layout were not kept; the original is saved at .agemon/backups/",
         );
       });
       const rewritten = await readConfig(repoDirectory);
@@ -700,7 +700,9 @@ describe("adding the agents capability to an existing agemon.toml", () => {
         const run = await runFrom(repoDirectory, ["--skip-daemon"]);
 
         expect(run.exitCode).toBe(0);
-        expect(run.stdout).toContain("left 'agents', 'subagent-default' out");
+        expect(run.stdout).toContain(
+          "left 'agents', 'subagent-default', 'delegation-guard' out",
+        );
         expect(run.stdout).toContain("capability 'agents'");
         expect(run.stdout).not.toContain(NEW_AGENTS_LINE);
       });

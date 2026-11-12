@@ -61,8 +61,9 @@ import {
   type PlatformCapabilities,
 } from "../platform/detect.js";
 import {
-  hasPinnedBuildFor,
   pinnedArchiveKeyFor,
+  toolsWithoutPinnedBuild,
+  toolsWithPinnedBuild,
 } from "../plugins/cli-tool/index.js";
 import { CORE_CAPABILITY_IDS, getRegisteredPlugins } from "../plugins/index.js";
 import {
@@ -199,24 +200,57 @@ function findWhatThisMachineCannotRun(
       reason: describeMissingServiceManager(platform),
     });
   }
-  if (!hasPinnedBuildFor(platform)) {
+  if (toolsWithPinnedBuild(platform).length === 0) {
     unrunnable.push({
       id: "cli-tool",
-      reason: `agnix has no pinned build for ${pinnedArchiveKeyFor(platform)}`,
+      reason: describeToolsWithoutPinnedBuild(platform),
     });
   }
   return unrunnable;
+}
+
+function namesOfToolsWithoutPinnedBuild(
+  platform: PlatformCapabilities,
+): string {
+  return toolsWithoutPinnedBuild(platform)
+    .map((tool) => tool.binaryName)
+    .join(", ");
+}
+
+function describeToolsWithoutPinnedBuild(
+  platform: PlatformCapabilities,
+): string {
+  return `no pinned build for ${pinnedArchiveKeyFor(platform)}: ${namesOfToolsWithoutPinnedBuild(platform)}`;
+}
+
+function noteToolsNotOffered(
+  options: CliOptions,
+  platform: PlatformCapabilities,
+  onlyIds: string[] | undefined,
+): void {
+  const toolNames = namesOfToolsWithoutPinnedBuild(platform);
+  const cliToolRuns =
+    toolsWithPinnedBuild(platform).length > 0 &&
+    (onlyIds === undefined || onlyIds.includes("cli-tool"));
+  if (toolNames.length > 0 && cliToolRuns && !options.quiet && !options.json) {
+    console.error(
+      theme.dim(
+        `${toolNames} not offered: no pinned build for ${pinnedArchiveKeyFor(platform)}.`,
+      ),
+    );
+  }
 }
 
 function skippingWhatThisMachineCannotRun(
   options: CliOptions,
   platform: PlatformCapabilities,
 ): CliOptions {
+  const onlyIds = parseOnlyOption(options);
+  noteToolsNotOffered(options, platform, onlyIds);
   const unrunnable = findWhatThisMachineCannotRun(options, platform);
   if (unrunnable.length === 0) {
     return options;
   }
-  const onlyIds = parseOnlyOption(options);
   for (const { id, reason } of unrunnable) {
     if (onlyIds?.includes(id)) {
       throw new Error(`--only ${id} cannot run here: ${reason}.`);
@@ -970,6 +1004,15 @@ Exit codes:
   2    drift found, consent missing, or applied but verification failed
   130  interrupted (143 for SIGTERM)`;
 
+const USAGE_REPORT_HELP = `
+The report shows:
+  main session vs subagents   the cost of each, and its share of the total
+  one row per subagent type   calls, the models they ran on, cost and saving
+  estimated saving            the subagents' tokens repriced at the session's model
+  top-tier Explore warning    shown when an Explore call ran on Opus or Fable
+--json emits the same summary, with mainCostUsd, subagentCostUsd, topTierExploreCalls
+and byAgentType[].models.`;
+
 export function createProgram(recordExitCode: (code: number) => void): Command {
   const program = new Command();
   const record =
@@ -1063,13 +1106,14 @@ export function createProgram(recordExitCode: (code: number) => void): Command {
   program
     .command("usage")
     .description(
-      "Estimate what subagent model choices saved, from saved Claude Code sessions",
+      "Show what the main session and each subagent type cost, and what subagent model choices saved, from saved Claude Code sessions",
     )
     .option(
       "--since <days>",
       "only sessions active in this window, such as 30d",
     )
     .option("--json", "emit the summary as JSON")
+    .addHelpText("after", USAGE_REPORT_HELP)
     .action((_options: CliOptions, command: Command) =>
       record(runUsageCommand)({
         ...command.parent?.opts(),

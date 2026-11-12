@@ -12,8 +12,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { chmod, mkdir, writeFile as writeFileAsync } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { resolveHomeDirectory } from "../platform/home.js";
+import { CLI_TOOL_BUNDLE } from "../plugins/cli-tool/catalog.js";
 import {
   AGNIX_VERSION,
   CODE_REVIEW_GRAPH_PACKAGE_SPEC,
@@ -28,6 +31,12 @@ import {
 } from "../plugins/skills/skills-cli-targets.js";
 import { isPlainSkillName } from "./config.js";
 import { sha256Hex } from "./fingerprint.js";
+import {
+  type LinkedBinaryPaths,
+  linkBinary,
+  linkedBinaryPaths,
+} from "./linked-binary.js";
+import { isSameOrInside } from "./repo-paths.js";
 import { resolveStateRoot } from "./state-root.js";
 import type { SubprocessResult } from "./subprocess-runner.js";
 import type {
@@ -38,6 +47,8 @@ import type {
 const FAKE_CRG_ON_PATH = "/fake/bin/code-review-graph";
 const PINNED_SKILLS_CLI_SUFFIX = `/${SKILLS_CLI_PATH_IN_TOOLS_DIR}`;
 const FAKE_LOCK_VERSION = 1;
+const FAKE_EXECUTABLE_MODE = 0o755;
+const COMMAND_NOT_FOUND_EXIT_CODE = 127;
 
 function formatCommand(command: string, args: string[]): string {
   return [command, ...args].join(" ");
@@ -100,6 +111,16 @@ export function createFakeVerifiedBinaryInstaller(): VerifiedBinaryInstaller {
       fakeInstalledGlobalNpmPackageNames?.add(request.packageName);
       saveFakeGlobalNpmPackages();
     },
+    async installLinked(request) {
+      refuseLinkOutsideThrowawayHome(request.paths);
+      await mkdir(dirname(request.paths.binaryPath), { recursive: true });
+      await writeFileAsync(
+        request.paths.binaryPath,
+        `#!/bin/sh\necho fake ${basename(request.paths.binaryPath)} version ${request.version}\n`,
+      );
+      await chmod(request.paths.binaryPath, FAKE_EXECUTABLE_MODE);
+      await linkBinary(request.paths);
+    },
     async inspect(request) {
       initializeFakeStateIfNeeded();
       return fakeInstalledGlobalNpmPackageNames?.has(request.packageName)
@@ -107,6 +128,15 @@ export function createFakeVerifiedBinaryInstaller(): VerifiedBinaryInstaller {
         : { kind: "absent" };
     },
   };
+}
+
+function refuseLinkOutsideThrowawayHome(paths: LinkedBinaryPaths): void {
+  const home = resolveHomeDirectory();
+  if (home === userInfo().homedir || !isSameOrInside(paths.linkPath, home)) {
+    throw new Error(
+      `The fake installer links only inside a throwaway HOME; refusing to write ${paths.linkPath}. Point HOME at a temporary directory.`,
+    );
+  }
 }
 
 export function takeFakeVerifiedBinaryInstallRequests(): VerifiedBinaryInstallRequest[] {
@@ -703,6 +733,26 @@ function buildFakeAgentResponse(
   return buildFakeAgentUsabilityResponse(binaryName, args);
 }
 
+function buildFakeLinkedToolResponse(
+  tool: (typeof CLI_TOOL_BUNDLE)[number],
+  command: string,
+): SubprocessResult {
+  const commandPath = isAbsolute(command)
+    ? command
+    : linkedBinaryPaths(tool.id, tool.version, tool.binaryName).linkPath;
+  return existsSync(commandPath)
+    ? {
+        code: 0,
+        stdout: `fake ${tool.binaryName} version ${tool.version}\n`,
+        stderr: "",
+      }
+    : {
+        code: COMMAND_NOT_FOUND_EXIT_CODE,
+        stdout: "",
+        stderr: `${tool.binaryName}: command not found`,
+      };
+}
+
 export function runFakeSubprocess(
   command: string,
   args: string[],
@@ -733,6 +783,15 @@ export function runFakeSubprocess(
 
   if (command === "agnix") {
     return buildFakeAgnixResponse(args);
+  }
+
+  const linkedTool = CLI_TOOL_BUNDLE.find(
+    (entry) =>
+      entry.install.kind === "linked-binary" &&
+      entry.binaryName === basename(command),
+  );
+  if (linkedTool) {
+    return buildFakeLinkedToolResponse(linkedTool, command);
   }
 
   const commandBinaryName = basename(command);

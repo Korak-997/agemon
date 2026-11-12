@@ -121,6 +121,7 @@ async function createTestContext(): Promise<Context> {
     serviceManager: createNoOpServiceManager(),
     verifiedBinaryInstaller: {
       install: async () => {},
+      installLinked: async () => {},
       inspect: async () => ({ kind: "absent" }),
     },
   };
@@ -132,7 +133,7 @@ async function planFor(context: Context): Promise<ProposedOperation[]> {
 
 describe("master-prompt plugin — subagent model routing rule", () => {
   const SUBAGENT_MODELS_HEADING = "## Subagent Models";
-  const MAX_ROUTING_RULE_WORDS = 100;
+  const MAX_ROUTING_RULE_WORDS = 110;
 
   function routingSection(agentsFile: string): string {
     const section = agentsFile.slice(
@@ -146,14 +147,14 @@ describe("master-prompt plugin — subagent model routing rule", () => {
     return readFile(join(context.cwd, "AGENTS.md"), "utf8");
   }
 
-  it("carries every tier in the agent-rules block, in under 100 words", async () => {
+  it("carries every tier in the agent-rules block, in under 110 words", async () => {
     const section = routingSection(
       await installedAgentsFile(await createTestContext()),
     );
 
     for (const rule of [
       "A few tool calls: do them yourself.",
-      "Cheapest tier:",
+      "cheapest tier",
       "Mid tier:",
       "Top tier:",
       "Failed twice on one task: go one tier up.",
@@ -161,6 +162,16 @@ describe("master-prompt plugin — subagent model routing rule", () => {
       expect(section).toContain(rule);
     }
     expect(section.split(/\s+/u).length).toBeLessThan(MAX_ROUTING_RULE_WORDS);
+  });
+
+  it("subagent section names Explore as cheap and warns against same-tier delegation", async () => {
+    const section = routingSection(
+      await installedAgentsFile(await createTestContext()),
+    );
+
+    expect(section).toContain("Explore");
+    expect(section).toContain("same model");
+    expect(section).not.toContain("usually inherits");
   });
 
   it("names tiers rather than models, because the block reaches every agent", async () => {

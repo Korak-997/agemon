@@ -12,7 +12,11 @@ import {
   parseNotice,
 } from "../skill-provenance.js";
 
-const NON_MARKDOWN_FILES: readonly string[] = [
+export const NON_MARKDOWN_FILES: readonly string[] = [
+  "browser-testing/agemon-webapp-testing/examples/console_logging.py",
+  "browser-testing/agemon-webapp-testing/examples/element_discovery.py",
+  "browser-testing/agemon-webapp-testing/examples/static_html_automation.py",
+  "browser-testing/agemon-webapp-testing/scripts/with_server.py",
   "design/agemon-design/scripts/audit-page.js",
   "design/agemon-design/scripts/check-source.mjs",
   "design/agemon-design/scripts/deal.mjs",

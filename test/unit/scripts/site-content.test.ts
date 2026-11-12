@@ -887,13 +887,13 @@ describe("Claude and upgrading pages", () => {
     );
   });
 
-  it("orders the Start pages getting started, Claude, upgrading", () => {
+  it("orders the Start pages getting started, Claude, subagent routing, upgrading", () => {
     generate();
     expect(
-      ["getting-started", "claude", "upgrading"].map(
+      ["getting-started", "claude", "subagent-routing", "upgrading"].map(
         (page) => frontmatterOf(generatedPage(`start/${page}.md`)).sidebar,
       ),
-    ).toEqual([{ order: 1 }, { order: 2 }, { order: 3 }]);
+    ).toEqual([{ order: 1 }, { order: 2 }, { order: 3 }, { order: 4 }]);
   });
 });
 

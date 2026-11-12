@@ -354,6 +354,7 @@ const REMOVAL_PAST_TENSE: Record<
 > = {
   uninstall: "uninstalled",
   disable: "disabled",
+  remove: "removed",
 };
 
 async function isPresentOrUnknown(

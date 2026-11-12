@@ -11,9 +11,20 @@ import {
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { parseArgs, promisify } from "node:util";
-import { renderAgentFile } from "../../src/plugins/agents/index.js";
+import {
+  agentFileStem,
+  renderAgentFile,
+} from "../../src/plugins/agents/index.js";
+import {
+  DELEGATION_GUARD_SCRIPT_PATH,
+  readBundledDelegationGuardScript,
+  settingsWithDelegationGuardHooks,
+} from "../../src/plugins/delegation-guard/index.js";
 import { renderRuleFileContents } from "../../src/plugins/master-prompt/index.js";
-import { findSkillGroup } from "../../src/plugins/skills/catalog.js";
+import {
+  CORE_AGENTS,
+  findSkillGroup,
+} from "../../src/plugins/skills/catalog.js";
 import {
   assessRunIn,
   type ClaudeRunner,
@@ -25,8 +36,18 @@ import {
   spawnClaude,
   transcriptEvents,
 } from "../design-eval/claude.js";
+import { generateLargeBase } from "./large-base.js";
+import {
+  bootstrapDifference,
+  type CostDifference,
+  costPerSolvedTask,
+} from "./stats.js";
 
-export type RoutingArm = "N" | "R" | "RD";
+export type RoutingArm = "N" | "A" | "C" | "G";
+type RetiredArm = "R" | "RD";
+export type RecordedArm = RoutingArm | RetiredArm;
+type SessionModel = "opus" | "sonnet";
+type TaskBase = "small" | "large";
 
 export type Grader =
   | { kind: "answer"; answer: string }
@@ -36,12 +57,13 @@ export type Grader =
 export interface RoutingTask {
   name: string;
   prompt: string;
+  base: TaskBase;
   grader: Grader;
 }
 
 export interface RoutingRun {
   task: string;
-  arm: RoutingArm;
+  arm: RecordedArm;
   repeat: number;
   passed: boolean;
   failure?: string;
@@ -52,35 +74,51 @@ export interface RoutingRun {
   agentCalls: number;
   agentCallsWithModel: number;
   agentCallsToRoleAgents: number;
+  // Absent from runs recorded before Phase 3.
+  agentCallsByModel?: Record<string, number>;
 }
 
 export interface ArmSummary {
   runs: number;
   passed: number;
   costUsd: number;
+  costPerSolvedTask: number;
   turns: number;
   costByModel: Record<string, number>;
   agentCalls: number;
+  agentCallsByModel: Record<string, number>;
   shareNamingModel: number | null;
   shareToRoleAgents: number | null;
-  costChangeAgainstN: number | null;
+  mostExpensiveTaskShare: number;
+  costPerSolvedTaskDifference: CostDifference | null;
   passes: boolean | null;
 }
+
+type ArmSummaries = Partial<Record<RecordedArm, ArmSummary>>;
 
 interface RoutingResults {
   label: string;
   confidence: string;
+  arms?: RecordedArm[];
   sessionModel: string;
   effort: string;
   cliVersion: string;
   agemonCommit: string;
   maxBudgetUsd: number;
   isolationNote: string;
-  summary: Partial<Record<RoutingArm, ArmSummary>>;
+  summary: ArmSummaries;
   runs: RoutingRun[];
 }
 
-const ARMS: readonly RoutingArm[] = ["N", "R", "RD"];
+const ROUTING_ARMS: readonly RoutingArm[] = ["N", "A", "C", "G"];
+const ARMS_BEFORE_PHASE_3: readonly RecordedArm[] = ["N", "R", "RD"];
+const DEFAULT_ARMS = "N,A";
+const SESSION_MODELS: readonly SessionModel[] = ["opus", "sonnet"];
+const DEFAULT_SESSION_MODEL: SessionModel = "opus";
+const PENDING_ARM_INSTALLERS: Partial<Record<RoutingArm, string>> = {
+  C: "arm C needs Phase 4",
+};
+export const LARGE_BASE_SEED = 20261111;
 const ROUTING_ROOT = resolve(import.meta.dirname, "../../evals/routing");
 const BASE_DIRECTORY = join(ROUTING_ROOT, "base");
 const TASKS_DIRECTORY = join(ROUTING_ROOT, "tasks");
@@ -90,22 +128,23 @@ const AGENT_RULES_FILE = "AGENTS.md";
 const POINTER_FILE = "CLAUDE.md";
 const SUBAGENT_RULES_SECTION = /## Subagent Models\n[\s\S]*?\n(?=## )/u;
 const SUBAGENT_DEFAULT_MODEL = "sonnet";
-const ROLE_AGENT_NAMES = findSkillGroup(WORKFLOW_GROUP)?.agents?.map(
-  (agent) => agent.name,
-) as string[];
-const SESSION_MODEL = "opus";
+// Headless runs cannot answer the guard's per-chat question, so arm G turns it on up front.
+const GUARD_TURNED_ON = { AGEMON_GUARD: "on" };
+const WORKFLOW_ROLE_AGENTS = findSkillGroup(WORKFLOW_GROUP)?.agents ?? [];
+const ROLE_AGENT_NAMES = WORKFLOW_ROLE_AGENTS.map((agent) => agent.name);
 const ROUTING_TOOLS = "Agent,Read,Glob,Grep,Write,Edit,Bash";
 const TEST_COMMAND_RULES = ["Bash(npm test:*)", "Bash(node --test:*)"];
 const MAX_TURNS = 60;
 const DEFAULT_MAX_BUDGET_USD = 5;
-const DEFAULT_REPEATS = 2;
+const DEFAULT_REPEATS = 4;
 const DEFAULT_BATCH_SIZE = 3;
 const GRADER_TEST_TIMEOUT_MS = 60_000;
-const ALLOWED_FEWER_PASSING_RUNS = 1;
-const REQUIRED_COST_SAVING = 0.2;
-const ANSWER_TOKEN_PATTERN = /[\w./-]+\.js#\w+/gu;
+const ALLOWED_FEWER_PASSING_RUNS_PER_TASK = 1;
+const BOOTSTRAP_RESAMPLES = 2000;
+const BOOTSTRAP_SEED = 1;
+const ANSWER_TOKEN_PATTERN = /[\w./-]+\.(?:js|log)#[\w-]+/gu;
 const INDICATIVE_NOTE =
-  "Indicative: 12 runs per arm can catch only large effects, and a null result means no large effect.";
+  "Indicative: a few runs per task can catch only large effects, and a null result means no large effect.";
 const ISOLATION_NOTE =
   "Runs use only project and local settings, with no MCP servers or web tools. Account-synced skills stay listed, but the Skill tool is off.";
 
@@ -118,24 +157,32 @@ export function loadTasks(names?: string[]): RoutingTask[] {
       );
     }
   }
-  return (names ?? available).map((name) => ({
-    name,
-    prompt: readFileSync(join(TASKS_DIRECTORY, name, "prompt.md"), "utf8"),
-    grader: JSON.parse(
+  return (names ?? available).map((name) => {
+    const { base = "small", ...grader } = JSON.parse(
       readFileSync(join(TASKS_DIRECTORY, name, "task.json"), "utf8"),
-    ),
-  }));
+    );
+    return {
+      name,
+      prompt: readFileSync(join(TASKS_DIRECTORY, name, "prompt.md"), "utf8"),
+      base,
+      grader,
+    };
+  });
 }
 
 function overlayOf(task: RoutingTask): string {
   return join(TASKS_DIRECTORY, task.name, "overlay");
 }
 
-export function prepareProject(
+export async function prepareProject(
   projectDirectory: string,
   task: RoutingTask,
-): void {
-  cpSync(BASE_DIRECTORY, projectDirectory, { recursive: true });
+): Promise<void> {
+  if (task.base === "large") {
+    await generateLargeBase(projectDirectory, LARGE_BASE_SEED);
+  } else {
+    cpSync(BASE_DIRECTORY, projectDirectory, { recursive: true });
+  }
   if (existsSync(overlayOf(task))) {
     cpSync(overlayOf(task), projectDirectory, { recursive: true });
   }
@@ -145,6 +192,8 @@ export async function installRouting(
   projectDirectory: string,
   arm: RoutingArm,
 ): Promise<void> {
+  const pendingInstaller = PENDING_ARM_INSTALLERS[arm];
+  if (pendingInstaller) throw new Error(pendingInstaller);
   const fullRules = renderRuleFileContents(AGENT_RULES_FILE, null);
   writeFileSync(
     join(projectDirectory, AGENT_RULES_FILE),
@@ -157,26 +206,30 @@ export async function installRouting(
   if (arm === "N") return;
   const agentsDirectory = join(projectDirectory, ".claude", "agents");
   mkdirSync(agentsDirectory, { recursive: true });
-  for (const agent of findSkillGroup(WORKFLOW_GROUP)?.agents ?? []) {
+  for (const agent of [...CORE_AGENTS, ...WORKFLOW_ROLE_AGENTS]) {
     writeFileSync(
-      join(agentsDirectory, `${agent.name}.md`),
+      join(agentsDirectory, `${agentFileStem(agent)}.md`),
       await renderAgentFile(agent),
     );
   }
-  if (arm === "RD") {
+  const env = {
+    CLAUDE_CODE_SUBAGENT_MODEL: SUBAGENT_DEFAULT_MODEL,
+    ...(arm === "G" ? GUARD_TURNED_ON : {}),
+  };
+  const settings = `${JSON.stringify({ env }, null, 2)}\n`;
+  writeFileSync(
+    join(projectDirectory, ".claude", "settings.json"),
+    arm === "G" ? settingsWithDelegationGuardHooks(settings) : settings,
+  );
+  if (arm === "G") {
+    mkdirSync(join(projectDirectory, ".claude", "hooks"), { recursive: true });
     writeFileSync(
-      join(projectDirectory, ".claude", "settings.json"),
-      `${JSON.stringify(
-        { env: { CLAUDE_CODE_SUBAGENT_MODEL: SUBAGENT_DEFAULT_MODEL } },
-        null,
-        2,
-      )}\n`,
+      join(projectDirectory, DELEGATION_GUARD_SCRIPT_PATH),
+      await readBundledDelegationGuardScript(),
     );
   }
 }
 
-// A session with background subagents emits one result event each time it wakes. Their cost and
-// model usage are cumulative, but num_turns restarts, so turns must be added up.
 export function totalTurns(transcript: string): number {
   return transcriptEvents(transcript)
     .filter((event) => event.type === "result")
@@ -203,11 +256,17 @@ export function costByModel(transcript: string): Record<string, number> {
 
 export function agentCallCounts(
   transcript: string,
-): Pick<
-  RoutingRun,
-  "agentCalls" | "agentCallsWithModel" | "agentCallsToRoleAgents"
+): Required<
+  Pick<
+    RoutingRun,
+    | "agentCalls"
+    | "agentCallsWithModel"
+    | "agentCallsToRoleAgents"
+    | "agentCallsByModel"
+  >
 > {
-  const inputs = transcriptEvents(transcript).flatMap((event) => {
+  const events = transcriptEvents(transcript);
+  const inputs = events.flatMap((event) => {
     const content = (event.message as { content?: unknown } | undefined)
       ?.content;
     if (event.type !== "assistant" || !Array.isArray(content)) return [];
@@ -215,12 +274,28 @@ export function agentCallCounts(
       .filter((block) => block.type === "tool_use" && block.name === "Agent")
       .map((block) => block.input as Record<string, unknown>);
   });
+  const modelBySubagent = new Map<string, string>();
+  const agentCallsByModel: Record<string, number> = {};
+  for (const event of events) {
+    const subagent = event.parent_tool_use_id;
+    const model = (event.message as { model?: unknown } | undefined)?.model;
+    if (
+      event.type === "assistant" &&
+      typeof subagent === "string" &&
+      typeof model === "string" &&
+      !modelBySubagent.has(subagent)
+    ) {
+      modelBySubagent.set(subagent, model);
+      agentCallsByModel[model] = (agentCallsByModel[model] ?? 0) + 1;
+    }
+  }
   return {
     agentCalls: inputs.length,
     agentCallsWithModel: inputs.filter((input) => input.model).length,
     agentCallsToRoleAgents: inputs.filter((input) =>
       ROLE_AGENT_NAMES.includes(String(input.subagent_type)),
     ).length,
+    agentCallsByModel,
   };
 }
 
@@ -300,7 +375,7 @@ export async function runCell(
   const projectDirectory = mkdtempSync(
     join(options.workRoot, `${task.name}-${arm}-`),
   );
-  prepareProject(projectDirectory, task);
+  await prepareProject(projectDirectory, task);
   await installRouting(projectDirectory, arm);
   const claudeRun = await options.runner({
     cwd: projectDirectory,
@@ -345,7 +420,6 @@ export async function runCell(
       passed,
       failure: assessment.reason,
       turns: totalTurns(claudeRun.transcript),
-      // A killed run never emits its result event, so charge the most it could have spent.
       costUsd: usage.costUsd ?? maxBudgetUsd,
       costIsCapEstimate: usage.costUsd === undefined ? true : undefined,
       costByModel: costByModel(claudeRun.transcript),
@@ -354,73 +428,125 @@ export async function runCell(
   };
 }
 
+function sumByKey(
+  records: readonly Record<string, number>[],
+): Record<string, number> {
+  const sums: Record<string, number> = {};
+  for (const record of records) {
+    for (const [key, value] of Object.entries(record)) {
+      sums[key] = (sums[key] ?? 0) + value;
+    }
+  }
+  return sums;
+}
+
 function summarizeArm(runs: RoutingRun[]): ArmSummary {
   const total = (pick: (run: RoutingRun) => number) =>
     runs.reduce((sum, run) => sum + pick(run), 0);
   const agentCalls = total((run) => run.agentCalls);
   const shareOfAgentCalls = (count: number) =>
     agentCalls === 0 ? null : count / agentCalls;
-  const modelCosts: Record<string, number> = {};
-  for (const run of runs) {
-    for (const [model, cost] of Object.entries(run.costByModel)) {
-      modelCosts[model] = (modelCosts[model] ?? 0) + cost;
-    }
-  }
+  const costUsd = total((run) => run.costUsd);
+  const costByTask = sumByKey(runs.map((run) => ({ [run.task]: run.costUsd })));
   return {
     runs: runs.length,
     passed: runs.filter((run) => run.passed).length,
-    costUsd: total((run) => run.costUsd),
+    costUsd,
+    costPerSolvedTask: costPerSolvedTask(runs),
     turns: total((run) => run.turns),
-    costByModel: modelCosts,
+    costByModel: sumByKey(runs.map((run) => run.costByModel)),
     agentCalls,
+    agentCallsByModel: sumByKey(runs.map((run) => run.agentCallsByModel ?? {})),
     shareNamingModel: shareOfAgentCalls(
       total((run) => run.agentCallsWithModel),
     ),
     shareToRoleAgents: shareOfAgentCalls(
       total((run) => run.agentCallsToRoleAgents),
     ),
-    costChangeAgainstN: null,
+    mostExpensiveTaskShare: Math.max(...Object.values(costByTask)) / costUsd,
+    costPerSolvedTaskDifference: null,
     passes: null,
   };
 }
 
+function keepsPassCountOnEveryTask(
+  baseline: readonly RoutingRun[],
+  candidate: readonly RoutingRun[],
+): boolean {
+  const passedOn = (runs: readonly RoutingRun[], task: string) =>
+    runs.filter((run) => run.task === task && run.passed).length;
+  return [...new Set(baseline.map((run) => run.task))].every(
+    (task) =>
+      passedOn(candidate, task) >=
+      passedOn(baseline, task) - ALLOWED_FEWER_PASSING_RUNS_PER_TASK,
+  );
+}
+
 export function applyPassRule(
   runs: RoutingRun[],
-): Partial<Record<RoutingArm, ArmSummary>> {
-  const summary: Partial<Record<RoutingArm, ArmSummary>> = {};
-  for (const arm of ARMS) {
-    const armRuns = runs.filter((run) => run.arm === arm);
-    if (armRuns.length > 0) summary[arm] = summarizeArm(armRuns);
+  baselineArm: RecordedArm,
+): ArmSummaries {
+  const summary: ArmSummaries = {};
+  const runsOf = (arm: RecordedArm) => runs.filter((run) => run.arm === arm);
+  for (const arm of new Set(runs.map((run) => run.arm))) {
+    summary[arm] = summarizeArm(runsOf(arm));
   }
-  const baseline = summary.N;
-  if (!baseline) return summary;
-  for (const arm of ARMS.filter((name) => name !== "N")) {
-    const armSummary = summary[arm];
-    if (!armSummary) continue;
-    armSummary.costChangeAgainstN = armSummary.costUsd / baseline.costUsd - 1;
-    if (armSummary.runs !== baseline.runs) continue;
+  const baselineRuns = runsOf(baselineArm);
+  if (baselineRuns.length === 0) return summary;
+  for (const [arm, armSummary] of Object.entries(summary)) {
+    const candidateRuns = runsOf(arm as RecordedArm);
+    if (arm === baselineArm || candidateRuns.length !== baselineRuns.length) {
+      continue;
+    }
+    armSummary.costPerSolvedTaskDifference = bootstrapDifference(
+      baselineRuns,
+      candidateRuns,
+      BOOTSTRAP_RESAMPLES,
+      BOOTSTRAP_SEED,
+    );
     armSummary.passes =
-      armSummary.passed >= baseline.passed - ALLOWED_FEWER_PASSING_RUNS &&
-      armSummary.costUsd <= baseline.costUsd * (1 - REQUIRED_COST_SAVING);
+      keepsPassCountOnEveryTask(baselineRuns, candidateRuns) &&
+      armSummary.costPerSolvedTaskDifference.high < 0;
   }
   return summary;
 }
 
-// Rotating which arm goes first keeps a time-of-day or rate-limit effect from landing on one arm.
 export function plannedCells(
   taskNames: string[],
+  arms: readonly RoutingArm[],
   repeats: number,
 ): { task: string; arm: RoutingArm; repeat: number }[] {
   const cells = [];
   for (let repeat = 1; repeat <= repeats; repeat += 1) {
     for (const [taskIndex, task] of taskNames.entries()) {
-      for (let offset = 0; offset < ARMS.length; offset += 1) {
-        const arm = ARMS[(taskIndex + repeat + offset) % ARMS.length];
+      for (let offset = 0; offset < arms.length; offset += 1) {
+        const arm = arms[(taskIndex + repeat + offset) % arms.length];
         cells.push({ task, arm, repeat });
       }
     }
   }
   return cells;
+}
+
+function parseArms(value: string): RoutingArm[] {
+  const arms = value.split(",");
+  for (const arm of arms) {
+    if (!ROUTING_ARMS.includes(arm as RoutingArm)) {
+      throw new Error(
+        `unknown arm ${JSON.stringify(arm)}; choose from: ${ROUTING_ARMS.join(", ")}`,
+      );
+    }
+  }
+  return arms as RoutingArm[];
+}
+
+function parseSessionModel(value: string): SessionModel {
+  if (!SESSION_MODELS.includes(value as SessionModel)) {
+    throw new Error(
+      `--session-model must be one of: ${SESSION_MODELS.join(", ")}`,
+    );
+  }
+  return value as SessionModel;
 }
 
 function assertEnvironmentCannotSkewResults(): void {
@@ -444,10 +570,11 @@ function resultsFileFor(label: string, now = new Date()): string {
 }
 
 function saveRoutingResults(path: string, results: RoutingResults): void {
+  const [baselineArm] = results.arms ?? ARMS_BEFORE_PHASE_3;
   writeFileSync(
     path,
     `${JSON.stringify(
-      { ...results, summary: applyPassRule(results.runs) },
+      { ...results, summary: applyPassRule(results.runs, baselineArm) },
       null,
       2,
     )}\n`,
@@ -459,6 +586,8 @@ async function main(): Promise<void> {
     options: {
       label: { type: "string" },
       tasks: { type: "string" },
+      arms: { type: "string", default: DEFAULT_ARMS },
+      "session-model": { type: "string", default: DEFAULT_SESSION_MODEL },
       repeats: { type: "string", default: String(DEFAULT_REPEATS) },
       limit: { type: "string", default: String(DEFAULT_BATCH_SIZE) },
       effort: { type: "string" },
@@ -472,6 +601,8 @@ async function main(): Promise<void> {
   assertEnvironmentCannotSkewResults();
   const maxBudgetUsd = Number(values["max-budget-usd"]);
   if (!(maxBudgetUsd > 0)) throw new Error("--max-budget-usd must be positive");
+  const arms = parseArms(values.arms);
+  const sessionModel = parseSessionModel(values["session-model"]);
   const tasks = loadTasks(values.tasks?.split(","));
   const resultsFile = resultsFileFor(values.label);
   const cliVersion = claudeVersion();
@@ -480,7 +611,8 @@ async function main(): Promise<void> {
     : {
         label: values.label,
         confidence: INDICATIVE_NOTE,
-        sessionModel: SESSION_MODEL,
+        arms,
+        sessionModel,
         effort: values.effort ?? "default",
         cliVersion,
         agemonCommit: currentCommit(),
@@ -494,6 +626,12 @@ async function main(): Promise<void> {
       `${basename(resultsFile)} used ${results.cliVersion}, this is ${cliVersion}`,
     );
   }
+  const recordedArms = (results.arms ?? ARMS_BEFORE_PHASE_3).join(",");
+  if (recordedArms !== arms.join(",")) {
+    throw new Error(
+      `${basename(resultsFile)} compares arms ${recordedArms}, not ${arms.join(",")}`,
+    );
+  }
   const isDone = (cell: { task: string; arm: RoutingArm; repeat: number }) =>
     results.runs.some(
       (run) =>
@@ -503,6 +641,7 @@ async function main(): Promise<void> {
     );
   const planned = plannedCells(
     tasks.map((task) => task.name),
+    arms,
     Number(values.repeats),
   );
   const batch = planned
@@ -522,7 +661,7 @@ async function main(): Promise<void> {
         "transcripts",
       ),
       maxBudgetUsd,
-      model: SESSION_MODEL,
+      model: sessionModel,
       effort: values.effort,
     });
     if (!outcome.run) {

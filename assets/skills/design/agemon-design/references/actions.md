@@ -206,7 +206,7 @@ Motion pass: add purposeful animation, fix janky transitions, or trim motion tha
    | Medium UI (modals, panels) | 200–300ms |
    | Large UI (page transitions, drawers) | 300–400ms |
 
-   Exit ≈ 75% of entrance duration (shorter, same `ease-out`, or a flatter tail like `cubic-bezier(0.4, 0, 1, 1)`). Never `ease-in` on UI. `cubic-bezier(0.22, 1, 0.36, 1)` is a safe spring-like default.
+   Exit ≈ 75% of entrance duration (shorter, same `ease-out`). Never `ease-in` on anything arriving or staying on screen; only an element leaving the screen may accelerate away on `cubic-bezier(0.4, 0, 1, 1)` (see [motion.md](motion.md)). `cubic-bezier(0.22, 1, 0.36, 1)` is a safe spring-like default.
 4. **Sequences.** Multi-stage sequences stagger 30–80ms, not 200ms. Choreography detail is in [motion.md](motion.md).
 5. **Knobs.** MOTION_INTENSITY ≤ 3 → hover states only, no entrances, no scroll-triggered motion. 4–7 → standard entrances and hover, one scroll reveal per section at most. 8+ → scroll-linked motion, page transitions and magnetic cursor are fine (still honor reduced motion).
 

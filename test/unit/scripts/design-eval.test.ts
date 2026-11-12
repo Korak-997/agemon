@@ -63,6 +63,7 @@ import {
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "../../..");
 const EVAL_ROOT = join(REPOSITORY_ROOT, "evals", "design");
 const DESIGN_SKILL = "agemon-design";
+const MOTION_SKILL = "agemon-motion-design";
 
 const corpus = JSON.parse(
   readFileSync(join(EVAL_ROOT, "activation-cases.json"), "utf8"),
@@ -101,8 +102,8 @@ afterEach(() => {
 });
 
 describe("activation corpus", () => {
-  it("holds 13 cases that name no skill", () => {
-    expect(corpus).toHaveLength(13);
+  it("holds 19 cases that name no skill", () => {
+    expect(corpus).toHaveLength(19);
     for (const { prompt } of corpus) {
       expect(prompt.toLowerCase()).not.toMatch(/agemon|skill|web-design/u);
     }
@@ -111,7 +112,22 @@ describe("activation corpus", () => {
   it("covers every kind, including the guidelines boundary", () => {
     const kinds = new Set(corpus.map((entry) => entry.kind));
     expect(kinds).toEqual(
-      new Set(["clear", "small-edit", "near-miss", "guidelines-boundary"]),
+      new Set([
+        "clear",
+        "small-edit",
+        "near-miss",
+        "guidelines-boundary",
+        "motion",
+      ]),
+    );
+  });
+
+  it("holds 4 motion cases that should trigger and 2 that should not", () => {
+    const motionCases = corpus.filter((entry) => entry.kind === "motion");
+    const expectations = motionCases.map((entry) => entry.expected);
+    expect(expectations.filter((value) => value === "trigger")).toHaveLength(4);
+    expect(expectations.filter((value) => value === "no-trigger")).toHaveLength(
+      2,
     );
   });
 });
@@ -119,7 +135,9 @@ describe("activation corpus", () => {
 describe("activation corpus tracks", () => {
   it("has a trigger case for each track of the skill", () => {
     const tracks = corpus
-      .filter((entry) => entry.expected === "trigger")
+      .filter(
+        (entry) => entry.expected === "trigger" && entry.kind !== "motion",
+      )
       .map((entry) => entry.track);
 
     expect(new Set(tracks)).toEqual(
@@ -132,8 +150,8 @@ describe("splitCases", () => {
   it("is stable for a seed and splits 60/40", () => {
     const first = splitCases(corpus, 7);
     expect(splitCases(corpus, 7)).toEqual(first);
-    expect(first.train).toHaveLength(8);
-    expect(first.validation).toHaveLength(5);
+    expect(first.train).toHaveLength(11);
+    expect(first.validation).toHaveLength(8);
   });
 
   it("partitions the corpus with no overlap", () => {
@@ -421,6 +439,19 @@ describe("installArm", () => {
     }
   });
 
+  it("installs extra groups from the working tree into either arm", () => {
+    installArm(workDirectory, "A", "HEAD", ["motion"]);
+    const installed = readdirSync(join(workDirectory, ".claude", "skills"));
+    expect(installed).toContain(MOTION_SKILL);
+    expect(installed).toContain("agemon-commit");
+    expect(
+      readFileSync(
+        join(workDirectory, ".claude/skills", MOTION_SKILL, "SKILL.md"),
+        "utf8",
+      ),
+    ).toContain(`name: ${MOTION_SKILL}`);
+  });
+
   it("pins the default skill ref to a full commit hash", () => {
     expect(DEFAULT_SKILL_REF).toMatch(/^[0-9a-f]{40}$/u);
   });
@@ -461,7 +492,7 @@ describe("planBatch", () => {
   });
 
   it("walks every case across offsets", () => {
-    const seen = [0, 3, 6, 9, 12].flatMap((offset) =>
+    const seen = [0, 3, 6, 9, 12, 15, 18].flatMap((offset) =>
       planBatch(corpus, { offset, limit: 3, runsPerCase: 2 }),
     );
     expect(seen).toEqual(corpus);
@@ -530,6 +561,38 @@ describe("runActivation", () => {
     expect(seenPrompts).toHaveLength(6);
     expect(result.runs.every((entry) => entry.activated)).toBe(true);
     expect(readdirSync(workDirectory)).toEqual([]);
+  });
+
+  it("passes extra groups to every run's install", async () => {
+    const installedPerRun: string[][] = [];
+    const runner: ClaudeRunner = async ({ cwd }) => {
+      installedPerRun.push(readdirSync(join(cwd, ".claude", "skills")));
+      return { transcript: completedTranscript([]), exitCode: 0 };
+    };
+    await runActivation({ ...baseOptions(), extraGroups: ["motion"], runner });
+    expect(installedPerRun).toHaveLength(6);
+    for (const installed of installedPerRun) {
+      expect(installed).toContain(MOTION_SKILL);
+    }
+  });
+
+  it("counts the motion skill as activation on motion cases only", async () => {
+    const motionCase = corpus.find(
+      (entry) => entry.kind === "motion" && entry.expected === "trigger",
+    ) as ActivationCase;
+    const runner: ClaudeRunner = async () => ({
+      transcript: completedTranscript([MOTION_SKILL]),
+      exitCode: 0,
+    });
+    const { runs } = await runActivation({
+      ...baseOptions(),
+      cases: [motionCase, first],
+      runsPerCase: 1,
+      extraGroups: ["motion"],
+      runner,
+    });
+    expect(runs.map((entry) => entry.activated)).toEqual([true, false]);
+    expect(runs[0]?.invokedDesignSkills).toEqual([MOTION_SKILL]);
   });
 
   it("scores a crashed run as errored, not as did-not-trigger", async () => {
@@ -1104,6 +1167,38 @@ describe("writes outside the project", () => {
       writeCall("Write", "/tmp/proj/..foo"),
     ].join("");
     expect(writesOutsideProject(transcript, "/tmp/proj")).toEqual([]);
+  });
+
+  it("ignores a write the session refused, but not one it carried out", () => {
+    const planFile = "/home/someone/.claude/plans/plan.md";
+    const call = (id: string) => ({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name: "Write",
+            input: { file_path: planFile },
+          },
+        ],
+      },
+    });
+    const result = (id: string, isError: boolean) => ({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: id, is_error: isError }],
+      },
+    });
+    const transcript = [
+      call("refused"),
+      result("refused", true),
+      call("accepted"),
+      result("accepted", false),
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n");
+    expect(writesOutsideProject(transcript, "/tmp/proj")).toEqual([planFile]);
   });
 
   it("treats a parent-relative path as outside", () => {
